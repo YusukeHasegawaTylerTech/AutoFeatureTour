@@ -245,11 +245,15 @@
     },
     "action_goto": {
       "type": "object",
-      "description": "Navigate to a path relative to the environment's baseUrl (never an absolute URL in a platform tour).",
+      "description": "Navigate to a path relative to the environment's baseUrl (never an absolute URL in a platform tour). The URL already open is reloaded (a hash route would not navigate).",
       "properties": {
         "goto": {
           "type": "string",
           "description": "Path, e.g. \"/orders\" or \"#/home\"."
+        },
+        "reload": {
+          "type": "boolean",
+          "description": "Load the page afresh after navigating (clears UI state a hash-route change would keep)."
         },
         "optional": {
           "type": "boolean",
@@ -1892,10 +1896,12 @@
             "disabled",
             "checked",
             "unchecked",
+            "selected",
+            "unselected",
             "editable",
             "focused"
           ],
-          "description": "The element's state."
+          "description": "The element's state. selected: aria-selected=\"true\" (a tab, an option). checked on something that is not a checkbox, radio or switch reads its aria-selected / aria-checked / aria-pressed."
         },
         "optional": {
           "type": "boolean",

@@ -44,27 +44,56 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { authFile, saveLogin } from './auth.mjs';
 import { assertValid } from './schema.mjs';
-import { checkTour, expandSteps, loadFixtures, loadPlatform, PlatformError, platformAuthFile, platformConfig } from './platform.mjs';
+import { checkTour, expandSteps, loadFixtures, loadMocks, loadPlatform, PlatformError, platformAuthFile, platformConfig } from './platform.mjs';
+import { Workarounds, workaroundProblems } from './workarounds.mjs';
 import { probe, startProcess, stopProcess, waitForHttp } from './recorder.mjs';
 import { Failure } from './failures.mjs';
 import { runSteps, settle } from './steps.mjs';
 import { freePort, run } from './util.mjs';
 
-/** Runs setup/teardown hooks: a shell command, an HTTP call, or a Node script. */
+/**
+ * Runs setup/teardown hooks: a shell command, an HTTP call, or a Node script. A hook with "output" looks data up (a
+ * record id from a query): its stdout or response becomes data, "json" (an object, merged) or "text" (data.<as>).
+ * Returns the data the hooks produced.
+ */
 export async function runHooks(hooks = [], { dir: tourDir, outDir, baseUrl, log }) {
   const env = { ...process.env, BASE_URL: baseUrl, RUN_DIR: outDir };
+  const data = {};
+  const take = (h, text) => {
+    if (!h.output) return;
+    if (h.output === 'json') {
+      let v;
+      try { v = JSON.parse(text); } catch { throw new Error(`hook ${h.run ?? h.node ?? h.http?.url}: "output": "json", but it printed no JSON: ${String(text).trim().slice(0, 200)}`); }
+      if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`hook ${h.run ?? h.node ?? h.http?.url}: "output": "json" must print a JSON object`);
+      Object.assign(data, v);
+    } else {
+      if (!h.as) throw new Error(`hook ${h.run ?? h.node ?? h.http?.url}: "output": "text" needs "as" (the data key)`);
+      const v = String(text).trim();
+      if (!v) throw new Error(`hook ${h.run ?? h.node ?? h.http?.url}: printed nothing for data.${h.as}`);
+      data[h.as] = v;
+    }
+    log(`hook data: ${Object.keys(data).join(', ')}`);
+  };
   for (const h of hooks) {
     const dir = h.dir ?? tourDir; // fixture hooks run from the fixture's folder
-    if (h.run) { log(`hook: ${h.run}`); await run(h.run, [], { cwd: path.resolve(dir, h.cwd ?? '.'), env, shell: true }); }
-    else if (h.node) { log(`hook: node ${h.node}`); await run(process.execPath, [path.resolve(dir, h.node), ...(h.args ?? [])], { cwd: dir, env }); }
-    else if (h.http) {
-      const { method = 'POST', url, headers = {}, body } = h.http;
-      log(`hook: ${method} ${url}`);
-      const res = await fetch(new URL(url, baseUrl + '/'), { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers },
-        body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined });
-      if (!res.ok && !h.optional) throw new Error(`hook ${method} ${url}: ${res.status} ${(await res.text()).slice(0, 300)}`);
-    } else throw new Error(`Unknown hook ${JSON.stringify(h)} (run, node or http)`);
+    try {
+      if (h.run) { log(`hook: ${h.run}`); take(h, await run(h.run, [], { cwd: path.resolve(dir, h.cwd ?? '.'), env, shell: true, capture: !!h.output })); }
+      else if (h.node) { log(`hook: node ${h.node}`); take(h, await run(process.execPath, [path.resolve(dir, h.node), ...(h.args ?? [])], { cwd: dir, env, capture: !!h.output })); }
+      else if (h.http) {
+        const { method = 'POST', url, headers = {}, body } = h.http;
+        log(`hook: ${method} ${url}`);
+        const res = await fetch(new URL(url, baseUrl + '/'), { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers },
+          body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined });
+        const text = await res.text();
+        if (!res.ok) throw new Error(`hook ${method} ${url}: ${res.status} ${text.slice(0, 300)}`);
+        take(h, text);
+      } else throw new Error(`Unknown hook ${JSON.stringify(h)} (run, node or http)`);
+    } catch (e) {
+      if (!h.optional) throw e;
+      log(`hook failed (optional): ${e.message.split('\n')[0]}`);
+    }
   }
+  return data;
 }
 
 /** A problem with the tour file itself; the CLI prints it without a stack trace (exit 1). */
@@ -123,12 +152,14 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
       if (cfg.login?.steps) cfg.login = { ...cfg.login, steps: expandSteps(cfg.login.steps, { dirs }) };
     });
     wrap(() => finishSteps(cfg, file, [dir]));
+    const problems = workaroundProblems(cfg.workarounds);
+    if (problems.length) throw new ConfigError(`${file}:\n  ${problems.join('\n  ')}`);
     return { cfg, env, platform: null, authFile: r => authFile(toolRoot, authTarget(cfg, env), r ?? cfg.login?.role) };
   }
   return wrap(() => {
     checkTour(raw, file);
     const p = loadPlatform(toolRoot, raw.platform, { from: dir });
-    const { cfg: base, env: envName } = platformConfig(p, { env: env ?? raw.env, role: role ?? raw.role });
+    const { cfg: base, env: envName } = platformConfig(p, { env: env ?? raw.env, role: role ?? raw.role, platformRulesOnly: !!(baseUrl || process.env.BASE_URL) });
     const fx = loadFixtures(p, raw.fixtures);
     const dirs = [path.join(p.dir, 'fragments'), dir];
     const cfg = {
@@ -136,7 +167,8 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
       timeouts: { ...base.timeouts, ...raw.timeouts },
       pronounce: { ...base.pronounce, ...raw.pronounce },
       hooks: { setup: [...fx.setup, ...(raw.hooks?.setup ?? [])], teardown: [...(raw.hooks?.teardown ?? []), ...fx.teardown] },
-      fixtureSteps: expandSteps(fx.steps, { dirs, data: fx.data }),
+      // Mock sets first (they must be in place before anything loads), then the fixtures' own steps.
+      fixtureSteps: [...loadMocks(p, raw.mocks), ...expandSteps(fx.steps, { dirs, data: fx.data })],
       data: fx.data,
       scenes: (raw.scenes ?? []).map(s => ({ ...s, steps: expandSteps(s.steps, { dirs, data: fx.data }) })),
       ...(base.login ? { login: { ...base.login, steps: expandSteps(base.login.steps, { dirs }) } } : {}),
@@ -164,6 +196,8 @@ const allSteps = cfg => [...(cfg.login?.steps ?? []), ...(cfg.fixtureSteps ?? []
 function finishSteps(cfg, file, dirs) {
   const mocks = allSteps(cfg).filter(s => 'mock' in s);
   if (mocks.length && !cfg.allowMocks) throw new ConfigError(`${file}: ${mocks.length} "mock" step(s), but the tour doesn't set "allowMocks": true (mocked responses make the run not end to end; opt in deliberately)`);
+  // A verification video is evidence that the app works end to end: canned responses would make it say otherwise.
+  if (mocks.length && cfg.style === 'verification') throw new ConfigError(`${file}: "style": "verification" can't use "mock" steps (${mocks.length}): a verification must be end to end. Use "demo" or "training", or remove the mocks`);
   for (const s of allSteps(cfg).filter(s => 'upload' in s)) {
     s.files = [s.files].flat().map(f => {
       if (path.isAbsolute(f) && fs.existsSync(f)) return f;
@@ -192,6 +226,7 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
     pronounce: cfg0.pronounce,
     viewport: cfg0.viewport,
     mask: cfg0.mask,
+    video: cfg0.video,
     scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration })),
     async record(ctx) {
       const { cfg, vars } = await materialize(cfg0);
@@ -202,12 +237,15 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
       const hookCtx = { dir, outDir: ctx.outDir, baseUrl: vars.baseUrl, log: ctx.log };
       try {
         services = await startServices(cfg, vars, { outDir: ctx.outDir, log: ctx.log, dir });
-        await runHooks(cfg.hooks?.setup, hookCtx);
+        const looked = await runHooks(cfg.hooks?.setup, hookCtx);
         setupDone = true;
         const login = makeLogin(cfg, cfg0, composed, { outDir: ctx.outDir, log: ctx.log, options: ctx.options, baseUrl: vars.baseUrl });
         await login.beforeStart();
         const t = ctx.tour;
         t.policy = cfg.appErrors ?? {};
+        // Data for {data.x} left in steps until now: fixture data, plus what setup hooks looked up.
+        t.data = { ...cfg.data, ...looked };
+        if (cfg.workarounds?.length) t.workarounds = new Workarounds(cfg.workarounds, { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, ready: cfg.ready, log: ctx.log });
         const startOpts = { storageState: login.state ?? undefined, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, trace: cfg.trace !== false };
         await t.start(startOpts);
         const opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report, ready: cfg.ready, errors: cfg.errors, retries: cfg.retries ?? 1,
@@ -296,7 +334,7 @@ export function makeLogin(cfg, cfg0, composed, { outDir, log, options = {}, base
     if (!canLogin) throw new Failure('login', `${why}, and the tour can't sign in by itself: ${cannot()}`);
     // In a separate browser that is neither recorded nor traced, so credentials never reach the run's files.
     log(`${why}: signing in (separate browser, not recorded)`);
-    await saveLogin({ baseUrl: baseUrl + '/', steps: cfg.login.steps, file: state, viewport: cfg.viewport, timeouts: cfg.timeouts, ready: cfg.ready,
+    await saveLogin({ baseUrl: baseUrl + '/', steps: cfg.login.steps, file: state, viewport: cfg.viewport, timeouts: cfg.timeouts, ready: cfg.ready, workarounds: cfg.workarounds,
       ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, failureShot: path.join(outDir, 'login-failure.png'), signedIn: cfg.login.signedIn });
     fresh = true;
   };

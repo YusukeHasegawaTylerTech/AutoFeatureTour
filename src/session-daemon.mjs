@@ -3,7 +3,8 @@
 // state file when ready (or failed) and removes it when it stops. Logs go to <outDir>/session.log.
 //
 // POST / (header x-aft-token) { "op": "status" | "snapshot" | "locate" | "try-step" | "stop", ... } → JSON.
-// Commands run one at a time (one page); a stop waits for the command in progress.
+// Commands run one at a time (one page): a second command while one is running is refused with HTTP 409 (busy), so
+// two callers can't interleave steps on the same page; status always answers, and a stop waits for the command.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -17,7 +18,7 @@ const token = crypto.randomBytes(24).toString('hex');
 const writeState = s => { const tmp = `${stateFile}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(s, null, 2)); fs.renameSync(tmp, stateFile); };
 const base = { schema: 'aft-session/1', name, pid: process.pid, outDir, log: `${outDir}/session.log` };
 
-let session, server, queue = Promise.resolve(), stopping = false;
+let session, server, queue = Promise.resolve(), stopping = false, running = null;
 
 async function shutdown(code = 0) {
   if (stopping) return;
@@ -45,6 +46,10 @@ async function main() {
     req.on('end', () => {
       let msg;
       try { msg = JSON.parse(body || '{}'); } catch { return send(400, { error: 'invalid JSON' }); }
+      if (msg.op === 'status') return send(200, { ...base, status: 'ready', ...session.status(), ...(running ? { busy: running } : {}) });
+      if (running && msg.op !== 'stop')
+        return send(409, { error: `session ${name} is busy: a "${running}" call is still running (one call at a time on a session's page); wait for it, or start another session with --session <name>`, class: 'error' });
+      if (msg.op !== 'stop') running = msg.op;
       queue = queue.then(async () => {
         try {
           switch (msg.op) {
@@ -58,6 +63,8 @@ async function main() {
         } catch (e) {
           log(`${msg.op} failed: ${e.stack ?? e}`);
           send(500, { error: e.message.split('\n')[0], class: e.failure ?? classify(e) });
+        } finally {
+          if (msg.op !== 'stop') running = null;
         }
       });
     });

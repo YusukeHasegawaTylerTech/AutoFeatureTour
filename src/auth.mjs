@@ -10,6 +10,7 @@ import { chromium } from 'playwright';
 import { Failure } from './failures.mjs';
 import { plainActor, runSteps } from './steps.mjs';
 import { log } from './util.mjs';
+import { Workarounds } from './workarounds.mjs';
 
 const SAFE = /^[A-Za-z0-9_-]+$/;
 
@@ -19,7 +20,7 @@ export function authFile(toolRoot, target, role = 'default') {
 }
 
 /** Logs in and saves storageState to file. Returns file. */
-export async function saveLogin({ baseUrl, steps, file, manual = false, viewport, timeouts, ready, ignoreHTTPSErrors, failureShot, signedIn }) {
+export async function saveLogin({ baseUrl, steps, file, manual = false, viewport, timeouts, ready, ignoreHTTPSErrors, failureShot, signedIn, workarounds }) {
   if (!manual && !steps?.length) throw new Error('No login steps in the tour; add "login": { "steps": [...] } or use --manual');
   const browser = await chromium.launch({ headless: !manual });
   try {
@@ -32,7 +33,9 @@ export async function saveLogin({ baseUrl, steps, file, manual = false, viewport
       await new Promise(r => rl.question('', () => { rl.close(); r(); }));
     } else {
       try {
-        await runSteps(plainActor(page), steps, { baseUrl, unpaced: true, timeouts, ready });
+        // Known issues apply off camera too (a popup on the sign-in page), but are only logged here.
+        const wa = workarounds?.length ? new Workarounds(workarounds, { baseUrl, timeouts, ready, log }) : undefined;
+        await runSteps(plainActor(page, { workarounds: wa }), steps, { baseUrl, unpaced: true, timeouts, ready });
         if (signedIn) await page.locator(signedIn).first().waitFor({ timeout: timeouts?.waitFor ?? 30000 });
       } catch (e) {
         if (failureShot) await page.screenshot({ path: failureShot }).catch(() => {});

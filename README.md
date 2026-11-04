@@ -95,9 +95,9 @@ no shared temp files.
 ## Platforms and tours
 
 An app is a **platform**, `platforms/<name>/`: `platform.json` (readiness, error UI, app-error policy and ignore list,
-mask, pronunciations), `environments.json` (`local`, `qa`, … with `baseUrl` and `launch` or `attach`),
+known issues (`workarounds`), mask, pronunciations, video trimming), `environments.json` (`local`, `qa`, … with `baseUrl` and `launch` or `attach`),
 `login.json` (steps per role, credentials as `{env:NAME}`), `fragments/` (reusable steps, JSON or code),
-`fixtures/` (test data with setup/teardown), `requirements.mjs`, `README.md` and `tours/`. A tour names its platform
+`fixtures/` (test data with setup/teardown), `mocks/` (opt-in canned responses), `requirements.mjs`, `README.md` and `tours/`. A tour names its platform
 and holds only what to show:
 
 ```json
@@ -133,9 +133,14 @@ the platform's login steps with credentials from environment variables or a `.en
 `--manual` opens a browser for SSO/MFA. Runs load the saved state, and sign in again off camera when it has expired.
 Credentials never appear on camera or in a tour.
 
+**Known issues:** a popup, panel, toast, failing request or console message an environment is known to show (a
+service that isn't there locally) is declared once in `platform.json` `"workarounds"`, refined per environment by name:
+dismiss it with steps, tolerate it, or fail on it. Tours never mention it; when it isn't there nothing happens, and
+when it is, the report names it. See [AGENTS.md](AGENTS.md#known-issues-workarounds).
+
 **Test data:** fixtures (`fixtures/<name>.json`, listed in the tour's `"fixtures"`) run setup/teardown hooks off camera
 (`{ "run" }`, `{ "node" }` or `{ "http" }`, with `BASE_URL` and `RUN_DIR`) and optional browser steps before the first
-scene. `validate` really performs the steps (without recording), so it changes data the same way a run does.
+scene. A hook with `"output"` looks data up (a record id from a query) as `{data.x}`, so tours don't hard-code ids. `validate` really performs the steps (without recording), so it changes data the same way a run does.
 
 **Sensitive data:** `mask.selectors` (CSS) and `mask.patterns` (regex) are blurred in the page before anything is
 recorded, so the video, screenshots and trace all see the blurred version. It's a hook point, not a guarantee.

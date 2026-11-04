@@ -36,6 +36,12 @@
         "platforms/*/fixtures/*.json"
       ],
       "url": "./schemas/fixture.schema.json"
+    },
+    {
+      "fileMatch": [
+        "platforms/*/mocks/*.json"
+      ],
+      "url": "./schemas/mocks.schema.json"
     }
   ]
 }

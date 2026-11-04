@@ -231,6 +231,18 @@
                   "optional": {
                     "type": "boolean",
                     "description": "Failure is only a warning."
+                  },
+                  "output": {
+                    "enum": [
+                      "json",
+                      "text"
+                    ],
+                    "description": "Use what it prints (or the HTTP response) as data: \"json\" (an object merged into data) or \"text\" (trimmed, as data.<as>). Setup hooks only."
+                  },
+                  "as": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                    "description": "With \"output\": \"text\": the data key ({data.<as>})."
                   }
                 },
                 "additionalProperties": false,
@@ -255,6 +267,18 @@
                   "optional": {
                     "type": "boolean",
                     "description": "Failure is only a warning."
+                  },
+                  "output": {
+                    "enum": [
+                      "json",
+                      "text"
+                    ],
+                    "description": "Use what it prints (or the HTTP response) as data: \"json\" (an object merged into data) or \"text\" (trimmed, as data.<as>). Setup hooks only."
+                  },
+                  "as": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                    "description": "With \"output\": \"text\": the data key ({data.<as>})."
                   }
                 },
                 "additionalProperties": false,
@@ -296,6 +320,18 @@
                   "optional": {
                     "type": "boolean",
                     "description": "A non-2xx answer is only a warning."
+                  },
+                  "output": {
+                    "enum": [
+                      "json",
+                      "text"
+                    ],
+                    "description": "Use what it prints (or the HTTP response) as data: \"json\" (an object merged into data) or \"text\" (trimmed, as data.<as>). Setup hooks only."
+                  },
+                  "as": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                    "description": "With \"output\": \"text\": the data key ({data.<as>})."
                   }
                 },
                 "additionalProperties": false,
@@ -326,6 +362,18 @@
                   "optional": {
                     "type": "boolean",
                     "description": "Failure is only a warning."
+                  },
+                  "output": {
+                    "enum": [
+                      "json",
+                      "text"
+                    ],
+                    "description": "Use what it prints (or the HTTP response) as data: \"json\" (an object merged into data) or \"text\" (trimmed, as data.<as>). Setup hooks only."
+                  },
+                  "as": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                    "description": "With \"output\": \"text\": the data key ({data.<as>})."
                   }
                 },
                 "additionalProperties": false,
@@ -350,6 +398,18 @@
                   "optional": {
                     "type": "boolean",
                     "description": "Failure is only a warning."
+                  },
+                  "output": {
+                    "enum": [
+                      "json",
+                      "text"
+                    ],
+                    "description": "Use what it prints (or the HTTP response) as data: \"json\" (an object merged into data) or \"text\" (trimmed, as data.<as>). Setup hooks only."
+                  },
+                  "as": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                    "description": "With \"output\": \"text\": the data key ({data.<as>})."
                   }
                 },
                 "additionalProperties": false,
@@ -391,6 +451,18 @@
                   "optional": {
                     "type": "boolean",
                     "description": "A non-2xx answer is only a warning."
+                  },
+                  "output": {
+                    "enum": [
+                      "json",
+                      "text"
+                    ],
+                    "description": "Use what it prints (or the HTTP response) as data: \"json\" (an object merged into data) or \"text\" (trimmed, as data.<as>). Setup hooks only."
+                  },
+                  "as": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                    "description": "With \"output\": \"text\": the data key ({data.<as>})."
                   }
                 },
                 "additionalProperties": false,
@@ -438,7 +510,66 @@
     },
     "allowMocks": {
       "type": "boolean",
-      "description": "Permit \"mock\" steps. Mocked responses are listed in the report."
+      "description": "Permit \"mock\" steps. Mocked responses are listed in the report; scenes a mock answered in get a \"simulated data\" caption. Refused for \"style\": \"verification\"."
+    },
+    "mocks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "description": "Mock sets from the platform's mocks/ folder, applied off camera before the first scene (needs allowMocks)."
+    },
+    "video": {
+      "type": "object",
+      "description": "Post-processing of the recording.",
+      "properties": {
+        "trimWaits": {
+          "enum": [
+            "cut",
+            "speed",
+            "off"
+          ],
+          "description": "Long waits (page loads, busy indicators, waitFor, waitForResponse, dismissed known issues): cut them (default), speed them up, or keep them. The narration is never cut. --no-trim keeps them for one run."
+        },
+        "trimWaitsOver": {
+          "description": "Only waits longer than this many seconds (default 1.5).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "speed": {
+          "description": "With \"speed\": how much faster (default 4).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "leadIn": {
+          "description": "Seconds of each trimmed wait that stay, so the cut is not jarring (default 0.3).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "comment": {
       "type": "string",
@@ -749,6 +880,148 @@
           "ignoreHTTPSErrors": {
             "type": "boolean",
             "description": "Accept self-signed certificates."
+          },
+          "workarounds": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A known app or environment issue: what it looks like, what to do about it, how to report it. Tours never mention it; when the issue is absent nothing happens.",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Unique name; reports say \"known issue <name>\". An environment rule with the same name refines the platform's."
+                },
+                "comment": {
+                  "type": "string",
+                  "description": "A note for people (why it happens, the ticket)."
+                },
+                "when": {
+                  "description": "What the issue looks like: a locator (popup, panel, banner, toast), a failing request, or a console message / uncaught exception.",
+                  "anyOf": [
+                    {
+                      "$ref": "common.schema.json#/$defs/locator"
+                    },
+                    {
+                      "type": "object",
+                      "description": "A failing request.",
+                      "properties": {
+                        "request": {
+                          "type": "string",
+                          "description": "URL substring, or /regex/."
+                        },
+                        "status": {
+                          "description": "HTTP status: 503, \"5xx\", \"4xx\", or a list (default any failure).",
+                          "anyOf": [
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "^\\dxx$"
+                            },
+                            {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "pattern": "^\\dxx$"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "method": {
+                          "type": "string",
+                          "description": "Only this HTTP method."
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "request"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "description": "A console error or uncaught exception.",
+                      "properties": {
+                        "console": {
+                          "type": "string",
+                          "description": "Message substring, or /regex/."
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "console"
+                      ]
+                    }
+                  ]
+                },
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Only on pages whose URL contains (or matches /regex/) one of these."
+                },
+                "do": {
+                  "description": "Steps that dismiss it (scoped to the matched element unless \"scoped\": false; its UI must be gone afterwards unless \"noWaitAfter\"), \"tolerate\" (leave it; it does not fail the step through errors / appErrors), or \"hide\" (CSS display:none: fakes the app's state, reported as such). Default tolerate.",
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "tolerate",
+                        "hide"
+                      ]
+                    },
+                    {
+                      "$ref": "common.schema.json#/$defs/steps",
+                      "minItems": 1
+                    }
+                  ]
+                },
+                "as": {
+                  "enum": [
+                    "warn",
+                    "fail",
+                    "silent"
+                  ],
+                  "description": "warn (default: in the report, the run passes), fail (APP, exit 5: this known issue must not happen here), silent (report.json only)."
+                },
+                "times": {
+                  "description": "At most this many firings per run; after that it is a normal error again.",
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 1
+                    },
+                    {
+                      "$ref": "common.schema.json#/$defs/placeholder"
+                    }
+                  ]
+                },
+                "noWaitAfter": {
+                  "type": "boolean",
+                  "description": "After its steps, do not wait for the UI to go."
+                },
+                "scoped": {
+                  "type": "boolean",
+                  "description": "false: its steps search the whole page, not just inside the matched element."
+                },
+                "off": {
+                  "type": "boolean",
+                  "description": "In an environment: turn the platform's rule of this name off there."
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "name"
+              ]
+            },
+            "description": "Known issues in this environment, merged with the platform's by name: a new name adds a rule here only; the same name refines it (partial entries are merged over the platform rule, \"off\": true disables it here)."
           }
         },
         "additionalProperties": false,
@@ -1033,6 +1306,148 @@
     },
     "discover": {
       "type": "object",
+      "description": "Stand-alone tours only."
+    },
+    "workarounds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "A known app or environment issue: what it looks like, what to do about it, how to report it. Tours never mention it; when the issue is absent nothing happens.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique name; reports say \"known issue <name>\". An environment rule with the same name refines the platform's."
+          },
+          "comment": {
+            "type": "string",
+            "description": "A note for people (why it happens, the ticket)."
+          },
+          "when": {
+            "description": "What the issue looks like: a locator (popup, panel, banner, toast), a failing request, or a console message / uncaught exception.",
+            "anyOf": [
+              {
+                "$ref": "common.schema.json#/$defs/locator"
+              },
+              {
+                "type": "object",
+                "description": "A failing request.",
+                "properties": {
+                  "request": {
+                    "type": "string",
+                    "description": "URL substring, or /regex/."
+                  },
+                  "status": {
+                    "description": "HTTP status: 503, \"5xx\", \"4xx\", or a list (default any failure).",
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^\\dxx$"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "^\\dxx$"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "method": {
+                    "type": "string",
+                    "description": "Only this HTTP method."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "request"
+                ]
+              },
+              {
+                "type": "object",
+                "description": "A console error or uncaught exception.",
+                "properties": {
+                  "console": {
+                    "type": "string",
+                    "description": "Message substring, or /regex/."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "console"
+                ]
+              }
+            ]
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Only on pages whose URL contains (or matches /regex/) one of these."
+          },
+          "do": {
+            "description": "Steps that dismiss it (scoped to the matched element unless \"scoped\": false; its UI must be gone afterwards unless \"noWaitAfter\"), \"tolerate\" (leave it; it does not fail the step through errors / appErrors), or \"hide\" (CSS display:none: fakes the app's state, reported as such). Default tolerate.",
+            "anyOf": [
+              {
+                "enum": [
+                  "tolerate",
+                  "hide"
+                ]
+              },
+              {
+                "$ref": "common.schema.json#/$defs/steps",
+                "minItems": 1
+              }
+            ]
+          },
+          "as": {
+            "enum": [
+              "warn",
+              "fail",
+              "silent"
+            ],
+            "description": "warn (default: in the report, the run passes), fail (APP, exit 5: this known issue must not happen here), silent (report.json only)."
+          },
+          "times": {
+            "description": "At most this many firings per run; after that it is a normal error again.",
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 1
+              },
+              {
+                "$ref": "common.schema.json#/$defs/placeholder"
+              }
+            ]
+          },
+          "noWaitAfter": {
+            "type": "boolean",
+            "description": "After its steps, do not wait for the UI to go."
+          },
+          "scoped": {
+            "type": "boolean",
+            "description": "false: its steps search the whole page, not just inside the matched element."
+          },
+          "off": {
+            "type": "boolean",
+            "description": "In an environment: turn the platform's rule of this name off there."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ]
+      },
       "description": "Stand-alone tours only."
     }
   }

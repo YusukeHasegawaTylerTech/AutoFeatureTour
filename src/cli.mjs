@@ -23,12 +23,16 @@
 //     (snapshot/locate/try-step use --session, or the only session for --platform, else a one-shot browser)
 //   aft --list-voices | --help | --version
 //
+// Git Bash rewrites arguments that start with / (a path like #/case/1 or /orders) into Windows paths; aft refuses
+// such arguments. Run with MSYS_NO_PATHCONV=1 (export it), or use PowerShell / cmd.
+//
 // --json: on every command, one JSON document on stdout ("schema": "aft-cli/1": command, ok, exitCode, class, runDir,
 // data | error); all logs go to stderr. Without it, stdout is human-readable.
 // Target selection: a tour names its platform (platforms/<name>/); --target <environment> (alias --env) and --role pick
 // among the platform's; --base-url <url> or BASE_URL override the URL. --platform <name> for generate/discover/login. Other flags:
 // --out <folder>, --name <run name>, --headed, --speech sapi|silent, --voice, --rate, --tail, --no-captions,
-// --on-error fail|skip, --allow-draft (record a script that still has unresolved/empty scenes).
+// --on-error fail|skip, --allow-draft (record a script that still has unresolved/empty scenes), --no-trim (keep long
+// waits in the video; see "video" in the tour/platform).
 // Hand triage: --headed --pause (stop at the failure with the Playwright inspector), --until-step N / --from-step N
 // (scene steps counted across the tour; steps before --from-step run fast and unpaced), --zip (triage.zip). Credentials: env vars or a .env file (never committed).
 //
@@ -57,7 +61,7 @@ import { discover } from './discover.mjs';
 import { doctor } from './doctor.mjs';
 import { plan, readStory } from './plan.mjs';
 import { Tour } from './recorder.mjs';
-import { concat, cutClips, duration, muxScene, requireFfmpeg, writeCaptions } from './render.mjs';
+import { concat, cutClips, duration, muxScene, requireFfmpeg, trimPlan, writeCaptions } from './render.mjs';
 import { parseScript, spokenText } from './script.mjs';
 import { StepError, StopRun } from './steps.mjs';
 import { CLASSES, classify, exitCode, Failure, summaryLine } from './failures.mjs';
@@ -68,7 +72,7 @@ import { log, newRunDir, num, parseArgs, run, sleep } from './util.mjs';
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 class UsageError extends Error {}
@@ -249,7 +253,7 @@ function printFailure(report, outDir) {
   console.error([
     '',
     `${report.result}: ${report.error}`,
-    report.firstCause ? `  first cause: ${report.firstCause.kind === 'network' ? `${report.firstCause.method} ${report.firstCause.request.replace(/\?.*$/, '')} ${report.firstCause.status ?? report.firstCause.failure}` : report.firstCause.text?.split('\n')[0]} (during ${report.firstCause.stepKey})` : null,
+    report.firstCause ? `  first cause: ${report.firstCause.kind === 'network' ? `${report.firstCause.method} ${report.firstCause.request.replace(/\?.*$/, '')} ${report.firstCause.status ?? report.firstCause.failure}${report.firstCause.body ? `: ${report.firstCause.body.slice(0, 120)}` : ''}` : report.firstCause.kind === 'workaround' ? `known issue "${report.firstCause.name}"` : report.firstCause.text?.split('\n')[0]} (during ${report.firstCause.stepKey})` : null,
     `  bundle: ${report.bundleZip ?? report.bundle}`,
     `  read:   ${path.join(outDir, 'triage', 'report.md')}`,
     trace ? `  trace:  npx playwright show-trace "${trace}"` : '  trace:  (none: the tour sets "trace": false, or the browser never started)',
@@ -322,8 +326,25 @@ async function render(def, tourDir, outDir, args) {
       throw new StepError(`the script isn't ready to record (${issues.length} issue(s)):\n  ${issues.map(i => `${i.scene}: ${i.error}`).join('\n  ')}\nFix tour.json (aft validate shows them too), or pass --allow-draft to record anyway.`);
     const done = await recordWith(def, tourDir, outDir, scenes, args);
     if (done.partial) { log(`partial run (${done.partial}): report written, no video rendered`); return { partial: true }; }
-    const timings = JSON.parse(fs.readFileSync(path.join(outDir, 'timings.json'), 'utf8')).scenes;
+    const timingsFile = path.join(outDir, 'timings.json');
+    const timingsDoc = JSON.parse(fs.readFileSync(timingsFile, 'utf8'));
+    const timings = timingsDoc.scenes;
+    // Long waits (loads, busy indicators, dismissed known issues) are cut or sped up; the narration never is.
+    const v = def.video ?? {};
+    const trim = args.noTrim ? { mode: 'off' } : { mode: v.trimWaits ?? 'cut', over: Number(v.trimWaitsOver ?? 1.5), speed: Number(v.speed ?? 4), leadIn: Number(v.leadIn ?? 0.3) };
+    for (const t of timings) t.trim = trimPlan(t, trim);
     await cutClips(path.join(outDir, 'recording.webm'), timings, clipsDir);
+    const trimmed = timings.map(t => ({ scene: t.id, seconds: +t.trim.saved.toFixed(2), windows: t.trim.windows.length })).filter(x => x.windows);
+    fs.writeFileSync(timingsFile, JSON.stringify({ ...timingsDoc, trim: { ...trim, trimmed }, scenes: timings }, null, 2));
+    if (trimmed.length) {
+      log(`trimmed waits (${trim.mode}): ${trimmed.map(x => `${x.scene} ${x.seconds}s`).join(', ')}`);
+      noteTrim(outDir, trim, trimmed);
+    }
+    for (const s of scenes) {
+      const t = timings.find(x => x.id === s.id);
+      s.mocked = !!t?.mocked;
+      s.notes = (t?.notes ?? []).map(n => ({ text: n.text, at: t.trim.map(n.at) - t.start }));
+    }
   }
 
   const segments = [];
@@ -334,10 +355,20 @@ async function render(def, tourDir, outDir, args) {
   }
   const file = await concat(segments, outDir);
   if (!args.noCaptions)
-    writeCaptions(scenes.map(s => ({ text: spokenText(s.narration), narrationSeconds: s.narrationSeconds, length: s.length })), path.join(outDir, 'tour.vtt'));
+    writeCaptions(scenes.map(s => ({ text: spokenText(s.narration), narrationSeconds: s.narrationSeconds, length: s.length, mocked: s.mocked, notes: s.notes })), path.join(outDir, 'tour.vtt'));
   const seconds = await duration(file);
   console.log(`Done: ${file}  (${num(seconds)} s)`);
   return { video: file, seconds: +num(seconds) };
+}
+
+/** Adds how much of each scene's waiting was trimmed to report.json ("trimmed") and report.md. */
+function noteTrim(outDir, trim, trimmed) {
+  try {
+    const rj = path.join(outDir, 'report.json');
+    const r = JSON.parse(fs.readFileSync(rj, 'utf8'));
+    fs.writeFileSync(rj, JSON.stringify({ ...r, trimmed: { mode: trim.mode, over: trim.over, scenes: trimmed } }, null, 2));
+    fs.appendFileSync(path.join(outDir, 'report.md'), `\n## Video\n\nWaits over ${trim.over}s ${trim.mode === 'speed' ? `sped up ${trim.speed}×` : 'cut'} (--no-trim keeps them):\n\n${trimmed.map(x => `- ${x.scene}: ${x.seconds}s (${x.windows} wait(s))`).join('\n')}\n`);
+  } catch { /* the report is best effort here */ }
 }
 
 // ---- Generate (story/prompt → editable tour.json + script.md) ----------------------------------------------------
@@ -361,7 +392,7 @@ function loginStepsFor(args) {
   const app = appSettings(args);
   if (!app) return {};
   const { cfg } = app;
-  const common = { ready: cfg.ready, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, paths: cfg.discover?.paths ?? [], errors: cfg.errors };
+  const common = { ready: cfg.ready, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, paths: cfg.discover?.paths ?? [], errors: cfg.errors, workarounds: cfg.workarounds, timeouts: cfg.timeouts };
   if (!cfg.login) return common;
   const state = app.authFile(cfg.login.role);
   return fs.existsSync(state) ? { ...common, storageState: state } : { ...common, loginSteps: cfg.login.steps };
@@ -407,6 +438,7 @@ function definitionType(file) {
   if (['platform.json', 'environments.json', 'login.json'].includes(b)) return b.replace('.json', '');
   if (d === 'fragments' && b.endsWith('.json')) return 'fragment';
   if (d === 'fixtures' && b.endsWith('.json')) return 'fixture';
+  if (d === 'mocks' && b.endsWith('.json')) return 'mocks';
   return b.endsWith('.json') ? 'tour' : null;
 }
 
@@ -548,7 +580,7 @@ const commands = {
     const { cfg } = app;
     if (!cfg.baseUrl) throw new UsageError(`${app.name}: no baseUrl for environment ${app.env ?? '(none)'}`);
     const state = await saveLogin({ baseUrl: cfg.baseUrl, steps: cfg.login?.steps, file: app.authFile(cfg.login?.role), manual: !!args.manual, viewport: cfg.viewport,
-      timeouts: cfg.timeouts, ready: cfg.ready, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, signedIn: cfg.login?.signedIn });
+      timeouts: cfg.timeouts, ready: cfg.ready, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, signedIn: cfg.login?.signedIn, workarounds: cfg.workarounds });
     return { platform: app.platform?.name ?? null, env: app.env ?? null, role: cfg.login?.role ?? null, state };
   },
 
@@ -649,6 +681,18 @@ function helpText() {
   return lines.slice(0, lines.findIndex(l => !l.startsWith('//'))).map(l => l.replace(/^\/\/ ?/, '')).join('\n');
 }
 
+/**
+ * Git Bash (MSYS) turns an argument that starts with / into a Windows path under its install folder, so "#/case/1" in a
+ * --url or a try-step's JSON arrives as "C:/Program Files/Git/case/1". The original can't be recovered reliably: refuse.
+ */
+function gitBashCheck(argv) {
+  if (process.env.MSYS_NO_PATHCONV === '1') return;
+  const root = (process.env.EXEPATH ? path.dirname(process.env.EXEPATH) : null) ?? null;
+  const roots = [root, 'C:/Program Files/Git', 'C:/Program Files (x86)/Git', 'C:/msys64'].filter(Boolean).map(r => r.replace(/\\/g, '/').toLowerCase());
+  const bad = argv.find(a => { const s = a.replace(/\\/g, '/').toLowerCase(); return roots.some(r => s.includes(`${r}/`)) && !fs.existsSync(a); });
+  if (bad) throw new UsageError(`"${bad.slice(0, 120)}" looks like a path Git Bash rewrote (it turns arguments starting with / into Windows paths). Run with MSYS_NO_PATHCONV=1 (export MSYS_NO_PATHCONV=1), or use PowerShell`);
+}
+
 /** --json: stdout carries exactly one JSON document; everything else (logs, tables) is moved to stderr. */
 const stdoutLog = console.log.bind(console);
 let json = false;
@@ -658,6 +702,7 @@ async function main() {
   loadDotEnv();
   const args = parseArgs(process.argv.slice(2));
   if (args.json) { json = true; console.log = (...a) => console.error(...a); }
+  gitBashCheck(process.argv.slice(2));
   if (args.listVoices) { console.log((await listVoices()).join('\n')); return; }
   if (args.version) { console.log(JSON.parse(fs.readFileSync(path.join(toolRoot, 'package.json'), 'utf8')).version); return; }
   const cmd = args._[0];

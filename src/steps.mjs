@@ -71,9 +71,9 @@ export async function scope(page, target, opts = {}) {
   return { root, target: rest };
 }
 
-export async function resolve(page, target0, { timeout = 10000, warnings } = {}) {
+export async function resolve(page, target0, { timeout = 10000, warnings, onPoll } = {}) {
   const until = Date.now() + timeout;
-  const { root, target } = await scope(page, target0, { timeout, warnings });
+  const { root, target } = await scope(page, target0, { timeout, warnings, onPoll });
   const nth = typeof target === 'object' ? target.nth : undefined;
   for (;;) {
     for (const loc of candidates(root, target)) {
@@ -89,19 +89,27 @@ export async function resolve(page, target0, { timeout = 10000, warnings } = {})
       }
     }
     if (Date.now() > until) throw new Error(`Target not found: ${JSON.stringify(target0)}`);
+    // A known issue (a workaround's popup) may be what hides the target: deal with it, then look again.
+    await onPoll?.();
     await sleep(250);
   }
 }
 
 /** A tour-shaped actor for steps run off camera (login, discovery): no cursor animation, no pacing. */
-export function plainActor(page) {
-  return {
+export function plainActor(page, { workarounds } = {}) {
+  const actor = {
+    workarounds,
     page,
-    click: (el, o = {}) => el.click({ button: o.button, clickCount: o.clickCount, modifiers: o.modifiers }),
+    click: async (el, o = {}) => {
+      // A known issue covering the target (a workaround's popup): deal with it, then click.
+      try { await el.click({ button: o.button, clickCount: o.clickCount, modifiers: o.modifiers, timeout: 5000 }); }
+      catch (e) { if (!actor.workarounds?.any || !(await actor.workarounds.checkpoint(actor))) throw e; await el.click({ button: o.button, clickCount: o.clickCount, modifiers: o.modifiers }); }
+    },
     typeInto: (el, text) => el.fill(text),
     moveTo: el => el.hover().catch(() => {}),
     at: async () => {},
   };
+  return actor;
 }
 
 const absolute =(baseUrl, url) => new URL(url, baseUrl).href;
@@ -143,6 +151,8 @@ export async function appError(page, errors) {
   const re = errors.text ? new RegExp(errors.text, 'i') : null;
   for (const el of await page.locator(errors.selector).all()) {
     if (!(await el.isVisible().catch(() => false))) continue;
+    // A known issue (platform "workarounds") is reported under its own name, not as an app error.
+    if (await el.evaluate((e, k) => !!(e.closest(`[${k}]`) || e.querySelector(`[${k}]`)), 'data-aft-workaround').catch(() => false)) continue;
     const text = (await el.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
     if (!re || re.test(text)) return text.slice(0, 300) || '(error shown)';
   }
@@ -193,11 +203,12 @@ const urlMatcher = pat => {
 const matches = (pat, value) => urlMatcher(pat)(String(value ?? ''));
 
 /** Polls fn() until it returns true or the time is up; returns the last value fn reported. */
-async function until(fn, timeout) {
+async function until(fn, timeout, onPoll) {
   const end = Date.now() + timeout;
   for (;;) {
     const r = await fn().catch(e => ({ ok: false, seen: e.message.split('\n')[0] }));
     if (r.ok || Date.now() > end) return r;
+    await onPoll?.();
     await sleep(200);
   }
 }
@@ -233,28 +244,37 @@ async function textCheck(el, test, want) {
 const failCheck = message => { throw Object.assign(new Error(`Verification failed: ${message}`), { failure: 'criterion' }); };
 
 /** verify: visible (default), or a condition on the element or the page. */
-async function verify(t, step, { timeout, warnings }) {
+/** aria-selected (tabs, options) / aria-checked / aria-pressed is "true" on the element. */
+const ariaOn = (el, ...attrs) => el.evaluate((e, names) => names.some(n => e.getAttribute(n) === 'true'), attrs);
+
+/** checked: a checkbox, radio or switch; on anything else (a tab, a toggle button) its aria-selected / aria-checked / aria-pressed. */
+const isOn = el => el.isChecked().catch(e => {
+  if (/Not a checkbox|not a checkbox/i.test(e.message)) return ariaOn(el, 'aria-selected', 'aria-checked', 'aria-pressed');
+  throw e;
+});
+
+async function verify(t, step, { timeout, warnings, onPoll }) {
   const page = t.page;
   const v = step.verify;
   const show = JSON.stringify(v);
   if (v && typeof v === 'object' && ('url' in v || 'title' in v) && Object.keys(v).length === 1) {
     const what = 'url' in v ? 'URL' : 'title';
-    const r = await until(async () => { const seen = 'url' in v ? page.url() : await page.title(); return { ok: matches(v.url ?? v.title, seen), seen }; }, timeout);
+    const r = await until(async () => { const seen = 'url' in v ? page.url() : await page.title(); return { ok: matches(v.url ?? v.title, seen), seen }; }, timeout, onPoll);
     if (!r.ok) failCheck(`page ${what} is "${r.seen}", expected ${String(v.url ?? v.title).startsWith('/') ? 'to match' : 'to contain'} "${v.url ?? v.title}"`);
     return;
   }
   if ('count' in step) {
     const want = Number(step.count);
-    const r = await until(async () => { const n = await visibleCount(page, v); return { ok: n === want, seen: n }; }, timeout);
+    const r = await until(async () => { const n = await visibleCount(page, v); return { ok: n === want, seen: n }; }, timeout, onPoll);
     if (!r.ok) failCheck(`${show}: ${r.seen} visible, expected ${want}`);
     return;
   }
   if (step.state === 'hidden') {
-    const r = await until(async () => { const n = await visibleCount(page, v); return { ok: n === 0, seen: n }; }, timeout);
+    const r = await until(async () => { const n = await visibleCount(page, v); return { ok: n === 0, seen: n }; }, timeout, onPoll);
     if (!r.ok) failCheck(`${show} is still visible (${r.seen} match(es)), expected hidden`);
     return;
   }
-  const el = await resolve(page, v, { timeout, warnings }).catch(() => failCheck(`${show} is not on the page (${page.url()})`));
+  const el = await resolve(page, v, { timeout, warnings, onPoll }).catch(() => failCheck(`${show} is not on the page (${page.url()})`));
   const conditions = [
     ['text', async () => textCheck(el, s => matches(step.text, s), String(step.text)), `text containing "${step.text}"`],
     ['exactText', async () => { const want = String(step.exactText).replace(/\s+/g, ' ').trim(); return textCheck(el, s => s === want, want); }, `text "${step.exactText}"`],
@@ -264,14 +284,16 @@ async function verify(t, step, { timeout, warnings }) {
     visible: async () => ({ ok: await el.isVisible(), seen: 'hidden' }),
     enabled: async () => ({ ok: await el.isEnabled(), seen: 'disabled' }),
     disabled: async () => ({ ok: await el.isDisabled(), seen: 'enabled' }),
-    checked: async () => ({ ok: await el.isChecked(), seen: 'unchecked' }),
-    unchecked: async () => ({ ok: !(await el.isChecked()), seen: 'checked' }),
+    checked: async () => ({ ok: await isOn(el), seen: 'unchecked' }),
+    unchecked: async () => ({ ok: !(await isOn(el)), seen: 'checked' }),
+    selected: async () => ({ ok: await ariaOn(el, 'aria-selected'), seen: 'not selected' }),
+    unselected: async () => ({ ok: !(await ariaOn(el, 'aria-selected')), seen: 'selected' }),
     editable: async () => ({ ok: await el.isEditable(), seen: 'not editable' }),
     focused: async () => ({ ok: await el.evaluate(e => e === document.activeElement || e.contains(document.activeElement)), seen: 'not focused' }),
   };
   if (step.state) conditions.push(['state', STATES[step.state], step.state]);
   for (const [, fn, want] of conditions) {
-    const r = await until(fn, timeout);
+    const r = await until(fn, timeout, onPoll);
     if (!r.ok) failCheck(`${show} has ${r.seen}, expected ${want}`);
   }
   await t.moveTo(el, { steps: 30 });
@@ -307,10 +329,14 @@ async function capture(t, step, { timeout, warnings }) {
 
 /** {vars.x} in a step: the values captured so far. One that hasn't been captured is a SCRIPT failure. */
 function withVars(t, step) {
-  if (!JSON.stringify(step).includes('{vars.')) return step;
-  const out = substitute(step, { vars: t.vars ?? {} }, ['vars']);
+  const json = JSON.stringify(step);
+  if (!json.includes('{vars.') && !json.includes('{data.')) return step;
+  // {data.x} left after loading: a value a fixture hook looked up at run time ("output"), filled in now.
+  const out = substitute(step, { vars: t.vars ?? {}, data: t.data ?? {} }, ['vars', 'data']);
   const missing = JSON.stringify(out).match(/\{vars\.([A-Za-z0-9_.-]+)\}/);
   if (missing) throw new Error(`no captured value "${missing[1]}": capture it first with { "capture": <target>, "as": "${missing[1]}" }`);
+  const noData = JSON.stringify(out).match(/\{data\.([A-Za-z0-9_.-]+)\}/);
+  if (noData) throw new Error(`no data value "${noData[1]}": no fixture's "data" has it and no fixture hook set it (a hook with "output")`);
   return out;
 }
 
@@ -324,14 +350,22 @@ async function inPopup(t, fn, timeout) {
 }
 
 /** Runs one step on the tour. Pacing ("at") is the caller's business unless the step is an explicit "at". */
-export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCfg, errors, warnings = [], allowMocks = false, outDir }) {
+/**
+ * bare: a workaround's own step (no workaround checkpoint, no error-UI check: the UI it closes is a known issue).
+ * root: search targets inside this locator (a workaround's matched dialog) instead of the whole page.
+ */
+export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCfg, errors, warnings = [], allowMocks = false, outDir, bare = false, root }) {
   const step = withVars(t, step0);
   const page = t.page;
   const ready = readyCfg ? { ...readyCfg, warnings } : readyCfg;
   // Per-target defaults (tour.json "timeouts"), per-step override; slow screens such as reports need more.
   // An optional step gives up sooner, so a miss doesn't stall the scene.
   const timeout = step.timeout ?? (step.optional ? timeouts.optional ?? 3000 : timeouts.action ?? 10000);
-  const el = target => resolve(page, target, { timeout, warnings });
+  const poll = !bare && t.workarounds?.any ? () => t.workarounds.checkpoint(t, { warnings }) : undefined;
+  const el = target => resolve(root ?? page, target, { timeout, warnings, onPoll: poll });
+  // Waits are recorded (timings.json "waits") so long ones can be trimmed from the video.
+  const timed = async (reason, fn) => { const s0 = t.now?.(); const r = await fn(); if (s0 !== undefined) t.markWait?.(reason, s0, t.now()); return r; };
+  const settled = p => timed('ready', () => settle(p, ready));
   const a = actionOf(step);
   // waitForResponse on an action: listen before acting, so a fast response can't be missed.
   const waiting = step.waitForResponse !== undefined && a !== 'waitForResponse' ? watchResponse(page, step, timeouts) : null;
@@ -339,22 +373,33 @@ export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCf
   switch (a) {
     case 'goto':
       // A page that doesn't load in time is the app's (or the network's) problem, not the script's.
-      await page.goto(absolute(baseUrl, step.goto), { timeout: timeouts.navigation ?? 30000 }).catch(e => {
-        if (/Timeout/i.test(e.message)) throw new Error(`the app showed an error: page didn't load within ${(timeouts.navigation ?? 30000) / 1000}s (${absolute(baseUrl, step.goto)})`);
+    {
+      // The same URL (a hash route already open) wouldn't navigate, leaving old UI state: reload instead. "reload": true
+      // always loads the page afresh after navigating.
+      const url = absolute(baseUrl, step.goto);
+      const nav = { timeout: timeouts.navigation ?? 30000 };
+      const fail = e => {
+        if (/Timeout/i.test(e.message)) throw new Error(`the app showed an error: page didn't load within ${(timeouts.navigation ?? 30000) / 1000}s (${url})`);
         throw e;
-      });
-      await settle(page, ready);
+      };
+      if (page.url() === url) await page.reload(nav).catch(fail);
+      else {
+        await page.goto(url, nav).catch(fail);
+        if (step.reload) await page.reload(nav).catch(fail);
+      }
+      await settled(page);
       break;
+    }
     case 'click': {
       const target = await el(step.click);
       const opts = { button: step.button, clickCount: step.clickCount !== undefined ? Number(step.clickCount) : undefined, modifiers: step.modifiers };
       if (step.opensPopup) await inPopup(t, () => t.click(target, opts), timeout);
       else await t.click(target, opts);
-      await settle(t.page, ready);
+      await settled(t.page);
       break;
     }
-    case 'dblclick': await t.click(await el(step.dblclick), { clickCount: 2 }); await settle(page, ready); break;
-    case 'rightClick': await t.click(await el(step.rightClick), { button: 'right' }); await settle(page, ready); break;
+    case 'dblclick': await t.click(await el(step.dblclick), { clickCount: 2 }); await settled(page); break;
+    case 'rightClick': await t.click(await el(step.rightClick), { button: 'right' }); await settled(page); break;
     case 'fill': case 'type': {
       const field = await el(step[a]);
       const text = String(step.text ?? '');
@@ -372,12 +417,12 @@ export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCf
     case 'press':
       if (step.on) { const f = await el(step.on); await t.moveTo(f); await f.press(step.press); }
       else await page.keyboard.press(step.press);
-      await sleep(300); await settle(page, ready); break;
+      await sleep(300); await settled(page); break;
     case 'check': case 'uncheck': {
       const box = await el(step[a]);
       await t.moveTo(box);
       await (a === 'check' ? box.check({ timeout }) : box.uncheck({ timeout }));
-      await settle(page, ready);
+      await settled(page);
       break;
     }
     case 'hover': await t.moveTo(await el(step.hover), { steps: 35 }); break;
@@ -395,7 +440,7 @@ export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCf
       // A file input takes the files directly; anything else (an upload button) opens a file chooser.
       if (await target.evaluate(e => e.tagName === 'INPUT' && e.type === 'file')) await target.setInputFiles(files);
       else { const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout }), t.click(target)]); await chooser.setFiles(files); }
-      await settle(page, ready);
+      await settled(page);
       break;
     }
     case 'drag': {
@@ -409,7 +454,7 @@ export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCf
       await page.mouse.move(a0.x ?? b.x, a0.y ?? b.y, { steps: 5 });
       await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 30 });
       await page.mouse.up();
-      await settle(page, ready);
+      await settled(page);
       break;
     }
     case 'scroll': {
@@ -424,18 +469,18 @@ export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCf
     case 'waitFor': {
       const wait = step.timeout ?? timeouts.waitFor ?? 30000;
       const state = step.state ?? 'visible';
-      if (state === 'visible') { await resolve(page, step.waitFor, { timeout: wait }); break; }
-      const r = await until(async () => {
+      if (state === 'visible') { await timed('waitFor', () => resolve(page, step.waitFor, { timeout: wait, onPoll: poll })); break; }
+      const r = await timed('waitFor', () => until(async () => {
         const { root, target } = await scope(page, step.waitFor, { timeout: 1000 });
         const counts = await Promise.all(candidates(root, target).map(c => c.count().catch(() => 0)));
         const n = counts.reduce((x, y) => x + y, 0);
         const v = state === 'hidden' ? await visibleCount(page, step.waitFor) : 0;
         return { ok: state === 'attached' ? n > 0 : state === 'detached' ? n === 0 : v === 0, seen: n };
-      }, wait);
+      }, wait, poll));
       if (!r.ok) throw new Error(`Timeout: ${JSON.stringify(step.waitFor)} didn't become ${state} within ${wait / 1000}s`);
       break;
     }
-    case 'verify': await verify(t, step, { timeout: step.timeout ?? timeouts.verify ?? 15000, warnings }); break;
+    case 'verify': await verify(t, step, { timeout: step.timeout ?? timeouts.verify ?? 15000, warnings, onPoll: poll }); break;
     case 'capture': await capture(t, step, { timeout, warnings }); break;
     case 'wait': await sleep(Number(step.wait) * 1000); break;
     case 'at': await t.at(Number(step.at)); break;
@@ -465,16 +510,19 @@ export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCf
       const body = step.json !== undefined ? JSON.stringify(step.json) : String(step.body ?? '');
       const contentType = step.contentType ?? (step.json !== undefined ? 'application/json' : 'text/plain');
       await page.context().route(u => match(u.href), route => (step.method && route.request().method() !== step.method ? route.fallback()
-        : route.fulfill({ status: Number(step.status ?? 200), contentType, body })), step.times ? { times: Number(step.times) } : undefined);
+        : ((t.mockedScenes ??= new Set()).add(t.current?.id ?? 'setup'), route.fulfill({ status: Number(step.status ?? 200), contentType, body }))), step.times ? { times: Number(step.times) } : undefined);
       (t.mocks ??= []).push({ pattern: step.mock, status: Number(step.status ?? 200), method: step.method ?? null });
       warnings.push(`mocked: ${step.method ?? 'any'} ${step.mock} → ${step.status ?? 200} (this part of the run is not end to end)`);
       break;
     }
-    case 'waitForResponse': await watchResponse(page, step, timeouts); break;
-    case 'code': await runCode(t, step, { baseUrl, timeouts, warnings }); await settle(page, ready); break;
+    case 'waitForResponse': await timed('waitForResponse', () => watchResponse(page, step, timeouts)); break;
+    case 'code': await runCode(t, step, { baseUrl, timeouts, warnings }); await settled(page); break;
   }
-  if (waiting) await waiting;
+  if (waiting) await timed('waitForResponse', () => waiting);
   if (t.dialogFailure) { const m = t.dialogFailure; t.dialogFailure = null; failCheck(m); }
+  if (bare) return;
+  // Known issues the step brought up are dealt with (or marked tolerated) before the app's error UI is looked at.
+  await t.workarounds?.checkpoint(t, { warnings });
   const err = await appError(t.page, errors);
   if (err) throw new Error(`the app showed an error: ${err}`);
 }
@@ -501,19 +549,25 @@ async function watchResponse(page, step, timeouts) {
  * (known noisy endpoints or messages) are kept in network.json/console.json, marked "ignored".
  * "fail": the step fails as an APP error naming the request, e.g. "GET /internal/DynamicReports/Modules 500".
  */
-function appErrorPolicy(t, marks, entry) {
+function appErrorPolicy(t, marks, entry, warnings = (entry.warnings ??= [])) {
   const p = t.policy ?? {};
+  // Known issues first (platform "workarounds"): a matching request or message is reported under its name, never as an
+  // app error; "as": "fail" makes it an APP failure (thrown by matchNetwork / matchConsole).
+  if (t.workarounds?.any) {
+    for (const n of (t.networkFailures ?? []).slice(marks.net)) if (!n.ignored) t.workarounds.matchNetwork(t, n, warnings);
+    for (const c of (t.consoleErrors ?? []).slice(marks.con)) if (!c.ignored) t.workarounds.matchConsole(t, c, warnings);
+  }
   const fresh = [
-    ...(t.networkFailures ?? []).slice(marks.net).filter(n => !n.ignored && (n.status >= 500 || (p.network4xx === 'fail' && n.status >= 400)))
+    ...(t.networkFailures ?? []).slice(marks.net).filter(n => !n.ignored && !n.workaround && (n.status >= 500 || (p.network4xx === 'fail' && n.status >= 400)))
       .map(n => ({ rule: p.network, text: `${n.method} ${n.request.replace(/\?.*$/, '')} ${n.status}` })),
-    ...(t.consoleErrors ?? []).slice(marks.con).filter(c => !c.ignored && c.type === 'pageerror')
+    ...(t.consoleErrors ?? []).slice(marks.con).filter(c => !c.ignored && !c.workaround && c.type === 'pageerror')
       .map(c => ({ rule: p.pageErrors, text: `uncaught exception: ${c.text.split('\n')[0].slice(0, 200)}` })),
-    ...(t.consoleErrors ?? []).slice(marks.con).filter(c => !c.ignored && c.type === 'error')
+    ...(t.consoleErrors ?? []).slice(marks.con).filter(c => !c.ignored && !c.workaround && c.type === 'error')
       .map(c => ({ rule: p.console, text: `console error: ${c.text.split('\n')[0].slice(0, 200)}` })),
   ];
   const fatal = fresh.find(f => f.rule === 'fail');
   if (fatal) throw new Error(`the app showed an error: ${fatal.text}`);
-  if (fresh.length) (entry.warnings ??= []).push(...fresh.slice(0, 5).map(f => f.text));
+  if (fresh.length) warnings.push(...fresh.slice(0, 5).map(f => f.text));
 }
 
 /** Thrown at --until-step: the requested part of the run is done. */
@@ -548,12 +602,15 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
     t.stepKey = `${scene ?? 'setup'}#${index}`;
     t.stepLabel = `${a} ${JSON.stringify(shown(step)[a] ?? '').slice(0, 60)}`;
     const marks = { net: t.networkFailures?.length ?? 0, con: t.consoleErrors?.length ?? 0 };
+    t.stepWarnings = warnings;
     try {
+      // A known issue already on screen (a popup left by the previous step, or by the page loading) goes first.
+      await t.workarounds?.checkpoint(t, { warnings });
       // Rule-based retries for actions only (timeouts, elements not there yet). A failed check is never retried.
       for (let attempt = 0; ; attempt++) {
         try {
           await runStep(t, step, { baseUrl, timeouts, ready, errors, warnings, allowMocks, outDir });
-          appErrorPolicy(t, marks, entry);
+          appErrorPolicy(t, marks, entry, warnings);
           break;
         } catch (e) {
           // Never retried: checks, code steps, and steps whose effect may already have happened.
@@ -572,6 +629,7 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
       const failure = /^the app showed an error/.test(message) ? 'app' : e.failure ?? (kind === 'check' ? 'criterion' : 'script');
       // A code step that failed its ctx.check() counts as a check of the criteria it covers.
       if (failure === 'criterion' && kind !== 'check') Object.assign(entry, { kind: 'check', ...(covers.length ? { criteria: covers } : {}) });
+      if (e.workaround) entry.workaround = e.workaround;
       Object.assign(entry, { ok: false, failure, optional: !!step.optional, error: message, url: t.page.url(), ms: Date.now() - started, ...(warnings.length ? { warnings } : {}),
         ...(target && failure !== 'app' ? { expected: target, found: suggestions.length ? `closest on the page: ${suggestions.join(' | ')}` : 'nothing similar on the page' } : {}),
         suggestions });

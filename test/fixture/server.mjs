@@ -15,6 +15,8 @@
 //               confirm/prompt dialogs, a file input, a drag source and target, a key counter, a toggled panel,
 //               buttons that call /api/echo (200) and /api/fail (500); /frame is the iframe's page
 //   /api/echo   200 {"ok": true}       /file.txt   a download (Content-Disposition: attachment; report-2026.txt)
+//   /known      known issues for workarounds: ?popup=1 (&stack=1), ?panel=1 (&two=1), ?tcm=1 (Save calls /api/tcm: 503)
+//   /tabs       tabs with aria-selected, and a count of page loads (sessionStorage)
 
 import http from 'node:http';
 
@@ -64,6 +66,21 @@ const PAGES = {
     src.addEventListener('mousedown', () => { dragging = true; });
     document.addEventListener('mouseup', e => { if (!dragging) return; dragging = false; const r = dst.getBoundingClientRect();
       if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) dropped.textContent = 'dropped Card'; });`),
+  // Known issues (workarounds): a modal popup shortly after load (?stack=1: a second one on top), an inline error panel
+  // (?two=1: two of them), a Save that calls /api/tcm (503), tabs with aria-selected, and a counter of page loads.
+  '/known': page('Known', `<h1>Known issues</h1><button id="save">Save</button><p id="out"></p><div id="slot"></div>`,
+    `const q = new URLSearchParams(location.search);
+    save.onclick = () => { out.textContent = 'Saved'; };
+    const dialog = (id, text) => { const d = document.createElement('div'); d.id = id; d.setAttribute('role', 'dialog');
+      d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);color:#fff;padding:80px';
+      d.innerHTML = '<p>' + text + '</p><div class="actions"><button>Ok</button></div>'; d.querySelector('button').onclick = () => d.remove(); document.body.appendChild(d); };
+    if (q.get('popup')) setTimeout(() => { dialog('d1', 'TCM service unavailable'); if (q.get('stack')) dialog('d2', 'A File Storage error has occurred'); }, 300);
+    if (q.get('panel')) { slot.innerHTML = '<div class="error-panel">Edit check service unavailable (TCM error)</div>' + (q.get('two') ? '<div class="error-panel">Another error</div>' : ''); }
+    if (q.get('tcm')) save.onclick = async () => { const r = await fetch('/api/tcm'); out.textContent = 'tcm ' + r.status; };`),
+  '/tabs': page('Tabs', `<div role="tablist"><button role="tab" id="t1" aria-selected="true">Review</button><button role="tab" id="t2" aria-selected="false">IBR</button></div>
+    <p id="loads"></p>`,
+    `for (const t of document.querySelectorAll('[role=tab]')) t.onclick = () => { for (const x of document.querySelectorAll('[role=tab]')) x.setAttribute('aria-selected', String(x === t)); };
+    sessionStorage.loads = String(+(sessionStorage.loads ?? 0) + 1); loads.textContent = 'loads ' + sessionStorage.loads;`),
   '/frame': page('Frame', `<button onclick="this.textContent = 'Clicked inside'">Inside</button>`),
   '/login': page('Login', `<h1>Sign in</h1><form method="post" action="/login"><label>User <input id="user" name="user"></label>
     <label>Password <input id="pass" name="pass" type="password"></label><button>Sign in</button></form><p id="error">__ERROR__</p>`),
@@ -78,6 +95,7 @@ export function startFixture() {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'boom', token: 'tok-should-not-leak' }));
     }
+    if (url.pathname === '/api/tcm') { res.writeHead(503, { 'Content-Type': 'text/plain' }); return res.end('TCM is down for maintenance'); }
     if (url.pathname === '/api/echo') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end('{"ok":true}'); }
     if (url.pathname === '/file.txt') {
       res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Disposition': 'attachment; filename="report-2026.txt"' });

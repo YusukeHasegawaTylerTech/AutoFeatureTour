@@ -78,21 +78,29 @@ function criteriaOf(def, steps) {
 /** App errors (network/console) attributed to the failing step, earliest first; the first is the likely first cause. */
 function causesFor(entry, tour) {
   const all = [...(tour?.networkFailures ?? []).map(n => ({ kind: 'network', ...n })), ...(tour?.consoleErrors ?? []).map(c => ({ kind: 'console', ...c }))]
-    .filter(x => !x.ignored).sort((a, b) => a.at - b.at);
+    .filter(x => !x.ignored && !x.workaround).sort((a, b) => a.at - b.at);
   if (!entry) return { atStep: [], before: all };
   const key = `${entry.scene}#${entry.step}`;
   return { atStep: all.filter(x => x.stepKey === key), before: all.filter(x => x.stepKey !== key) };
 }
 
-const describeCause = c => (c.kind === 'network'
-  ? `${c.method} ${c.request.replace(/\?.*$/, '')} ${c.status ?? c.failure}`
-  : `${c.type}: ${String(c.text).split('\n')[0].slice(0, 160)}`);
+const describeCause = c => (c.kind === 'workaround' ? `known issue "${c.name}" (${c.source})${c.matched ? `: ${c.matched.slice(0, 120)}` : ''}`
+  : c.kind === 'network'
+    ? `${c.method} ${c.request.replace(/\?.*$/, '')} ${c.status ?? c.failure}${c.body ? `: ${c.body.slice(0, 160)}` : ''}`
+    : `${c.type}: ${String(c.text).split('\n')[0].slice(0, 160)}`);
+
+/** The known issue a failing step ran into ("as": "fail" or a workaround whose steps failed), as a first cause. */
+const workaroundCause = (entry, tour) => {
+  if (!entry?.workaround) return null;
+  const f = [...(tour?.workarounds?.firings ?? [])].reverse().find(x => x.name === entry.workaround);
+  return { kind: 'workaround', name: entry.workaround, source: f?.source ?? null, matched: f?.matched ?? '', stepKey: f?.stepKey ?? `${entry.scene}#${entry.step}`, at: f?.at ?? null };
+};
 
 function lead(report, entry, causes) {
   const c = CLASSES[report.class];
   if (report.class === 'ok') return [`**PASSED**: ${report.steps.length} steps, ${report.criteria.filter(x => x.status === 'met').length} criteria met.`];
   const where = entry ? `${entry.scene} step ${entry.step} (\`${entry.action}\` ${JSON.stringify(entry.spec?.[entry.action] ?? '').slice(0, 80)})` : 'before any step';
-  const first = causes.atStep[0] ?? (report.class === 'app' ? causes.before[0] : null);
+  const first = report.firstCause;
   const crit = report.criteria.filter(x => x.status !== 'not checked').map(x => `${x.id}: ${x.status}`).join(' · ') || 'none checked';
   return [
     `- **What failed:** ${c.label} at ${where}: ${report.error}`,
@@ -114,6 +122,8 @@ function markdown(report, entry, causes) {
       ...(entry.expected ? [`- Expected \`${esc(JSON.stringify(entry.expected))}\`; ${esc(entry.found)}`] : []),
       `- URL: ${entry.url ?? '-'}`, ...(report.bundle ? ['', '![page at the failure](screenshot.png)'] : []), ''] : []),
     ...(causes.atStep.length ? ['## App errors at the failing step', '', ...causes.atStep.slice(0, 20).map(c => `- ${esc(describeCause(c))}`), ''] : []),
+    ...(report.workarounds?.length ? ['## Known issues (workarounds)', '', '| issue | source | as | what happened | when |', '|---|---|---|---|---|',
+      ...report.workarounds.map(w => `| ${esc(w.name)} | ${w.source} | ${w.as} | ${w.action}${w.matched ? `: ${esc(w.matched.slice(0, 100))}` : ''} | ${w.stepKey} |`), ''] : []),
     ...(report.warnings?.length ? ['## Warnings', '', ...report.warnings.slice(0, 30).map(w => `- ${esc(w)}`), ''] : []),
     '## Acceptance criteria', '', '| | criterion | status | checks |', '|---|---|---|---|',
     ...report.criteria.map(c => `| ${c.status === 'met' ? '✔' : c.status === 'NOT MET' ? '✘' : '·'} | ${esc(c.id)}${c.text ? `. ${esc(c.text)}` : ''} | ${c.status} | ${c.checks} |`),
@@ -150,7 +160,7 @@ Decide one of:
 The tool's rule-based class: **${CLASSES[report.class].label}** (${CLASSES[report.class].why}).
 Failing step: ${entry ? `${entry.scene} step ${entry.step} \`${entry.action}\`` : 'none (failed before or outside the steps)'}.
 Error: ${report.error}
-
+${report.workarounds?.length ? `Known issues that occurred (platform workarounds, expected in this environment): ${[...new Set(report.workarounds.map(w => `"${w.name}"`))].join(', ')}. They are reported as known issues, not as the cause, unless one is the first cause.\n` : ''}
 Context files in this folder: report.md / report.json (failing step, raw error, first cause, criteria), script.json
 (failing step marked "__FAILED__"), screenshot.png, page/aria.yml (accessibility tree), page/text.txt, page/dom.html,
 console.json and network.json (each entry has the step that caused it), trace.zip (npx playwright show-trace trace.zip).
@@ -173,11 +183,13 @@ export async function finalize({ outDir, def = {}, steps = [], tour = null, erro
     schema: SCHEMA_REPORT, tour: def.name ?? null, story: def.story?.id ?? null, class: cls, exitCode: CLASSES[cls].exit,
     result: cls === 'ok' ? 'PASSED' : `FAILED (${CLASSES[cls].label})`, error: error ? String(error.message ?? error).split('\n')[0] : null,
     complete, seconds: Math.round(ms / 100) / 10, finishedAt: new Date().toISOString(),
-    failing: entry, firstCause: causes.atStep[0] ?? (cls === 'app' ? causes.before[0] ?? null : null),
+    failing: entry, firstCause: workaroundCause(entry, tour) ?? causes.atStep[0] ?? (cls === 'app' ? causes.before[0] ?? null : null),
     criteria: criteriaOf(def, steps), steps, warnings: [...warnings, ...steps.flatMap(s => (s.warnings ?? []).map(w => `${s.scene} step ${s.step}: ${w}`))],
     appErrors: { atFailingStep: causes.atStep.length, other: causes.before.length },
     // Responses the tour mocked: the run wasn't end to end there, and a video shown as evidence must say so.
     mocks: tour?.mocks ?? [], downloads: tour?.downloads ?? [],
+    // Known issues (platform "workarounds") that fired, and every rule in effect with its source (platform | env:<name>).
+    workarounds: tour?.workarounds?.firings ?? [], workaroundRules: tour?.workarounds?.summary() ?? [],
     bundle: cls === 'ok' ? null : path.join(outDir, 'triage'),
   };
   const sec = secretValues(secrets);

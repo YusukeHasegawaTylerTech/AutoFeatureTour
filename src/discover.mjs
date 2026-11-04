@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { appError, plainActor, runSteps, settle } from './steps.mjs';
+import { Workarounds } from './workarounds.mjs';
 import { log } from './util.mjs';
 
 const SKIP = /log ?out|sign ?out|delete|remove|destroy|unsubscribe|reset|\.(pdf|zip|csv|xlsx?|docx?|png|jpe?g|mp[34]|exe)(\?|$)/i;
@@ -39,7 +40,7 @@ function inventory() {
   };
 }
 
-export async function discover({ url, outDir, maxPages = 12, viewport = { width: 1440, height: 810 }, loginSteps, storageState, include, exclude, ready, ignoreHTTPSErrors, paths = [], errors }) {
+export async function discover({ url, outDir, maxPages = 12, viewport = { width: 1440, height: 810 }, loginSteps, storageState, include, exclude, ready, ignoreHTTPSErrors, paths = [], errors, workarounds, timeouts }) {
   const start = new URL(url);
   const browser = await chromium.launch();
   const pages = [];
@@ -47,10 +48,12 @@ export async function discover({ url, outDir, maxPages = 12, viewport = { width:
     const context = await browser.newContext({ viewport, ignoreHTTPSErrors, ...(storageState ? { storageState } : {}) });
     const page = await context.newPage();
     page.on('dialog', d => d.dismiss());
+    // Known issues (platform workarounds) are dealt with as in a run, so the inventory shows the screen, not the popup.
+    const actor = plainActor(page, { workarounds: workarounds?.length ? new Workarounds(workarounds, { baseUrl: start.href, timeouts, ready, log }) : undefined });
     if (loginSteps?.length) {
       await page.goto(start.href);
       log('logging in for discovery');
-      await runSteps(plainActor(page), loginSteps, { baseUrl: start.href, unpaced: true, ready });
+      await runSteps(actor, loginSteps, { baseUrl: start.href, unpaced: true, ready, timeouts });
     }
     // Extra start points (screens the story names, which nav links may not reach) are crawled first.
     const queue = [start.href, ...paths.map(p => new URL(p, start.href).href)];
@@ -69,6 +72,7 @@ export async function discover({ url, outDir, maxPages = 12, viewport = { width:
       const landed = page.url();
       if (new URL(landed).origin !== start.origin) { log(`skip ${next}: left the app (${landed})`); continue; }
       if (keyOf(landed) !== key) { if (seen.has(keyOf(landed))) continue; seen.add(keyOf(landed)); }
+      await actor.workarounds?.checkpoint(actor, { warnings: [] }).catch(e => log(`known issue on ${landed}: ${e.message.split('\n')[0]}`));
       const inv = await page.evaluate(inventory);
       inv.error = await appError(page, errors);
       if (inv.error) log(`page shows an app error: ${inv.error}`);

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 
 export const schemasDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'schemas');
-const TYPES = ['tour', 'platform', 'environments', 'login', 'fragment', 'fixture'];
+const TYPES = ['tour', 'platform', 'environments', 'login', 'fragment', 'fixture', 'mocks'];
 
 let ajv = null;
 const load = name => JSON.parse(fs.readFileSync(path.join(schemasDir, `${name}.schema.json`), 'utf8'));

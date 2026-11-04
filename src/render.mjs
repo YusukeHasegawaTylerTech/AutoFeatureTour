@@ -12,12 +12,65 @@ export async function duration(file) {
   return parseFloat(out.trim().split(/\r?\n/)[0]);
 }
 
-/** Cuts the recording into one clip per scene window ({ id, start, end } in seconds). */
+/**
+ * Which parts of a scene's waits ({ start, end, reason } in recording seconds, from timings.json) to cut or speed up:
+ * waits longer than "over" seconds, minus a short lead-in so the cut isn't jarring. Overlapping waits are merged.
+ * Returns { windows: [{ start, end }], saved (seconds removed), map(t): where recording time t lands in the trimmed
+ * scene, as recording-relative seconds (start + offset) }.
+ */
+export function trimPlan(scene, { mode = 'cut', over = 1.5, speed = 4, leadIn = 0.3 } = {}) {
+  const none = { mode, windows: [], saved: 0, map: t => t };
+  if (mode === 'off' || !scene.waits?.length) return none;
+  const merged = [];
+  for (const w of [...scene.waits].sort((a, b) => a.start - b.start)) {
+    const last = merged[merged.length - 1];
+    if (last && w.start <= last.end) last.end = Math.max(last.end, w.end);
+    else merged.push({ start: w.start, end: w.end });
+  }
+  const windows = merged.filter(w => w.end - w.start > over)
+    .map(w => ({ start: Math.max(scene.start, w.start + leadIn), end: Math.min(scene.end, w.end) })).filter(w => w.end - w.start > 0.05);
+  if (!windows.length) return none;
+  const keep = mode === 'speed' ? 1 / speed : 0; // the fraction of each window that stays
+  const saved = windows.reduce((s, w) => s + (w.end - w.start) * (1 - keep), 0);
+  const map = t => {
+    let shift = 0;
+    for (const w of windows) {
+      if (t >= w.end) shift += (w.end - w.start) * (1 - keep);
+      else if (t > w.start) shift += (t - w.start) * (1 - keep);
+    }
+    return t - shift;
+  };
+  return { mode, windows, saved, map, speed };
+}
+
+/**
+ * Cuts the recording into one clip per scene window ({ id, start, end } in seconds). With t.trim (see trimPlan), the
+ * scene's long waits are left out ("cut") or played faster ("speed").
+ */
 export async function cutClips(recording, timings, clipsDir) {
   fs.mkdirSync(clipsDir, { recursive: true });
-  for (const t of timings)
-    await run('ffmpeg', ['-y', '-v', 'error', '-ss', num(t.start), '-to', num(t.end), '-i', recording,
-      '-an', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', path.join(clipsDir, `${t.id}.mp4`)]);
+  const enc = ['-an', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p'];
+  for (const t of timings) {
+    const out = path.join(clipsDir, `${t.id}.mp4`);
+    const windows = t.trim?.windows ?? [];
+    if (!windows.length) {
+      await run('ffmpeg', ['-y', '-v', 'error', '-ss', num(t.start), '-to', num(t.end), '-i', recording, ...enc, out]);
+      continue;
+    }
+    // Pieces in clip time (the input starts at t.start): kept parts at normal speed, windows dropped or sped up.
+    const pieces = [];
+    let at = t.start;
+    for (const w of windows) {
+      if (w.start > at) pieces.push({ a: at - t.start, b: w.start - t.start, f: 1 });
+      if (t.trim.mode === 'speed') pieces.push({ a: w.start - t.start, b: w.end - t.start, f: t.trim.speed });
+      at = w.end;
+    }
+    if (t.end > at) pieces.push({ a: at - t.start, b: t.end - t.start, f: 1 });
+    const filter = [`[0:v]split=${pieces.length}${pieces.map((_, i) => `[s${i}]`).join('')}`,
+      ...pieces.map((p, i) => `[s${i}]trim=start=${num(p.a)}:end=${num(p.b)},setpts=(PTS-STARTPTS)/${p.f}[p${i}]`),
+      `${pieces.map((_, i) => `[p${i}]`).join('')}concat=n=${pieces.length}:v=1:a=0[v]`].join(';');
+    await run('ffmpeg', ['-y', '-v', 'error', '-ss', num(t.start), '-to', num(t.end), '-i', recording, '-filter_complex', filter, '-map', '[v]', ...enc, out]);
+  }
 }
 
 const FONT = ['C:/Windows/Fonts/segoeui.ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', '/System/Library/Fonts/Helvetica.ttc']
@@ -61,13 +114,19 @@ export async function concat(segments, outDir, name = 'tour.mp4') {
   return file;
 }
 
-/** WebVTT captions, one cue per scene covering its whole narration. */
+/**
+ * WebVTT captions, one cue per scene covering its whole narration. Scenes a mock answered in also get a
+ * "Simulated data" cue at the top of the screen for the whole scene; tolerated known issues on screen (notes: { at,
+ * text }, seconds into the scene) get a short cue there too.
+ */
 export function writeCaptions(cues, file) {
-  const ts = s => new Date(s * 1000).toISOString().slice(11, 23);
+  const ts = s => new Date(Math.max(0, s) * 1000).toISOString().slice(11, 23);
   let t = 0;
   let out = 'WEBVTT\n\n';
   for (const c of cues) {
     out += `${ts(t)} --> ${ts(t + c.narrationSeconds)}\n${c.text}\n\n`;
+    if (c.mocked) out += `${ts(t)} --> ${ts(t + c.length)} line:5%\nSimulated data: part of this scene uses canned (mocked) responses\n\n`;
+    for (const n of c.notes ?? []) out += `${ts(t + n.at)} --> ${ts(Math.min(t + c.length, t + n.at + 4))} line:5%\n${n.text} (environment limitation, not part of the feature)\n\n`;
     t += c.length;
   }
   fs.writeFileSync(file, out, 'utf8');

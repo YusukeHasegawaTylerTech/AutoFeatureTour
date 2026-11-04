@@ -23,6 +23,7 @@ import { stopProcess, Tour } from './recorder.mjs';
 import { candidates, runSteps, settle, shown, StepError, suggest } from './steps.mjs';
 import { scrub } from './triage.mjs';
 import { sleep } from './util.mjs';
+import { Workarounds } from './workarounds.mjs';
 
 export const SESSION_SCHEMA = 'aft-session/1';
 const SAFE = /^[A-Za-z0-9_-]+$/;
@@ -54,6 +55,9 @@ export class Session {
     await this.login.beforeStart();
     this.tour = new Tour({ outDir: this.outDir, dryRun: true, headless: !this.headed, viewport: cfg.viewport, mask: cfg.mask });
     this.tour.policy = cfg.appErrors ?? {};
+    this.tour.data = { ...cfg.data };
+    // Known issues are handled as in a run, so try-step and snapshot see what a run would.
+    if (cfg.workarounds?.length) this.tour.workarounds = new Workarounds(cfg.workarounds, { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, ready: cfg.ready, log: this.log });
     this.startOpts = { storageState: this.login.state ?? undefined, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, trace: false, cursor: false };
     await this.tour.start(this.startOpts);
     await this.login.ensure(this.tour, this.startOpts);
@@ -88,6 +92,8 @@ export class Session {
     await this.goto(url);
     const page = this.tour.page;
     await settle(page, this.cfg.ready);
+    const fired = this.tour.workarounds?.firings.length ?? 0;
+    await this.tour.workarounds?.checkpoint(this.tour, { warnings: [] });
     const aria = await page.locator('body').ariaSnapshot({ timeout: 10000 }).catch(e => `(no ARIA snapshot: ${e.message.split('\n')[0]})`);
     const text = (await page.locator('body').innerText({ timeout: 5000 }).catch(() => '')).replace(/\n{3,}/g, '\n\n');
     let shot = null;
@@ -96,7 +102,8 @@ export class Session {
       await page.screenshot({ path: shot });
     }
     const out = { schema: 'aft-snapshot/1', url: page.url(), title: await page.title().catch(() => ''), aria, text: text.slice(0, maxText),
-      truncated: text.length > maxText, ...(shot ? { screenshot: shot } : {}) };
+      truncated: text.length > maxText, ...(shot ? { screenshot: shot } : {}),
+      ...(this.tour.workarounds?.firings.length > fired ? { workarounds: this.tour.workarounds.firings.slice(fired) } : {}) };
     return JSON.parse(scrub(JSON.stringify(out), this.secrets));
   }
 
@@ -111,7 +118,7 @@ export class Session {
     const steps = this.expand([stepOrSteps].flat());
     const report = [];
     const t = this.tour;
-    const marks = { net: t.networkFailures.length, con: t.consoleErrors.length };
+    const marks = { net: t.networkFailures.length, con: t.consoleErrors.length, wa: t.workarounds?.firings.length ?? 0 };
     let failure = null;
     try { await runSteps(t, steps, this.stepOpts(report)); }
     catch (e) { failure = { class: e.failure ?? (e instanceof StepError ? 'script' : 'error'), message: e.message.split('\n')[0] }; }
@@ -120,6 +127,7 @@ export class Session {
       schema: 'aft-try-step/1', ok: !failure, ...(failure ? { class: failure.class, error: failure.message } : { class: 'ok' }),
       steps: report.map(r => ({ ...r, spec: shown(r.spec) })),
       network: t.networkFailures.slice(marks.net), console: t.consoleErrors.slice(marks.con),
+      ...(t.workarounds ? { workarounds: t.workarounds.firings.slice(marks.wa) } : {}),
       after: { url: snap.url, title: snap.title, aria: snap.aria },
     };
     return JSON.parse(scrub(JSON.stringify(out), this.secrets));

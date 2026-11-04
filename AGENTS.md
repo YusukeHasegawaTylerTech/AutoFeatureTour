@@ -57,6 +57,16 @@ Run folder contents: `tour.mp4` (the video), `tour.vtt` (captions), `recording.w
 scripts), `validation.md`, `discovery.json`, `run.json` (command, args, status). On failure: `screens/failure.png`,
 `trace-failed.zip`, `recording-failed.webm`. `out/<name>/latest.json` points at the newest successful run.
 
+**Video trimming:** long waits (page loads and busy indicators, `waitFor`, `waitForResponse`, dismissed known issues)
+are recorded in `timings.json` (`scenes[].waits`) and cut from the video, keeping a 0.3 s lead-in; the narration is
+never cut. `"video": { "trimWaits": "cut" | "speed" | "off", "trimWaitsOver": 1.5, "speed": 4, "leadIn": 0.3 }` on the
+platform or tour; `--no-trim` keeps the raw pacing for one run. report.json `trimmed` (and report.md "Video") says how
+much each scene lost. Captions add "Simulated data" over scenes a mock answered in, and a short note when a tolerated
+known issue is on screen.
+
+**Git Bash:** it rewrites arguments that start with `/` (`--url "#/case/1"`, a try-step's JSON) into Windows paths
+(`C:/Program Files/Git/case/1`). aft refuses such arguments; `export MSYS_NO_PATHCONV=1`, or use PowerShell.
+
 ## When a run fails
 
 A tour video never silently shows an error: a failed run behaves like a failed test. Detection, classification and
@@ -98,6 +108,42 @@ pages that never settled, app errors that didn't fail the step) and every step. 
 entries (known noisy endpoints or messages) stay in network.json/console.json marked `"ignored"`. `"errors"` names
 the app's error UI (a selector plus text regex); it always fails the step.
 
+### Known issues (workarounds)
+
+A known app or environment issue (a service that isn't there locally, so a popup, an inline error panel, a toast or a
+failing request) is declared once per platform as a **workaround**: what it looks like (`when`), what to do about it
+(`do`), and how to report it (`as`). Tours never mention it; when the issue isn't there, nothing happens. Mocking the
+service instead would hide a real problem.
+
+```json
+"workarounds": [
+  { "name": "TCM unavailable popup", "when": { "role": "dialog", "hasText": "/TCM|service unavailable/i" },
+    "do": [ { "click": { "role": "button", "name": "OK" } } ], "as": "warn" },
+  { "name": "TCM status panel", "when": { "css": ".error-panel", "hasText": "TCM" }, "do": "tolerate" },
+  { "name": "TCM lookup 503", "when": { "request": "/api/tcm/", "status": "5xx" } }
+]
+```
+
+- `when`: a locator, a failing request (`request` + `status`: 503, "5xx", a list; + `method`), or `{ "console": "/regex/" }`
+  (console errors and uncaught exceptions); `paths` limits it to pages whose URL contains / matches one of them.
+- `do`: steps that dismiss it (run off narration, scoped to the matched element unless `"scoped": false`; its UI must be
+  gone afterwards unless `"noWaitAfter": true`; a failing one is a SCRIPT failure naming the workaround); `"tolerate"`
+  (default: left on screen, it doesn't fail the step through `errors` / `appErrors`, and it still blocks a click it
+  really covers); `"hide"` (CSS `display: none`: fakes the app's state, reported as such).
+- `as`: `warn` (default: named in the warnings and report, the run passes), `fail` (APP, exit 5, first cause = the
+  known issue: "this must not happen here"), `silent` (report.json only). `times`: at most n firings, then a normal error.
+- **Per environment**: `environments.json` entries take `workarounds` too, merged by `name`: the same name refines the
+  platform's rule for that environment (partial entries merge over it; `"off": true` disables it), a new name adds one
+  there only. A `--base-url` one-off gets the platform's rules only. Typical: `"as": "fail"` in platform.json, `"as":
+  "warn"` in `local` (see `platforms/rms`).
+- Checked before every step, on each poll while a step looks for its target or waits on a check, after each step
+  (before the error UI), and when a click finds its target covered; in runs, validate, sessions (try-step, snapshot),
+  login and discovery. Stacked known dialogs are closed newest first. Playwright's `addLocatorHandler` isn't used: it
+  only fires inside Playwright's own actionability checks, which the paced recorder bypasses.
+- Reported in report.json `workarounds` (each firing: name, source `platform` | `env:<name>`, what matched, action, the
+  step) and `workaroundRules`, report.md "Known issues", the warnings and PROMPT.md. Matched requests and messages stay in
+  network.json / console.json marked `"workaround": "<name>"`.
+
 **Redaction:** every text file in the report and bundle has the tour's secret values (`"secret": true` steps and
 credential-like env vars), auth headers, cookies, bearer tokens, JWTs and token-like URL parameters replaced with
 `***`. Screenshots get the `mask` applied. The trace can't be scrubbed: set `"trace": false` for targets where
@@ -128,6 +174,7 @@ VS Code validates and autocompletes it with no setup (`.vscode/settings.json` al
 | `platforms/<p>/login.json` | sign-in steps per role | `schemas/login.schema.json` |
 | `platforms/<p>/fragments/<f>.json` | reusable steps with parameters | `schemas/fragment.schema.json` |
 | `platforms/<p>/fixtures/<f>.json` | test data, hooks, off-camera steps | `schemas/fixture.schema.json` |
+| `platforms/<p>/mocks/<m>.json` | canned responses a tour opts into (`"mocks": ["<m>"]`) | `schemas/mocks.schema.json` |
 | (shared) | locators and steps, used by all of the above | `schemas/common.schema.json` |
 
 `aft schema [type] --json` prints a schema (with the shared definitions), so an agent can fetch the exact format.
@@ -150,7 +197,7 @@ One action key per step (the schema's `$defs/action_<name>` has every option, wi
 
 | step | does | options |
 |---|---|---|
-| `{ "goto": "/path" }` | open a path under the environment's baseUrl | |
+| `{ "goto": "/path" }` | open a path under the environment's baseUrl; the URL already open is reloaded (a hash route wouldn't navigate, leaving old UI state) | `reload` (always load afresh after navigating) |
 | `{ "click": L }` | move the cursor there and click | `button` (left/right/middle), `modifiers`, `clickCount`, `opensPopup` |
 | `{ "dblclick": L }` / `{ "rightClick": L }` | double / right click | |
 | `{ "hover": L }` / `{ "point": L }` | move the cursor (point: just to draw the eye) | |
@@ -164,14 +211,14 @@ One action key per step (the schema's `$defs/action_<name>` has every option, wi
 | `{ "drag": L, "to": L }` | drag and drop with a visible cursor path | |
 | `{ "scroll": 400 }` / `{ "scroll": L }` | wheel by pixels / bring an element into view | |
 | `{ "waitFor": L }` | wait off pace | `state`: visible, hidden, attached, detached |
-| `{ "verify": L }` | a check (CRITERION on failure); without a condition: visible. `text` / `exactText` compare the element's rendered text (innerText, whitespace collapsed, child elements included: `<strong>2</strong> items left` is "2 items left") or its source text, so a label CSS shows in capitals still matches as written ("Paused" for "PAUSED"); a check that fails only on case says so | `text` (contains or /regex/), `exactText`, `value`, `count` (visible matches), `state` (visible, hidden, enabled, disabled, checked, unchecked, editable, focused) |
+| `{ "verify": L }` | a check (CRITERION on failure); without a condition: visible. `text` / `exactText` compare the element's rendered text (innerText, whitespace collapsed, child elements included: `<strong>2</strong> items left` is "2 items left") or its source text, so a label CSS shows in capitals still matches as written ("Paused" for "PAUSED"); a check that fails only on case says so | `text` (contains or /regex/), `exactText`, `value`, `count` (visible matches), `state` (visible, hidden, enabled, disabled, checked, unchecked, selected, unselected, editable, focused; `selected` is aria-selected, for tabs and options; `checked` on a non-checkbox reads aria-selected / aria-checked / aria-pressed) |
 | `{ "verify": { "url": "…" } }` / `{ "verify": { "title": "…" } }` | the page's URL / title contains (or /regex/) | |
 | `{ "capture": L, "as": "code" }` / `{ "capture": { "url": true }, "as": "u" }` | remember a value from the page (a generated id or code, a link) for later steps as `"{vars.code}"`: an element's attribute, else a field's value, else its text; or the page URL. Using a value that was never captured is a SCRIPT failure | `attribute` (e.g. `href`), `pattern` (regex: keeps its first group, or the whole match) |
 | `{ "dialog": "accept" \| "dismiss" }` | how to answer the next alert/confirm/prompt (default accept) | `text` (prompt answer), `expect` (message; CRITERION if different) |
 | `{ "switchTo": "main" \| "popup" \| "last" }` | continue on another tab (see `opensPopup`); only the main tab is filmed | |
 | `{ "download": L }` | click and save the download to `<run>/downloads/` | `saveAs`, `expect` (file name; CRITERION if different) |
 | `{ "waitForResponse": "/api/x" }` | wait for a response; better as an option on the step that triggers it | `status` (else APP), `method` |
-| `{ "mock": "/api/x", "json": … }` | canned responses for the rest of the run; needs `"allowMocks": true` on the tour, and every mock is in report.json `mocks` and the warnings | `status`, `body`, `contentType`, `method`, `times` |
+| `{ "mock": "/api/x", "json": … }` | canned responses for the rest of the run; needs `"allowMocks": true` on the tour (refused for `"style": "verification"`), and every mock is in report.json `mocks`, the warnings and a "Simulated data" caption; reusable sets: `platforms/<p>/mocks/<name>.json`, `"mocks": ["<name>"]` on the tour | `status`, `body`, `contentType`, `method`, `times` |
 | `{ "wait": 1.5 }` / `{ "at": 0.5 }` | pause seconds / wait until that fraction of the narration | |
 | `{ "use": "frag", "with": {…} }` / `{ "code": "x.mjs", "with": {…} }` | a fragment / a code step (see Platforms) | |
 
@@ -217,15 +264,18 @@ RMS), `agenticfoia` (code tours that build and start their own app). `aft platfo
 platforms/<name>/
   platform.json       how the app behaves everywhere: ready (busy indicators, stable page), errors (its error UI),
                       appErrors, ignore (noisy requests/messages, regex), mask, pronounce, viewport, voice,
-                      ignoreHTTPSErrors, startPath, discover.paths, timeouts, retries, trace
-  environments.json   where it runs: { "default": "local", "local": { "baseUrl", "launch" | "attach", "timeouts" }, "qa": {...} }
+                      ignoreHTTPSErrors, startPath, discover.paths, timeouts, retries, trace, video (trimming waits),
+                      workarounds (known issues: see "Known issues")
+  environments.json   where it runs: { "default": "local", "local": { "baseUrl", "launch" | "attach", "timeouts", "workarounds" }, "qa": {...} }
                       launch: start it if nothing answers (attaches if it's already up; "stop": false leaves it running);
-                      if the command exits with an error before it answers, the run stops then (UNREACHABLE) and quotes its log
+                      if the command exits with an error before it answers, the run stops then (UNREACHABLE) and quotes its log;
+                      past "timeoutSeconds" it keeps waiting (up to 3×) while the service's log is still growing
                       attach: [{ "name", "healthUrl" }]: never start anything; down = UNREACHABLE (exit 3)
   login.json          { "default": "<role>", "signedIn": "<css>", "checkPath", "maxAgeMinutes", "roles": { "<role>": { "steps": [...] } } }
                       credentials only as "{env:NAME}"; saved state: auth/<platform>/<env>/<role>.json (git-ignored)
   fragments/          reusable steps: <name>.json { "params": {...}, "steps": [...] } or <name>.mjs (a code step)
   fixtures/           test data: <name>.json { "data": {...}, "setup": [hooks], "teardown": [hooks], "steps": [...] }
+  mocks/              opt-in canned responses: <name>.json { "mocks": [mock steps] }
   requirements.mjs    extra `aft doctor --platform <name>` checks       README.md   what it is, data rules
   tours/              its tours; smoke.tour.json is what `aft platform check` runs
 ```
@@ -271,7 +321,10 @@ a whole tour, like `platforms/agenticfoia/tours/`.
 **Fixtures** hold the data a tour needs. `setup`/`teardown` hooks (`{ "run" }`, `{ "node" }`, `{ "http" }`; run from
 `fixtures/` with `BASE_URL` and `RUN_DIR`) run before the browser starts and after it closes; `steps` run in the
 signed-in browser off camera before the first scene. Their `data` is `"{data.<key>}"` in the tour's steps, so
-narration-visible values live in one place.
+narration-visible values live in one place. A setup hook can **look data up** instead of the tour hard-coding a record
+id: `{ "run": "sqlcmd … -h -1 -Q \"SELECT TOP 1 Id …\"", "output": "text", "as": "caseId" }` (or `"output": "json"`, an
+object merged into data; works for `node` and `http` hooks too) makes `{data.caseId}` available to steps and scene
+`url`s at run time. A `{data.x}` that nothing provided is a SCRIPT failure.
 
 ### Lifecycle
 
@@ -329,7 +382,9 @@ Nested documents have their own `schema`: `aft-snapshot/1`, `aft-locate/1`, `aft
 | `aft try-step '<step or [steps]>' [--url <path>]` | performs them live (fragments and code steps too) and returns each step's report entry, network/console errors during them and the ARIA tree after; exit code = the class |
 
 They use the running session (`--session <name>`, where the name is `<platform>-<env>-<role or anon>` and is in `session start`'s output, or the only one for `--platform`); without one they open a one-shot
-browser for that call (slower: start, sign in, close). A session is one page: state carries over between calls.
+browser for that call (slower: start, sign in, close). A session is one page: state carries over between calls, and
+calls run one at a time: a second call while one is running is refused (busy) rather than interleaved. try-step and
+snapshot handle known issues (workarounds) as a run does and list them under `workarounds`.
 
 The loop, for writing or fixing a tour:
 
@@ -403,6 +458,11 @@ aft session stop
 | `action blocked: the element is covered by <…>` | a dialog, overlay or spinner is over it: close or wait for it first (a fixed header/footer is handled by itself) |
 | `"baseUrl" belongs in the platform` | move it (and login, launch, ready, errors…) to `platforms/<name>/`; the tour keeps `platform`, `env`, `role`, `fixtures`, scenes |
 | `Fragment "x" needs "with"` / `no parameter` | match the fragment's `params` |
+| `known issue "…"` in the warnings | a platform workaround fired: expected in that environment; `"as": "fail"` there makes it a blocker |
+| `workaround "…" step N … failed` / `its UI is still visible` (exit 2) | the workaround's own steps are wrong for that UI; fix them in platform.json (they're scoped to the matched element) |
+| `didn't come up (… is still starting …)` | a slow service (a dev server compiling): raise the launch's `timeoutSeconds` |
+| `looks like a path Git Bash rewrote` | `export MSYS_NO_PATHCONV=1`, or run from PowerShell |
+| `session … is busy` | another call is still running on that session; wait, or start a second one with `--session <name>` |
 | scene overruns its narration | a step waited for its timeout; mark it `"optional": true` (3 s limit) or fix the target |
 
 Reading a trace: `npx playwright show-trace out/<name>/<run>/trace-failed.zip` shows every action with DOM
@@ -415,4 +475,4 @@ tour.json → a run (platform composition, launch/attach, login, hooks, fixtures
 fixtures, init · `platform-cli.mjs` `aft platform` · `session.mjs` / `session-daemon.mjs` sessions, snapshot, locate,
 try-step · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
 `plan.mjs` heuristic and Claude planners, stories · `render.mjs` ffmpeg · `tts.mjs` speech · `auth.mjs` saved logins ·
-`doctor.mjs` checks. Tests: `npm test`.
+`doctor.mjs` checks · `workarounds.mjs` known issues (merge, checkpoint, matching). Tests: `npm test`.

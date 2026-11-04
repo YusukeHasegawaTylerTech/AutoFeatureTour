@@ -94,6 +94,20 @@ export class Tour {
     this.timings = [];
     this.current = null;
     this.t0 = 0;
+    this.waits = []; // { start, end, reason } in recording seconds: ready / waitFor / waitForResponse / workaround
+    this.notes = []; // { at, text }: on-screen known issues, shown as a caption
+  }
+
+  /** A wait the viewer sat through (inside a scene); long ones can be trimmed from the video (render.mjs). */
+  markWait(reason, start, end) {
+    if (!this.current || this.dryRun || !(end > start)) return;
+    this.waits.push({ reason, start: +start.toFixed(3), end: +end.toFixed(3) });
+  }
+
+  /** A caption-worthy note at the current moment (a tolerated known issue on camera). */
+  note(text) {
+    if (!this.current || this.dryRun || this.notes.some(n => n.text === text && n.scene === this.current.id)) return;
+    this.notes.push({ scene: this.current.id, at: +this.now().toFixed(3), text });
   }
 
   /** Launches the browser and starts recording. initScripts: functions or [fn, arg] pairs run in every page. */
@@ -123,16 +137,24 @@ export class Tour {
     // kept but marked "ignored", so known noisy endpoints don't count as causes.
     const ignore = (this.policy?.ignore ?? []).map(r => new RegExp(r, 'i'));
     const keep = (list, item) => {
-      if (list.length >= 500) return;
+      if (list.length >= 500) return {};
       const text = `${item.request ?? ''} ${item.text ?? ''}`;
-      list.push({ at: +this.now().toFixed(2), url: this.page.url(), stepKey: this.stepKey ?? 'setup', step: this.stepLabel ?? null, ...item,
-        ...(ignore.some(r => r.test(text)) ? { ignored: true } : {}) });
+      const entry = { at: +this.now().toFixed(2), url: this.page.url(), stepKey: this.stepKey ?? 'setup', step: this.stepLabel ?? null, ...item,
+        ...(ignore.some(r => r.test(text)) ? { ignored: true } : {}) };
+      list.push(entry);
+      return entry;
     };
     this.page.on('crash', () => { this.crashed = true; keep(this.consoleErrors, { type: 'crash', text: 'the browser page crashed' }); });
     this.page.on('console', m => { if (['error', 'warning'].includes(m.type())) keep(this.consoleErrors, { type: m.type(), text: m.text().slice(0, 2000) }); });
     this.page.on('pageerror', e => keep(this.consoleErrors, { type: 'pageerror', text: String(e.stack ?? e).slice(0, 2000) }));
     this.page.on('requestfailed', r => keep(this.networkFailures, { method: r.method(), request: r.url(), failure: r.failure()?.errorText }));
-    this.page.on('response', r => { if (r.status() >= 400) keep(this.networkFailures, { method: r.request().method(), request: r.url(), status: r.status() }); });
+    // An error response keeps the start of its body (redacted when written): a business-logic status such as 450 says
+    // little without it.
+    this.page.on('response', r => {
+      if (r.status() < 400) return;
+      const entry = keep(this.networkFailures, { method: r.request().method(), request: r.url(), status: r.status() });
+      r.text().then(b => { if (b) entry.body = b.replace(/\s+/g, ' ').trim().slice(0, 500); }).catch(() => {});
+    });
     this.t0 = Date.now();
     return this.page;
   }
@@ -144,6 +166,8 @@ export class Tour {
     await old?.delete().catch(() => {});
     await this.browser?.close().catch(() => {});
     this.timings = [];
+    this.waits = [];
+    this.notes = [];
     return this.start(opts);
   }
 
@@ -165,7 +189,12 @@ export class Tour {
     await fn(this);
     await this.at(1);
     const end = this.now();
-    this.timings.push({ id, start: +this.current.start.toFixed(3), end: +end.toFixed(3) });
+    const start = this.current.start;
+    const inScene = x => x.start >= start && x.start < end;
+    this.timings.push({ id, start: +start.toFixed(3), end: +end.toFixed(3),
+      ...(this.waits.some(inScene) ? { waits: this.waits.filter(inScene) } : {}),
+      ...(this.notes.some(n => n.scene === id) ? { notes: this.notes.filter(n => n.scene === id).map(({ at, text }) => ({ at, text })) } : {}),
+      ...(this.mockedScenes?.has(id) ? { mocked: true } : {}) });
     log(`${id} end (${(end - this.current.start).toFixed(1)} s)`);
     await this.screenshot(id);
   }
@@ -204,6 +233,12 @@ export class Tour {
     if (cover?.pinned) {
       await target.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest' })).catch(() => {});
       await sleep(300);
+      ({ x, y } = await this.moveTo(target, move));
+      cover = await coveredBy(target, x, y);
+    }
+    // Covered by a known issue (a workaround's popup): dismiss it and look again. A tolerated one that really covers
+    // the target still blocks.
+    if (cover && !cover.detached && this.workarounds?.any && await this.workarounds.checkpoint(this)) {
       ({ x, y } = await this.moveTo(target, move));
       cover = await coveredBy(target, x, y);
     }
@@ -386,8 +421,21 @@ export function probe(url, { any = false, timeout = 3000 } = {}) {
  * with an error code, and quotes the last lines of its logFile, instead of waiting out the timeout for a server that already crashed.
  */
 export async function waitForHttp(url, { ms = 60000, hint = '', any = false, proc, logFile, label = 'launch command' } = {}) {
-  const until = Date.now() + ms;
-  while (Date.now() < until) {
+  let until = Date.now() + ms;
+  const hardStop = Date.now() + ms * 3;
+  const size = () => { try { return fs.statSync(logFile).size; } catch { return -1; } };
+  let lastSize = logFile ? size() : -1, grewAt = Date.now(), extended = false;
+  for (;;) {
+    // A service still writing to its log is still starting (a dev server compiling): keep waiting, up to 3× the
+    // timeout, instead of failing while it works.
+    if (logFile) { const s = size(); if (s !== lastSize) { lastSize = s; grewAt = Date.now(); } }
+    if (Date.now() >= until) {
+      if (logFile && Date.now() - grewAt < 60000 && Date.now() < hardStop) {
+        if (!extended) log(`${label}: not answering after ${Math.round(ms / 1000)}s, but its log is still growing; waiting longer`);
+        extended = true;
+        until = Date.now() + 30000;
+      } else break;
+    }
     if (await probe(url, { any })) return;
     // Exit code 0 can be a launcher that started the server in the background (docker compose up -d): keep waiting.
     if (proc && proc.exitCode !== null && proc.exitCode !== 0) {
@@ -396,5 +444,6 @@ export async function waitForHttp(url, { ms = 60000, hint = '', any = false, pro
     }
     await sleep(1000);
   }
-  throw new Error(`${url} didn't come up${hint ? `; ${hint}` : ''}`);
+  const still = extended && Date.now() - grewAt < 60000;
+  throw new Error(`${url} didn't come up${still ? ` (${label} is still starting: its log is still growing; raise the launch's "timeoutSeconds", now ${Math.round(ms / 1000)})` : ''}${hint ? `; ${hint}` : ''}`);
 }

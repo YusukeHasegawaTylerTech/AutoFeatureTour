@@ -27,6 +27,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertValid, schemaRef } from './schema.mjs';
+import { mergeWorkarounds, workaroundProblems } from './workarounds.mjs';
 
 const SAFE = /^[A-Za-z0-9_-]+$/;
 
@@ -34,7 +35,7 @@ export class PlatformError extends Error {}
 
 /** Keys that belong to the platform; a platform tour may not set them. */
 export const PLATFORM_KEYS = ['baseUrl', 'environments', 'launch', 'attach', 'login', 'ready', 'errors', 'appErrors', 'ignore', 'mask',
-  'ignoreHTTPSErrors', 'startPath', 'discover', 'target'];
+  'ignoreHTTPSErrors', 'startPath', 'discover', 'target', 'workarounds'];
 
 /** Where platforms live: AFT_PLATFORMS, else the nearest platforms/ above `from`, else the tool's own. */
 export function platformsDir(toolRoot, from) {
@@ -84,7 +85,7 @@ export const envNames = p => Object.keys(p.environments).filter(k => k !== 'defa
  * The settings a run needs for one platform, environment and role, in the shape tour.json used to carry them:
  * platform.json, then the environment over it (timeouts merged), then login for the role.
  */
-export function platformConfig(p, { env, role } = {}) {
+export function platformConfig(p, { env, role, platformRulesOnly = false } = {}) {
   const envName = env ?? p.defaultEnv;
   const e = envName ? p.environments[envName] : {};
   if (envName && !e) throw new PlatformError(`Platform ${p.name} has no environment "${envName}" (has: ${envNames(p).join(', ') || 'none'})`);
@@ -94,6 +95,12 @@ export function platformConfig(p, { env, role } = {}) {
   if (cfg.launch) cfg.launch = [cfg.launch].flat().map(l => ({ ...l, cwd: path.resolve(p.dir, l.cwd ?? '.') }));
   delete cfg.comment;
   if (ignore?.length) cfg.appErrors = { ...cfg.appErrors, ignore: [...(cfg.appErrors?.ignore ?? []), ...ignore] };
+  // Known issues: the platform's, refined by the environment's (by name). A --base-url one-off isn't that
+  // environment, so it gets the platform's rules only.
+  cfg.workarounds = mergeWorkarounds(base.workarounds, platformRulesOnly ? [] : e?.workarounds, envName);
+  const problems = workaroundProblems(cfg.workarounds);
+  if (problems.length) throw new PlatformError(`Platform ${p.name}:\n  ${problems.join('\n  ')}`);
+  if (!cfg.workarounds.length) delete cfg.workarounds;
   if (p.login) {
     const roleName = role ?? p.login.default ?? Object.keys(p.login.roles ?? {})[0];
     const r = p.login.roles?.[roleName];
@@ -177,6 +184,18 @@ export function expandSteps(steps = [], { dirs, data = {}, stack = [] } = {}) {
 }
 
 const omit = (o, keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
+
+/** Steps of the platform's mock sets (mocks/<name>.json), in order. */
+export function loadMocks(p, names = []) {
+  const steps = [];
+  for (const n of names) {
+    if (!SAFE.test(n)) throw new PlatformError(`Mock set names must match ${SAFE} (got "${n}")`);
+    const file = path.join(p.dir, 'mocks', `${n}.json`);
+    if (!fs.existsSync(file)) throw new PlatformError(`Platform ${p.name} has no mock set "${n}" (${file})`);
+    steps.push(...readJson(file, undefined, 'mocks').mocks.map(m => ({ ...m, from: `mocks/${n}` })));
+  }
+  return steps;
+}
 
 /** Reads the tour's fixtures: their data (merged, later wins) and setup/teardown hooks (run in the fixture's folder). */
 export function loadFixtures(p, names = []) {

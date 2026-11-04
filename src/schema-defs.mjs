@@ -88,7 +88,9 @@ const text = str('The text to enter. Use "{env:NAME}" with "secret": true for cr
 const secret = bool('The value is a credential: set without typing, never logged, scrubbed from reports.');
 
 export const ACTIONS = {
-  goto: action('goto', 'Navigate to a path relative to the environment\'s baseUrl (never an absolute URL in a platform tour).', str('Path, e.g. "/orders" or "#/home".')),
+  goto: action('goto', 'Navigate to a path relative to the environment\'s baseUrl (never an absolute URL in a platform tour). The URL already open is reloaded (a hash route would not navigate).', str('Path, e.g. "/orders" or "#/home".'), {
+    reload: bool('Load the page afresh after navigating (clears UI state a hash-route change would keep).'),
+  }),
   click: action('click', 'Move the cursor to the element and click it.', loc('The element to click.'), {
     button: { enum: ['left', 'right', 'middle'], description: 'Mouse button (default left).' },
     modifiers: { type: 'array', items: { enum: ['Alt', 'Control', 'Meta', 'Shift', 'ControlOrMeta'] }, description: 'Keys held during the click.' },
@@ -132,7 +134,8 @@ export const ACTIONS = {
       exactText: str('The element\'s text is exactly this (whitespace collapsed).'),
       value: str('A field\'s value is exactly this.'),
       count: num('Exactly this many visible elements match.', { minimum: 0 }),
-      state: { enum: ['visible', 'hidden', 'enabled', 'disabled', 'checked', 'unchecked', 'editable', 'focused'], description: 'The element\'s state.' },
+      state: { enum: ['visible', 'hidden', 'enabled', 'disabled', 'checked', 'unchecked', 'selected', 'unselected', 'editable', 'focused'],
+        description: 'The element\'s state. selected: aria-selected="true" (a tab, an option). checked on something that is not a checkbox, radio or switch reads its aria-selected / aria-checked / aria-pressed.' },
     }),
   capture: action('capture', 'Remember a value from the page for later steps, as "{vars.<as>}" (an id, a generated code, a link): an element\'s attribute, else a field\'s value, else its text; or the page URL. A later step that uses a value never captured is a SCRIPT failure.',
     { description: 'The element to read, or { "url": true } for the page URL.', anyOf: [ref('locator'),
@@ -198,14 +201,43 @@ const mask = obj('Blurred in the page before anything is recorded (video, screen
 });
 const viewport = obj('Browser size in CSS pixels (default 1440×810).', { width: { type: 'integer' }, height: { type: 'integer' } }, { required: ['width', 'height'] });
 const pronounce = { type: 'object', additionalProperties: { type: 'string' }, description: 'Narration substitutions: written form → how to say it ("RMS": "R M S").' };
+// A hook can look test data up (a record id from a query) instead of the tour hard-coding it: "output" makes its
+// stdout (or the HTTP response) data for the run's steps, as {data.<key>}.
+const hookOutput = {
+  output: { enum: ['json', 'text'], description: 'Use what it prints (or the HTTP response) as data: "json" (an object merged into data) or "text" (trimmed, as data.<as>). Setup hooks only.' },
+  as: { type: 'string', pattern: '^[A-Za-z0-9_-]+$', description: 'With "output": "text": the data key ({data.<as>}).' },
+};
 const hook = {
   description: 'A setup/teardown hook, run off camera with BASE_URL and RUN_DIR set.',
   anyOf: [
-    obj('A shell command.', { run: str('Command line.'), cwd: str('Working folder, relative to the file.'), optional: bool('Failure is only a warning.') }, { required: ['run'] }),
-    obj('A Node script.', { node: str('Script path, relative to the file.'), args: { type: 'array', items: { type: 'string' } }, optional: bool('Failure is only a warning.') }, { required: ['node'] }),
-    obj('An HTTP request.', { http: obj('The request.', { method: str('Default POST.'), url: str('Relative to baseUrl.'), headers: { type: 'object', additionalProperties: { type: 'string' } }, body: { description: 'JSON value or string.' } }, { required: ['url'] }), optional: bool('A non-2xx answer is only a warning.') }, { required: ['http'] }),
+    obj('A shell command.', { run: str('Command line.'), cwd: str('Working folder, relative to the file.'), optional: bool('Failure is only a warning.'), ...hookOutput }, { required: ['run'] }),
+    obj('A Node script.', { node: str('Script path, relative to the file.'), args: { type: 'array', items: { type: 'string' } }, optional: bool('Failure is only a warning.'), ...hookOutput }, { required: ['node'] }),
+    obj('An HTTP request.', { http: obj('The request.', { method: str('Default POST.'), url: str('Relative to baseUrl.'), headers: { type: 'object', additionalProperties: { type: 'string' } }, body: { description: 'JSON value or string.' } }, { required: ['url'] }), optional: bool('A non-2xx answer is only a warning.'), ...hookOutput }, { required: ['http'] }),
   ],
 };
+const video = obj('Post-processing of the recording.', {
+  trimWaits: { enum: ['cut', 'speed', 'off'], description: 'Long waits (page loads, busy indicators, waitFor, waitForResponse, dismissed known issues): cut them (default), speed them up, or keep them. The narration is never cut. --no-trim keeps them for one run.' },
+  trimWaitsOver: num('Only waits longer than this many seconds (default 1.5).', { minimum: 0 }),
+  speed: num('With "speed": how much faster (default 4).', { minimum: 1 }),
+  leadIn: num('Seconds of each trimmed wait that stay, so the cut is not jarring (default 0.3).', { minimum: 0 }),
+});
+const workaround = obj('A known app or environment issue: what it looks like, what to do about it, how to report it. Tours never mention it; when the issue is absent nothing happens.', {
+  name: str('Unique name; reports say "known issue <name>". An environment rule with the same name refines the platform\'s.'),
+  comment: str('A note for people (why it happens, the ticket).'),
+  when: { description: 'What the issue looks like: a locator (popup, panel, banner, toast), a failing request, or a console message / uncaught exception.',
+    anyOf: [ref('locator'),
+      obj('A failing request.', { request: str('URL substring, or /regex/.'), status: { description: 'HTTP status: 503, "5xx", "4xx", or a list (default any failure).', anyOf: [{ type: 'integer' }, { type: 'string', pattern: '^\\dxx$' }, { type: 'array', items: { anyOf: [{ type: 'integer' }, { type: 'string', pattern: '^\\dxx$' }] } }] }, method: str('Only this HTTP method.') }, { required: ['request'] }),
+      obj('A console error or uncaught exception.', { console: str('Message substring, or /regex/.') }, { required: ['console'] })] },
+  paths: { type: 'array', items: { type: 'string' }, description: 'Only on pages whose URL contains (or matches /regex/) one of these.' },
+  do: { description: 'Steps that dismiss it (scoped to the matched element unless "scoped": false; its UI must be gone afterwards unless "noWaitAfter"), "tolerate" (leave it; it does not fail the step through errors / appErrors), or "hide" (CSS display:none: fakes the app\'s state, reported as such). Default tolerate.',
+    anyOf: [{ enum: ['tolerate', 'hide'] }, { ...ref('steps'), minItems: 1 }] },
+  as: { enum: ['warn', 'fail', 'silent'], description: 'warn (default: in the report, the run passes), fail (APP, exit 5: this known issue must not happen here), silent (report.json only).' },
+  times: num('At most this many firings per run; after that it is a normal error again.', { minimum: 1 }),
+  noWaitAfter: bool('After its steps, do not wait for the UI to go.'),
+  scoped: bool('false: its steps search the whole page, not just inside the matched element.'),
+  off: bool('In an environment: turn the platform\'s rule of this name off there.'),
+}, { required: ['name'] });
+const workarounds = { type: 'array', items: workaround, description: 'Known issues (see the workaround definition). Platform rules apply everywhere; environments refine them by name.' };
 const hooks = obj('Test data, off camera: setup before the browser starts, teardown after it closes (teardown runs whenever setup ran).', { setup: { type: 'array', items: hook }, teardown: { type: 'array', items: hook } });
 const launch1 = obj('A service the run starts when nothing answers at healthUrl (already up: used as is, never stopped).', {
   name: str('Label for logs.'), command: str('Shell command that starts it (run from the platform folder).'), cwd: str('Working folder, relative to the platform folder.'),
@@ -220,6 +252,7 @@ const environment = obj('One deployment of the app.', {
   launch: { description: 'Start the app if it isn\'t running: one service or a list.', anyOf: [launch1, { type: 'array', items: launch1 }] },
   attach: { description: 'Attach-only: these must already be running.', type: 'array', items: attach1 },
   timeouts, ready, ignoreHTTPSErrors: bool('Accept self-signed certificates.'),
+  workarounds: { ...workarounds, description: 'Known issues in this environment, merged with the platform\'s by name: a new name adds a rule here only; the same name refines it (partial entries are merged over the platform rule, "off": true disables it here).' },
 }, { required: ['baseUrl'] });
 
 const scene = obj('One scene: narration over the steps that show it.', {
@@ -238,7 +271,7 @@ const story = obj('The user story the tour verifies.', {
 const PLATFORM_ONLY = { baseUrl: environment.properties.baseUrl, environments: { type: 'object', additionalProperties: environment, description: 'Stand-alone tours only.' },
   launch: environment.properties.launch, login: { description: 'Stand-alone tours only: { "role", "steps", "signedIn", "checkPath", "maxAgeMinutes" }.', type: 'object' },
   ready, errors, appErrors, mask, ignoreHTTPSErrors: bool('Stand-alone tours only.'), startPath: str('Stand-alone tours only.'), target: str('Stand-alone tours only: auth folder name.'),
-  discover: { type: 'object', description: 'Stand-alone tours only.' } };
+  discover: { type: 'object', description: 'Stand-alone tours only.' }, workarounds: { ...workarounds, description: 'Stand-alone tours only.' } };
 
 export const SCHEMAS = {
   common,
@@ -252,7 +285,9 @@ export const SCHEMAS = {
       story, scenes: { type: 'array', minItems: 1, items: scene, description: 'The scenes, in order.' },
       timeouts, retries: num('Retries for actions that time out (default 1).'), onError: { enum: ['fail', 'skip'], description: '"skip": an action that can\'t be done is skipped (checks still fail). Default fail.' },
       hooks, voice: str('SAPI voice name.'), pronounce, viewport, trace: bool('false: no trace.zip (it holds network traffic and DOM).'),
-      allowMocks: bool('Permit "mock" steps. Mocked responses are listed in the report.'),
+      allowMocks: bool('Permit "mock" steps. Mocked responses are listed in the report; scenes a mock answered in get a "simulated data" caption. Refused for "style": "verification".'),
+      mocks: { type: 'array', items: { type: 'string', pattern: '^[A-Za-z0-9_-]+$' }, description: 'Mock sets from the platform\'s mocks/ folder, applied off camera before the first scene (needs allowMocks).' },
+      video,
       comment: str('A note for people.'), style: str('Generation hint (verification, demo, training); the engine ignores it.'),
       generatedBy: str('Which planner wrote it.'), plannedAt: str('When it was generated.'), draft: bool('Generated with gaps; recording refuses unless --allow-draft.'),
       needs: { type: 'array', items: { type: 'string' }, description: 'What a draft still needs.' },
@@ -264,7 +299,7 @@ export const SCHEMAS = {
     properties: { ...$schemaProp, comment: str('A note for people.'), ready, errors, appErrors, ignore: appErrors.properties.ignore, mask, pronounce, viewport, voice: str('SAPI voice.'),
       ignoreHTTPSErrors: bool('Accept self-signed certificates.'), startPath: str('Where sessions and discovery start (default /).'),
       discover: obj('Discovery hints.', { paths: { type: 'array', items: { type: 'string' }, description: 'Extra paths to crawl.' } }),
-      timeouts, retries: num('Retries for actions that time out (default 1).'), trace: bool('false: no trace.zip.') },
+      timeouts, retries: num('Retries for actions that time out (default 1).'), trace: bool('false: no trace.zip.'), video, workarounds },
   }),
   environments: file('environments', 'AutoFeatureTour environments (platforms/<name>/environments.json)', 'Where the app runs: one entry per environment, plus "default".', {
     type: 'object', properties: { ...$schemaProp, default: str('The environment used when none is given.') },
@@ -290,9 +325,13 @@ export const SCHEMAS = {
       setup: { type: 'array', items: hook, description: 'Before the browser starts (run from fixtures/).' }, teardown: { type: 'array', items: hook, description: 'After the browser closes.' },
       steps: ref('steps') },
   }),
+  mocks: file('mocks', 'AutoFeatureTour mock set (platforms/<name>/mocks/<set>.json)', 'Canned responses a tour can opt into with "mocks": ["<set>"] (and "allowMocks": true). Mocked runs are not end to end; reports and captions say so.', {
+    type: 'object', additionalProperties: false, required: ['mocks'],
+    properties: { ...$schemaProp, description: str('What it simulates and why.'), mocks: { type: 'array', minItems: 1, items: ref('action_mock'), description: 'mock steps.' } },
+  }),
 };
 
-export const TYPES = ['tour', 'platform', 'environments', 'login', 'fragment', 'fixture'];
+export const TYPES = ['tour', 'platform', 'environments', 'login', 'fragment', 'fixture', 'mocks'];
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) && process.argv.includes('--write')) {
   const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'schemas');
