@@ -44,6 +44,8 @@ aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm cla
 aft render   <tour> [--record]  narration over title cards or hand-made clips (no browser), or a recording
 aft login    --platform <name> [--target <env>] [--role <name>] [--manual]   (or aft login <tour.json>)
 aft platform list | init <name> | discover <name> | check <name> [--target <env>]
+aft session start|status|stop [--platform <name>]    a warm, signed-in browser for the three below
+aft snapshot [--url <path>]  ·  aft locate "<target>"  ·  aft try-step '<step json>'
 aft doctor [--platform <name>] | --help | --version | --list-voices
 ```
 
@@ -55,6 +57,7 @@ aft doctor [--platform <name>] | --help | --version | --list-voices
 | `--script <file>` | the tour file, as an alternative to the positional argument |
 | `--out <folder>` | use this folder if it's new or empty; otherwise a run subfolder is made inside it |
 | `--name <name>` | run name (default: story id + tour name) |
+| `--json` | one JSON result on stdout (`"schema": "aft-cli/1"`), logs on stderr; for agents and pipelines |
 | `--headed` | show the browser (default headless) |
 | `--speech sapi\|silent` | narration voice: Windows SAPI (default on Windows) or silent audio (default elsewhere; use it for CI) |
 | `--voice <name>`, `--rate -10..10`, `--tail <s>` | SAPI voice, speed, pause after each scene |

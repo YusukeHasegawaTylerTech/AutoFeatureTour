@@ -48,7 +48,7 @@ aft run      my.tour.json --speech silent                        # headless/CI: 
 aft all      --story story.md --platform todomvc --llm claude                # story → script → dry run → video
 ```
 
-Exit codes: 0 ok · 1 usage/config · 2 SCRIPT failure · 3 app unreachable · 4 CRITERION failure · 5 APP error (see
+Add `--json` to any command for one JSON result on stdout (see "Agent primitives"). Exit codes: 0 ok · 1 usage/config · 2 SCRIPT failure · 3 app unreachable · 4 CRITERION failure · 5 APP error (see
 "When a run fails"). Nothing prompts unless you ask (`login --manual`, `--headed --pause`).
 
 Run folder contents: `tour.mp4` (the video), `tour.vtt` (captions), `recording.webm` (raw browser recording),
@@ -209,6 +209,58 @@ aft platform check myapp [--target qa]                      # doctor → setting
 `aft platform check` passing in an environment means the platform is ready there. It stops at the first failing
 stage; a failing smoke tour exits with its own class (LOGIN 6, UNREACHABLE 3, SCRIPT 2…).
 
+## Agent primitives and the iteration loop
+
+The tool doesn't decide anything; it answers questions about the run and the page. Every command takes `--json`:
+stdout is then exactly one JSON document and every log line goes to stderr.
+
+```json
+{ "schema": "aft-cli/1", "command": "run", "ok": false, "exitCode": 2, "class": "script",
+  "runDir": "…/out/todomvc/20261104-125141-5xma", "report": "…/report.json",
+  "error": { "message": "SCRIPT failure: scene-02 step 3 …: Target not found: \"Svae\" (did you mean \"Save\"?)" }, "data": null }
+```
+
+`ok`, `exitCode` and `class` follow the exit-code table above; `data` is the command's result (`validate`:
+`{ steps, failed, blocking, report }`; `run`: `{ video, seconds }`; `doctor`: `{ ok, checks }`; `platform list`:
+`{ platforms }`…) and is kept on failure when there is one (a failing `validate` still returns its table).
+Nested documents have their own `schema`: `aft-snapshot/1`, `aft-locate/1`, `aft-try-step/1`, `aft-session/1`,
+`aft-doctor/1`, `aft-report/1`.
+
+| command | answers |
+|---|---|
+| `aft session start --platform <p> [--target <env>] [--role <r>]` | opens a warm, signed-in browser (launching or attaching to the app as a run does) and keeps it; `status`, `stop` (stops only what it started; `--all`) |
+| `aft snapshot [--url <path>] [--screenshot]` | `{ url, title, aria, text }`: the ARIA tree is the names steps can target |
+| `aft locate "<target>"` | `{ resolved, strategy, uses, ambiguous, matches[], strategies[], alternatives[] }`: what a step with this target would act on, without acting |
+| `aft try-step '<step or [steps]>' [--url <path>]` | performs them live (fragments and code steps too) and returns each step's report entry, network/console errors during them and the ARIA tree after; exit code = the class |
+
+They use the running session (`--session <name>`, or the only one for `--platform`); without one they open a one-shot
+browser for that call (slower: start, sign in, close). A session is one page: state carries over between calls.
+
+The loop, for writing or fixing a tour:
+
+```
+aft session start --platform todomvc --json                      # once; {"data": {"status": "ready", "url": …}}
+aft snapshot --url "#/" --json                                   # read data.aria for the real names
+aft locate "What needs to be done?" --json                       # {"resolved": true, "strategy": {"role": "textbox", "name": …}}
+aft try-step '{"use": "add-todo", "with": {"text": "Buy milk"}}' --json
+aft try-step '{"verify": {"text": "Buy milk"}}' --json             # {"ok": true, …}; on false: data.steps[n].suggestions
+#  … write the steps that worked into the tour …
+aft validate <tour.json> --json                                  # every step against a fresh browser
+aft run <tour.json> --json                                       # the video; on failure read data / report.json / triage/
+aft session stop
+```
+
+`try-step` output (shortened):
+
+```json
+{ "schema": "aft-try-step/1", "ok": false, "class": "script", "error": "SCRIPT failure: try-step step 1 {\"click\":\"Svae\"}: Target not found: \"Svae\" (did you mean \"Save\"?)",
+  "steps": [ { "step": 1, "action": "click", "ok": false, "failure": "script", "error": "Target not found: \"Svae\"", "suggestions": ["Save"] } ],
+  "network": [], "console": [], "after": { "url": "http://localhost:3000/ok", "title": "OK", "aria": "- heading \"Fixture\" [level=1]\n- textbox \"Name\"\n- button \"Save\"" } }
+```
+
+`try-step` really performs the steps (it can change data, like `validate`). Sessions write `<tool>/.sessions/<name>.json`
+(git-ignored; it holds the local control token) and log to `out/sessions/<name>/<run>/session.log`.
+
 ## Story to video (for agents)
 
 1. Save the story as a file (id like `RMS-6142`, title, description, `Acceptance criteria:` list); see
@@ -238,7 +290,7 @@ stage; a failing smoke tour exits with its own class (LOGIN 6, UNREACHABLE 3, SC
 - **Never overwrite a previous run.** Use `newRunDir`; no fixed output paths, no shared temp files, free ports.
 - **Rendering never depends on an LLM.** LLMs may write scripts; scripts are files a person can review.
 - `--llm claude` sends the discovery inventory and story text to Claude; only use it where that's allowed.
-- Never commit `out/`, `auth/` or `.env`.
+- Never commit `out/`, `auth/`, `.sessions/` or `.env`.
 
 ## Troubleshooting
 
@@ -263,6 +315,7 @@ snapshots, the console and network; find the last red action.
 
 `src/cli.mjs` commands and run folders · `steps.mjs` step runner, locators, suggestions, code steps · `declarative.mjs`
 tour.json → a run (platform composition, launch/attach, login, hooks, fixtures) · `platform.mjs` platforms, fragments,
-fixtures, init · `platform-cli.mjs` `aft platform` · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
+fixtures, init · `platform-cli.mjs` `aft platform` · `session.mjs` / `session-daemon.mjs` sessions, snapshot, locate,
+try-step · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
 `plan.mjs` heuristic and Claude planners, stories · `render.mjs` ffmpeg · `tts.mjs` speech · `auth.mjs` saved logins ·
 `doctor.mjs` checks. Tests: `npm test`.

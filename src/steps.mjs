@@ -39,26 +39,30 @@ export function actionOf(step) {
   return a;
 }
 
-/** Candidate locators for a target, most specific first. */
-function candidates(page, target) {
+/** Candidate locators for a target, most specific first; each carries "how" (the equivalent target, for aft locate). */
+export function candidates(page, target) {
+  const as = (loc, how) => Object.assign(loc, { how });
   if (typeof target === 'string') {
-    if (target.startsWith('css=')) return [page.locator(target.slice(4))];
-    if (/^[#.[]/.test(target)) return [page.locator(target)];
-    const exact = ROLES.map(role => page.getByRole(role, { name: target, exact: true }));
-    return [...exact, page.getByLabel(target, { exact: true }), page.getByPlaceholder(target, { exact: true }),
-      ...ROLES.slice(0, 4).map(role => page.getByRole(role, { name: target })), page.getByText(target, { exact: true }), page.getByText(target),
+    if (target.startsWith('css=')) return [as(page.locator(target.slice(4)), { css: target.slice(4) })];
+    if (/^[#.[]/.test(target)) return [as(page.locator(target), { css: target })];
+    const exact = ROLES.map(role => as(page.getByRole(role, { name: target, exact: true }), { role, name: target, exact: true }));
+    return [...exact, as(page.getByLabel(target, { exact: true }), { label: target, exact: true }),
+      as(page.getByPlaceholder(target, { exact: true }), { placeholder: target, exact: true }),
+      ...ROLES.slice(0, 4).map(role => as(page.getByRole(role, { name: target }), { role, name: target })),
+      as(page.getByText(target, { exact: true }), { text: target, exact: true }), as(page.getByText(target), { text: target }),
       // A form field by its name attribute (inputs without a visible label).
-      ...(/^[A-Za-z_][\w.-]*$/.test(target) ? [page.locator(`[name="${target}"]`)] : []),
+      ...(/^[A-Za-z_][\w.-]*$/.test(target) ? [as(page.locator(`[name="${target}"]`), { css: `[name="${target}"]` })] : []),
       // Last resort: something shaped like a custom element's tag name (forge-app-bar, my-widget) as CSS.
-      ...(/^[a-z][a-z0-9]*(-[a-z0-9]+)+$/.test(target) ? [page.locator(target)] : [])];
+      ...(/^[a-z][a-z0-9]*(-[a-z0-9]+)+$/.test(target) ? [as(page.locator(target), { css: target })] : [])];
   }
   const t = target;
-  if (t.css) return [page.locator(t.css)];
-  if (t.testId) return [page.getByTestId(t.testId)];
-  if (t.role) return [page.getByRole(t.role, { name: t.name, exact: t.exact ?? false })];
-  if (t.label) return [page.getByLabel(t.label)];
-  if (t.placeholder) return [page.getByPlaceholder(t.placeholder)];
-  if (t.text) return [page.getByText(t.text, { exact: t.exact ?? false })];
+  const how = Object.fromEntries(Object.entries(t).filter(([k]) => k !== 'nth'));
+  if (t.css) return [as(page.locator(t.css), how)];
+  if (t.testId) return [as(page.getByTestId(t.testId), how)];
+  if (t.role) return [as(page.getByRole(t.role, { name: t.name, exact: t.exact ?? false }), how)];
+  if (t.label) return [as(page.getByLabel(t.label), how)];
+  if (t.placeholder) return [as(page.getByPlaceholder(t.placeholder), how)];
+  if (t.text) return [as(page.getByText(t.text, { exact: t.exact ?? false }), how)];
   throw new Error(`Unusable target ${JSON.stringify(target)}`);
 }
 

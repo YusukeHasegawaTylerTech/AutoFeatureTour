@@ -6,3 +6,7 @@ auth/
 platforms/*/clips/
 platforms/*/tours/clips/
 *.webm
+.sessions/
+
+# Local model files (whisper, VAD, detection); large, downloaded separately
+models/

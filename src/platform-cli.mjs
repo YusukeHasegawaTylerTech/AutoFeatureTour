@@ -20,23 +20,29 @@ export async function platformCommand(args, { toolRoot, commands, appSettings, U
   switch (sub) {
     case 'list':
     case undefined: {
+      const list = [];
       for (const n of listPlatforms(root)) {
         let p;
-        try { p = loadPlatform(toolRoot, n, { from: root }); } catch (e) { console.log(`${n.padEnd(16)} (broken: ${e.message.split('\n')[0]})`); continue; }
+        try { p = loadPlatform(toolRoot, n, { from: root }); } catch (e) {
+          list.push({ name: n, error: e.message.split('\n')[0] });
+          console.log(`${n.padEnd(16)} (broken: ${e.message.split('\n')[0]})`);
+          continue;
+        }
         const envs = envNames(p).map(e => (e === p.defaultEnv ? `${e}*` : e)).join(', ') || '-';
         const roles = Object.keys(p.login?.roles ?? {}).join(', ') || '-';
         const tours = fs.existsSync(path.join(p.dir, 'tours')) ? fs.readdirSync(path.join(p.dir, 'tours')).filter(f => /\.tour\.(json|mjs)$/.test(f)).length : 0;
         console.log(`${n.padEnd(16)} environments: ${envs.padEnd(18)} roles: ${roles.padEnd(12)} tours: ${tours}`);
+        list.push({ name: n, dir: p.dir, environments: envNames(p), defaultEnv: p.defaultEnv ?? null, roles: Object.keys(p.login?.roles ?? {}), tours });
       }
       console.log(`\n(${root}; * = default environment)`);
-      return;
+      return { root, platforms: list };
     }
     case 'init': {
       need();
       const dir = initPlatform(root, name, { baseUrl: args.baseUrl });
       log(`created ${dir}`);
       log(`next: edit environments.json (baseUrl) and login.json, then  aft platform check ${name}`);
-      return;
+      return { dir };
     }
     case 'discover': {
       need();
@@ -70,7 +76,7 @@ async function check(name, args, { toolRoot, commands, appSettings, UsageError, 
   };
   let app;
   const steps = [
-    ['machine', async () => { if (!(await doctor({ toolRoot, platform: name, quiet: true }))) throw new Error(`aft doctor --platform ${name} lists what's missing`); return 'aft doctor passes'; }],
+    ['machine', async () => { if (!(await doctor({ toolRoot, platform: name, quiet: true })).ok) throw new Error(`aft doctor --platform ${name} lists what's missing`); return 'aft doctor passes'; }],
     ['settings', async () => { app = appSettings({ ...args, platform: name }); return `environment ${app.env ?? '(none)'}, role ${app.cfg.login?.role ?? '(no login)'}`; }],
     ['reachable', async () => {
       if (!app.cfg.baseUrl) throw new Error('no baseUrl in environments.json');

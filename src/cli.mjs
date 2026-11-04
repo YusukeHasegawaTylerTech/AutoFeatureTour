@@ -13,8 +13,16 @@
 //   aft login    --platform <name> | <tour.json> [--target <env>] [--role <name>] [--manual]   save auth/<platform>/<env>/<role>.json
 //   aft platform list | init <name> [--base-url <url>] | discover <name> | check <name>   onboard an app (AGENTS.md, Platforms)
 //   aft doctor   [--platform <name>]                  check this machine (+ platforms' requirements.mjs); exit 1 if missing
+//   aft session  start|status|stop [--platform <name>] [--target <env>] [--role <r>] [--session <name>] [--headed]
+//                                                    a warm, signed-in browser for the commands below (stop: only what it started)
+//   aft snapshot [--url <path>] [--screenshot]        the page now: URL, title, ARIA snapshot, visible text
+//   aft locate   "<target>"                           how a step target resolves: strategy, matches, visible, alternatives
+//   aft try-step '<step | [steps]>' [--url <path>]    perform steps live (fragments too): result per step + ARIA after
+//     (snapshot/locate/try-step use --session, or the only session for --platform, else a one-shot browser)
 //   aft --list-voices | --help | --version
 //
+// --json: on every command, one JSON document on stdout ("schema": "aft-cli/1": command, ok, exitCode, class, runDir,
+// data | error); all logs go to stderr. Without it, stdout is human-readable.
 // Target selection: a tour names its platform (platforms/<name>/); --target <environment> (alias --env) and --role pick
 // among the platform's; --base-url <url> or BASE_URL override the URL. --platform <name> for generate/discover/login. Other flags:
 // --out <folder>, --name <run name>, --headed, --speech sapi|silent, --voice, --rate, --tail, --no-captions,
@@ -37,8 +45,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { saveLogin } from './auth.mjs';
-import { composeTour, ConfigError, loadTourJson, readTourJson } from './declarative.mjs';
+import { ConfigError, loadTourJson } from './declarative.mjs';
+import { appSettingsFor } from './cli-app.mjs';
 import { platformCommand } from './platform-cli.mjs';
+import { call, parseArg, readSessions, Session, sessionName, sessionsDir, startDaemon } from './session.mjs';
 import { loadPlatform } from './platform.mjs';
 import { discover } from './discover.mjs';
 import { doctor } from './doctor.mjs';
@@ -97,12 +107,17 @@ function endRun(r, status, extra = {}) {
 }
 
 let currentRun = null;
+/** For --json: the run folder of the command, and data to report even when the command fails (validate). */
+let lastRunDir = null, lastData = null;
 
 async function withRun(name, args, command, fn) {
   const r = startRun(name, args, command);
   currentRun = r;
+  lastRunDir = r.dir;
   try {
-    endRun(r, 'done', (await fn(r.dir)) ?? {});
+    const result = (await fn(r.dir)) ?? {};
+    endRun(r, 'done', result);
+    return { runDir: r.dir, ...result };
   } catch (e) {
     // Failures outside a recording (narration, ffmpeg, the disk, discovery, planning) still get a report and bundle.
     if (!fs.existsSync(path.join(r.dir, 'report.json')) || JSON.parse(fs.readFileSync(path.join(r.dir, 'report.json'), 'utf8')).result === 'RUNNING') {
@@ -326,14 +341,8 @@ async function render(def, tourDir, outDir, args) {
  * The app's settings without a tour to run: --platform <name> (its environment and role), or --tour <tour.json>
  * (a platform tour or a stand-alone one). null when neither is given.
  */
-function appSettings(args) {
-  if (!args.platform && !args.tour) return null;
-  const file = args.tour ? path.resolve(args.tour) : path.join(toolRoot, '_platform.tour.json');
-  const raw = args.tour ? readTourJson(file) : { name: args.platform, platform: args.platform, scenes: [] };
-  if (args.platform && args.tour && raw.platform && raw.platform !== args.platform) throw new UsageError(`${args.tour} is a tour of ${raw.platform}, not ${args.platform}`);
-  if (args.platform) raw.platform = args.platform;
-  const c = composeTour(raw, { file, toolRoot, env: envOf(args), baseUrl: args.baseUrl, role: args.role });
-  return { ...c, name: raw.platform ?? raw.name };
+function appSettings(args, opts) {
+  try { return appSettingsFor(toolRoot, { ...args, target: envOf(args) }, opts); } catch (e) { throw e instanceof ConfigError ? new UsageError(e.message) : e; }
 }
 
 /** The app URL for generate/all: --base-url, BASE_URL, or the platform / --tour (its environment or baseUrl). */
@@ -386,18 +395,49 @@ async function generateInto(out, args, { url, story, name }) {
 
 const storyName = (story, url) => story?.id ? `${story.id}${url ? `-${new URL(url).hostname}` : ''}` : url ? new URL(url).hostname : 'story';
 
+// ---- Sessions ----------------------------------------------------------------------------------------------------
+
+/** The running session to use: --session <name>, else the only ready one (for --platform/--target if given). */
+function pickSession(args, { required = false } = {}) {
+  const live = readSessions(toolRoot).filter(s => s.alive && s.status === 'ready');
+  if (args.session) {
+    const s = live.find(x => x.name === args.session);
+    if (!s && required) throw new UsageError(`No running session "${args.session}" (running: ${live.map(x => x.name).join(', ') || 'none'})`);
+    return s ?? null;
+  }
+  const match = live.filter(s => (!args.platform || s.platform === args.platform) && (!envOf(args) || s.env === envOf(args)) && (!args.role || s.role === args.role));
+  if (match.length === 1) return match[0];
+  if (match.length > 1) throw new UsageError(`Several sessions match (${match.map(s => s.name).join(', ')}): pick one with --session <name>`);
+  if (required) throw new UsageError('No running session: aft session start --platform <name>');
+  return null;
+}
+
+/** Runs fn on the matching live session, or on a one-shot session started (and stopped) just for this command. */
+async function withSession(args, fn) {
+  const s = args.platform || args.session || args.tour || !(args.baseUrl || process.env.BASE_URL) ? pickSession(args) : null;
+  if (s) { log(`using session ${s.name}`); return fn(s, true); }
+  const app = appSettings(args, { allowBareUrl: true });
+  if (!app) throw new UsageError('Name the app: --platform <name> [--target <env>] (or --base-url <url>), or start a session first: aft session start --platform <name>');
+  const outDir = newRunDir(path.join(path.resolve(process.env.AFT_OUT_DIR ?? path.join(toolRoot, 'out')), 'sessions', 'one-shot'));
+  log(`no running session: opening a one-shot browser (${outDir})`);
+  const session = new Session({ app, outDir, headed: !!args.headed, log, options: { freshLogin: args.freshLogin, env: envOf(args) } });
+  try { await session.start(); return await fn(session, false); } finally { await session.stop(); }
+}
+
 // ---- Commands ----------------------------------------------------------------------------------------------------
 
 const commands = {
   async doctor(args) {
-    if (!(await doctor({ toolRoot, platform: args.platform ?? args.target }))) process.exitCode = 1;
+    const r = await doctor({ toolRoot, platform: args.platform ?? args.target, quiet: !!args.json });
+    if (!r.ok) { lastData = r; throw Object.assign(new UsageError(`${r.checks.filter(c => c.required && !c.ok).length} required item(s) missing`), { data: r }); }
+    return r;
   },
 
   async generate(args) {
     const story = readStory(args.story);
     const url = targetUrl(args);
     if (!story && !args.prompt) throw new UsageError('Usage: aft generate --story <file|text> [--base-url <url>] [--llm claude] [--style ...]');
-    await withRun(args.name ?? storyName(story, url), args, 'generate', async out => {
+    return withRun(args.name ?? storyName(story, url), args, 'generate', async out => {
       const { tour, tourFile } = await generateInto(out, args, { url, story, name: args.name ?? storyName(story, url) });
       log(`next: review/edit it, then  aft validate "${tourFile}"  and  aft run "${tourFile}"`);
       return { tour: tourFile, scenes: tour.scenes.length, draft: !!tour.draft };
@@ -406,20 +446,16 @@ const commands = {
 
   async validate(args) {
     const { def, dir } = await loadTour(args.script ?? args._[1], args);
-    let blocking = 0;
-    await withRun(runName(def, args), args, 'validate', async out => {
-      const r = await validate(def, dir, out, args);
-      blocking = r.blocking;
-      return r;
-    });
-    if (blocking) throw new StepError(`${blocking} step(s) can't be resolved; see validation.md in the run folder`);
+    const r = await withRun(runName(def, args), args, 'validate', out => validate(def, dir, out, args));
+    if (r.blocking) { lastData = r; throw new StepError(`${r.blocking} step(s) can't be resolved; see validation.md in the run folder`); }
+    return r;
   },
 
   async run(args) { return commands.render({ ...args, record: true }); },
 
   async render(args) {
     const { def, dir } = await loadTour(args.script ?? args._[1], args);
-    await withRun(runName(def, args), args, args.record ? 'run' : 'render', out => render(def, dir, out, args));
+    return withRun(runName(def, args), args, args.record ? 'run' : 'render', out => render(def, dir, out, args));
   },
 
   async all(args) {
@@ -428,7 +464,7 @@ const commands = {
     if (!url) throw new UsageError('aft all needs the app: --base-url <url> (or BASE_URL). Example: aft all --story story.md --base-url https://qa.example.com/ --llm claude [--tour app.tour.json for login/hooks]');
     const name = args.name ?? storyName(story, url);
     let blocking = 0;
-    await withRun(name, args, 'all', async out => {
+    const r = await withRun(name, args, 'all', async out => {
       const { tour, tourFile } = await generateInto(out, args, { url, story, name });
       if (tour.draft) throw new StepError(`the generated script is a draft and wasn't recorded: edit ${tourFile}, then aft validate / aft run it`);
       const def = loadTourJson(tourFile, { env: envOf(args), baseUrl: args.baseUrl, role: args.role, toolRoot });
@@ -438,13 +474,14 @@ const commands = {
       // The dry run used its own browser session; the recording starts fresh.
       return { tour: tourFile, ...(await render(def, out, out, { ...args, record: true })) };
     });
-    if (blocking) throw new StepError(`${blocking} step(s) can't be resolved; fix tour.json (see validation.md), then aft run it`);
+    if (blocking) { lastData = r; throw new StepError(`${blocking} step(s) can't be resolved; fix tour.json (see validation.md), then aft run it`); }
+    return r;
   },
 
   async discover(args) {
     const url = args._[1] ?? args.baseUrl;
     if (!url) throw new UsageError('Usage: aft discover <url>');
-    await withRun(args.name ?? new URL(url).hostname, args, 'discover', async out => {
+    return withRun(args.name ?? new URL(url).hostname, args, 'discover', async out => {
       const d = await discover({ url, outDir: out, maxPages: Number(args.maxPages ?? 12), include: args.include, exclude: args.exclude, ...loginStepsFor(args) });
       return { pages: d.pages.length, discovery: path.join(out, 'discovery.json') };
     });
@@ -457,7 +494,7 @@ const commands = {
     const discovery = JSON.parse(fs.readFileSync(input, 'utf8'));
     const story = readStory(args.story);
     const name = args.name ?? (story?.id ?? new URL(discovery.origin).hostname);
-    await withRun(name, args, 'plan', async out => {
+    return withRun(name, args, 'plan', async out => {
       const tour = await plan({ discovery, outDir: out, name: safeName(name), prompt: args.prompt, story, style: args.style, llm: args.llm, model: args.model,
         maxScenes: Number(args.maxScenes ?? 6), baseUrl: args.baseUrl });
       return { tour: path.join(out, 'tour.json'), scenes: tour.scenes.length };
@@ -469,7 +506,7 @@ const commands = {
     if (!url) throw new UsageError('Usage: aft auto <url> [--prompt ...] [--llm claude] [--no-record]');
     const story = readStory(args.story);
     const name = args.name ?? storyName(story, url);
-    await withRun(name, args, 'auto', async out => {
+    return withRun(name, args, 'auto', async out => {
       const { tour, tourFile } = await generateInto(out, args, { url, story, name });
       if (tour.draft) throw new StepError(`the generated script is a draft and wasn't recorded: edit ${tourFile}, then aft validate / aft run it`);
       const def = loadTourJson(tourFile, { env: envOf(args), baseUrl: args.baseUrl, role: args.role, toolRoot });
@@ -483,12 +520,83 @@ const commands = {
     const app = appSettings({ ...args, tour: file });
     const { cfg } = app;
     if (!cfg.baseUrl) throw new UsageError(`${app.name}: no baseUrl for environment ${app.env ?? '(none)'}`);
-    await saveLogin({ baseUrl: cfg.baseUrl, steps: cfg.login?.steps, file: app.authFile(cfg.login?.role), manual: !!args.manual, viewport: cfg.viewport,
+    const state = await saveLogin({ baseUrl: cfg.baseUrl, steps: cfg.login?.steps, file: app.authFile(cfg.login?.role), manual: !!args.manual, viewport: cfg.viewport,
       timeouts: cfg.timeouts, ready: cfg.ready, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, signedIn: cfg.login?.signedIn });
+    return { platform: app.platform?.name ?? null, env: app.env ?? null, role: cfg.login?.role ?? null, state };
   },
 
   async platform(args) {
     return platformCommand(args, { toolRoot, commands, appSettings, loginStepsFor, withRun, UsageError, envOf });
+  },
+
+  async session(args) {
+    const sub = args._[1] ?? 'status';
+    if (sub === 'status') {
+      const list = readSessions(toolRoot).filter(s => !args.session || s.name === args.session);
+      const out = [];
+      for (const s of list) {
+        let live = null;
+        if (s.alive && s.status === 'ready') live = await call(s, 'status').catch(e => ({ error: e.message }));
+        out.push({ name: s.name, status: s.alive ? s.status : 'dead', pid: s.pid, platform: s.platform, env: s.env, role: s.role, url: live?.url ?? s.url,
+          services: s.services, log: s.log });
+        if (!s.alive) fs.rmSync(path.join(sessionsDir(toolRoot), `${s.name}.json`), { force: true }); // stale
+      }
+      if (!args.json) for (const s of out) console.log(`${s.name.padEnd(28)} ${String(s.status).padEnd(8)} pid ${s.pid}  ${s.url ?? ''}`);
+      if (!args.json && !out.length) console.log('no sessions');
+      return { sessions: out };
+    }
+    if (sub === 'start') {
+      const app = appSettings(args, { allowBareUrl: true });
+      if (!app) throw new UsageError('Usage: aft session start --platform <name> [--target <env>] [--role <r>]  (or --base-url <url>)');
+      const name = sessionName(app, args);
+      const outDir = newRunDir(path.join(path.resolve(process.env.AFT_OUT_DIR ?? path.join(toolRoot, 'out')), 'sessions', name));
+      log(`session ${name}: starting (log: ${path.join(outDir, 'session.log')})`);
+      const s = await startDaemon({ toolRoot, name, outDir, args: { ...args, json: undefined, _: [] } });
+      log(`session ${name}: ${s.reused ? 'already running' : 'ready'} (pid ${s.pid}) at ${s.url}`);
+      const { token, ...shown } = s;
+      return shown;
+    }
+    if (sub === 'stop') {
+      const list = readSessions(toolRoot).filter(s => args.all || s.name === (args.session ?? pickSession(args, { required: true }).name));
+      const stopped = [];
+      for (const s of list) {
+        const r = s.alive ? await call(s, 'stop').catch(e => ({ error: e.message })) : { note: 'was not running' };
+        fs.rmSync(path.join(sessionsDir(toolRoot), `${s.name}.json`), { force: true });
+        log(`session ${s.name}: stopped${r.servicesStopped?.length ? ` (and ${r.servicesStopped.join(', ')}, which it started)` : ''}`);
+        stopped.push({ name: s.name, ...r });
+      }
+      return { stopped };
+    }
+    throw new UsageError(`Unknown: aft session ${sub} (start, status, stop)`);
+  },
+
+  async snapshot(args) {
+    const r = await withSession(args, (s, live) => (live ? call(s, 'snapshot', { url: args.url, screenshot: !!args.screenshot }) : s.snapshot({ url: args.url, screenshot: !!args.screenshot })));
+    if (!args.json) console.log(`${r.url}  "${r.title}"\n\n${r.aria}`);
+    return r;
+  },
+
+  async locate(args) {
+    const target = parseArg(args._.slice(1).join(' ') || args.target_, 'target (a string or JSON target)');
+    const r = await withSession(args, (s, live) => (live ? call(s, 'locate', { target, url: args.url }) : s.locate(target, { url: args.url })));
+    if (!args.json) {
+      console.log(r.resolved ? `resolves: ${JSON.stringify(r.strategy)} → element ${r.uses}${r.ambiguous ? ` (ambiguous: ${r.matches.length} visible)` : ''}` : 'does not resolve');
+      for (const m of r.matches) console.log(`  [${m.index}] <${m.tag}>${m.role ? ` role=${m.role}` : ''} ${m.text ?? m.name ?? ''}`);
+      if (r.alternatives.length) console.log(`closest on the page: ${r.alternatives.map(a => JSON.stringify(a)).join(', ')}`);
+    }
+    return r;
+  },
+
+  async 'try-step'(args) {
+    const step = parseArg(args._.slice(1).join(' '), 'step (JSON: {"click": "Save"} or [steps])');
+    if (typeof step === 'string') throw new UsageError('try-step takes a JSON step, e.g. \'{"click": "Save"}\'');
+    const r = await withSession(args, (s, live) => (live ? call(s, 'try-step', { step, url: args.url }) : s.tryStep(step, { url: args.url })));
+    if (!args.json) {
+      for (const e of r.steps) console.log(`${e.ok ? 'ok  ' : 'FAIL'} ${e.action} ${JSON.stringify(e.spec[e.action] ?? '').slice(0, 70)}${e.ok ? '' : `: ${e.error}`}`);
+      console.log(`\n${r.ok ? 'ok' : r.class.toUpperCase()}; now at ${r.after.url}`);
+    }
+    if (!r.ok) throw Object.assign(new Error(r.error), { failure: r.class, data: r });
+    return r;
   },
 
 };
@@ -499,17 +607,25 @@ function helpText() {
   return lines.slice(0, lines.findIndex(l => !l.startsWith('//'))).map(l => l.replace(/^\/\/ ?/, '')).join('\n');
 }
 
+/** --json: stdout carries exactly one JSON document; everything else (logs, tables) is moved to stderr. */
+const stdoutLog = console.log.bind(console);
+let json = false;
+const emit = doc => stdoutLog(JSON.stringify({ schema: 'aft-cli/1', ...doc }, null, 2));
+
 async function main() {
   loadDotEnv();
   const args = parseArgs(process.argv.slice(2));
+  if (args.json) { json = true; console.log = (...a) => console.error(...a); }
   if (args.listVoices) { console.log((await listVoices()).join('\n')); return; }
   if (args.version) { console.log(JSON.parse(fs.readFileSync(path.join(toolRoot, 'package.json'), 'utf8')).version); return; }
   const cmd = args._[0];
   if (args.help || cmd === 'help' || !cmd) { console.log(helpText()); return; }
   if (!cmd) throw new UsageError('Usage: aft generate|validate|run|all|render|discover|plan|auto|login ... (see src/cli.mjs or the README)');
-  if (commands[cmd]) return commands[cmd](args);
-  if (/\.(mjs|json)$/.test(cmd)) return commands.render({ ...args, _: ['render', ...args._] });
-  throw new UsageError(`Unknown command "${cmd}"`);
+  const command = commands[cmd] ? cmd : /\.(mjs|json)$/.test(cmd) ? 'render' : null;
+  if (!command) throw new UsageError(`Unknown command "${cmd}"`);
+  const data = await commands[command](command === cmd ? args : { ...args, _: ['render', ...args._] });
+  if (json) emit({ command: command === 'platform' || command === 'session' ? `${command} ${args._[1] ?? ''}`.trim() : command, ok: true, exitCode: process.exitCode ?? 0,
+    class: 'ok', ...(lastRunDir ? { runDir: lastRunDir } : {}), data: data ?? null });
 }
 
 main().catch(e => {
@@ -518,5 +634,12 @@ main().catch(e => {
   const code = CLASSES[cls]?.exit ?? 1;
   if (cls === 'error' && !(e instanceof UsageError) && !(e instanceof ConfigError)) console.error(e.stack ?? e);
   else console.error(`error: ${summaryLine(Object.assign(e, { failure: e.failure ?? cls }))}`);
+  if (json) {
+    const args = parseArgs(process.argv.slice(2));
+    const report = lastRunDir && fs.existsSync(path.join(lastRunDir, 'report.json')) ? path.join(lastRunDir, 'report.json') : undefined;
+    const sub = ['platform', 'session'].includes(args._[0]) ? ` ${args._[1] ?? ''}` : '';
+    emit({ command: args._[0] ? `${args._[0]}${sub}`.trim() : null, ok: false, exitCode: code, class: cls, ...(lastRunDir ? { runDir: lastRunDir } : {}), ...(report ? { report } : {}),
+      error: { message: e.message.split('\n')[0], ...(e.entry ? { step: e.entry } : {}) }, data: e.data ?? lastData ?? null });
+  }
   process.exit(code);
 });

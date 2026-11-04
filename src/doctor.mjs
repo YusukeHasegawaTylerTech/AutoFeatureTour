@@ -60,5 +60,5 @@ export async function doctor({ toolRoot, platform: target, quiet = false } = {})
     console.log(`${c.ok ? ' ok ' : c.required ? 'MISS' : 'warn'}  ${c.name.padEnd(46)} ${c.detail ?? ''}${!c.ok && c.fix ? `\n      fix: ${c.fix}` : ''}`);
   const missing = checks.filter(c => c.required && !c.ok);
   if (!quiet) console.log(missing.length ? `\n${missing.length} required item(s) missing.` : '\nAll required items present.');
-  return missing.length === 0;
+  return { schema: 'aft-doctor/1', ok: missing.length === 0, platform: target ?? null, checks };
 }
