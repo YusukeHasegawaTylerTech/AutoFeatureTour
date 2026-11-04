@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Redaction log</title>
+  <link rel="stylesheet" href="tour.css" />
+  <style>
+    .summary { display: flex; gap: 40px; margin-bottom: 16px; font-size: 16px; }
+    .summary b { display: block; font-size: 13px; color: #616161; font-weight: 500; }
+    table { width: 100%; border-collapse: collapse; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.2); }
+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #e0e0e0; vertical-align: top; }
+    th { background: #eceff1; font-weight: 500; position: sticky; top: 0; }
+    .Approved { color: #2e7d32; font-weight: 500; } .Denied { color: #c62828; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <!-- Tour helper: shows an export's redaction-log.json (?url=<log url>&name=<file name>). The log never holds the redacted text. -->
+  <header>Redaction log · <span id="name"></span></header>
+  <main>
+    <div class="summary" id="summary"></div>
+    <table>
+      <thead><tr><th>#</th><th>Decision</th><th>Category</th><th>Reason</th><th>Page</th><th>Reviewer</th><th>Decided</th><th>Note</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </main>
+  <script type="module">
+    const q = new URLSearchParams(location.search);
+    const log = await (await fetch(q.get('url'))).json();
+    const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    const when = s => s ? new Date(s).toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' }) : '';
+    document.getElementById('name').textContent = q.get('name') ?? log.originalFileName;
+    document.getElementById('summary').innerHTML =
+      `<div><b>Exported</b>${esc(when(log.exportedAt))}</div><div><b>Approved</b>${log.approved}</div>` +
+      `<div><b>Denied</b>${log.denied}</div><div><b>Original SHA-256</b>${esc(log.originalSha256.slice(0, 16))}…</div>`;
+    document.getElementById('rows').innerHTML = log.entries.map((e, n) =>
+      `<tr><td>${n + 1}</td><td class="${esc(e.decision)}">${esc(e.decision)}</td><td>${esc(e.category)}</td><td>${esc(e.reason)}</td>` +
+      `<td>${esc(e.page)}</td><td>${esc(e.reviewer)}</td><td>${esc(when(e.decidedAt))}</td><td>${esc(e.note)}</td></tr>`).join('');
+    window.tourReady = true;
+  </script>
+</body>
+</html>
