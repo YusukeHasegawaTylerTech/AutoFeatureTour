@@ -285,7 +285,9 @@ async function validate(def, tourDir, outDir, args) {
   const lines = [`# Validation: ${def.name}`, '', `${report.length} steps checked: ${report.length - failed.length} resolved, ${failed.length} failed` +
     ` (${blocking.length} blocking, ${failed.length - blocking.length} optional).`, '', '| | scene | step | action | target | result |', '|---|---|---|---|---|---|'];
   for (const r of report) {
-    const target = r.spec ? JSON.stringify(r.spec[r.action]).slice(0, 60) : '';
+    // A check shows its condition too (state, text, count…), not only what it looks at.
+    const cond = r.spec && r.action === 'verify' ? ['text', 'exactText', 'value', 'count', 'state'].filter(k => k in r.spec).map(k => ` ${k}=${JSON.stringify(r.spec[k])}`).join('') : '';
+    const target = r.spec ? (JSON.stringify(r.spec[r.action]).slice(0, 60) + cond).slice(0, 110) : '';
     const result = r.ok ? 'ok' : `${r.error}${r.suggestions?.length ? `. Closest: ${r.suggestions.map(s => `"${s}"`).join(', ')}` : ''}`;
     lines.push(`| ${r.ok ? '✔' : r.optional ? '⚠' : '✘'} | ${r.scene} | ${r.step} | ${r.action} | \`${target.replace(/\|/g, '\\|')}\` | ${result.replace(/\|/g, '\\|')} |`);
   }

@@ -37,13 +37,14 @@ Without `npm link`, use `node src/cli.mjs` wherever this README says `aft`.
 aft generate --story <file|text> [--base-url <url>] [--llm claude] [--style verification|demo|training] [--prompt "..."]
 aft validate <tour.json>        dry run: performs every step without recording; writes validation.md
 aft run      <tour.json>        record the video
-aft all      --story <file|text> --base-url <url> [--llm claude]     generate → validate → run in one run folder
+aft all      --story <file|text> --platform <name> | --base-url <url> [--llm claude]   generate → validate → run in one run folder
 aft auto     <url> [--prompt "..."]                                  discover → plan → run, no story
 aft discover <url> [--max-pages 12] [--include <regex>] [--exclude <regex>]
 aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm claude]
 aft render   <tour> [--record]  narration over title cards or hand-made clips (no browser), or a recording
 aft login    --platform <name> [--target <env>] [--role <name>] [--manual]   (or aft login <tour.json>)
 aft platform list | init <name> | discover <name> | check <name> [--target <env>]
+aft schema [tour|platform|environments|login|fragment|fixture]    print a definition file's JSON Schema
 aft session start|status|stop [--platform <name>]    a warm, signed-in browser for the three below
 aft snapshot [--url <path>]  ·  aft locate "<target>"  ·  aft try-step '<step json>'
 aft doctor [--platform <name>] | --help | --version | --list-voices
@@ -82,7 +83,9 @@ out/<story-id-or-tour>/<YYYYMMDD-HHMMSS>-<id>/     one folder per command, never
   tour.json         script.md                      the script and its narration
   validation.md     validation.json                validate / all
   tour.mp4  tour.vtt  recording.webm  clips/  scene-NN.wav  timings.json  screens/scene-NN.png
+  report.json  report.md                         every run: result, failing step, first cause, criteria
   trace.zip         npx playwright show-trace <file>   (trace-failed.zip, screens/failure.png, recording-failed.webm on failure)
+  triage/           on failure: the portable bundle (report, script, ARIA snapshot, screenshot, trace, console/network, PROMPT.md)
 out/<name>/latest.json   pointer to the newest successful run      out/<name>/runs.jsonl   one line per run
 ```
 

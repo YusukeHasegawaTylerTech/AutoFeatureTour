@@ -164,7 +164,7 @@ One action key per step (the schema's `$defs/action_<name>` has every option, wi
 | `{ "drag": L, "to": L }` | drag and drop with a visible cursor path | |
 | `{ "scroll": 400 }` / `{ "scroll": L }` | wheel by pixels / bring an element into view | |
 | `{ "waitFor": L }` | wait off pace | `state`: visible, hidden, attached, detached |
-| `{ "verify": L }` | a check (CRITERION on failure); without a condition: visible | `text` (contains or /regex/), `exactText`, `value`, `count` (visible matches), `state` (visible, hidden, enabled, disabled, checked, unchecked, editable, focused) |
+| `{ "verify": L }` | a check (CRITERION on failure); without a condition: visible. `text` / `exactText` compare the element's rendered text (innerText, whitespace collapsed, child elements included: `<strong>2</strong> items left` is "2 items left") | `text` (contains or /regex/), `exactText`, `value`, `count` (visible matches), `state` (visible, hidden, enabled, disabled, checked, unchecked, editable, focused) |
 | `{ "verify": { "url": "…" } }` / `{ "verify": { "title": "…" } }` | the page's URL / title contains (or /regex/) | |
 | `{ "dialog": "accept" \| "dismiss" }` | how to answer the next alert/confirm/prompt (default accept) | `text` (prompt answer), `expect` (message; CRITERION if different) |
 | `{ "switchTo": "main" \| "popup" \| "last" }` | continue on another tab (see `opensPopup`); only the main tab is filmed | |
@@ -182,7 +182,7 @@ download, dialog, a waited-for response, a popup) are never retried. URL and tex
 **Locators** (`L`): a string (tried as button/link/tab/… by exact name, label, placeholder, the same roles by partial
 name, text, a `name=` attribute, a custom-element tag; `#`, `.`, `[` or `css=` mean CSS), or an object with exactly
 one of `role` (+`name`), `label`, `placeholder`, `text`, `testId`, `alt`, `css` (+`exact`), narrowed by `has` /
-`hasNot` (a locator inside it), `hasText` / `hasNotText`, `nth`, and scoped by `within` (search inside the element
+`hasNot` (a locator inside it), `hasText` / `hasNotText`, `nth` (0-based: `"nth": 1` is the second match), and scoped by `within` (search inside the element
 another locator finds; nest them to chain) and `frame` (iframe selector, or a list for nested frames):
 
 ```json
@@ -217,13 +217,13 @@ platforms/<name>/
 A platform tour:
 
 ```json
-{ "name": "clear-completed", "platform": "todomvc", "env": "demo", "role": "clerk", "fixtures": ["three-tasks"],
+{ "name": "clear-completed", "platform": "todomvc", "fixtures": ["three-tasks"],
   "story": { "id": "TODO-202", "acceptanceCriteria": ["…"] },
   "scenes": [ { "title": "…", "narration": "…", "url": "#/", "criteria": [1],
                 "steps": [ { "use": "add-todo", "with": { "text": "{data.first}" } }, { "verify": { "text": "{data.first}" } } ] } ] }
 ```
 
-`env`/`role` are defaults; `--target <env>` and `--role <name>` override them, and `--base-url` / `BASE_URL`
+Optional `"env"` and `"role"` pick an environment and a login role (todomvc has no login, so no role); they are defaults: `--target <env>` and `--role <name>` override them, and `--base-url` / `BASE_URL`
 override the environment's URL. A tour without `platform` (with its own `baseUrl`, `login`, …) still works for
 quick experiments and tests, but anything that will be kept belongs in a platform.
 
@@ -311,19 +311,19 @@ Nested documents have their own `schema`: `aft-snapshot/1`, `aft-locate/1`, `aft
 | `aft locate "<target>"` | `{ resolved, strategy, uses, ambiguous, matches[], strategies[], alternatives[] }`: what a step with this target would act on, without acting |
 | `aft try-step '<step or [steps]>' [--url <path>]` | performs them live (fragments and code steps too) and returns each step's report entry, network/console errors during them and the ARIA tree after; exit code = the class |
 
-They use the running session (`--session <name>`, or the only one for `--platform`); without one they open a one-shot
+They use the running session (`--session <name>`, where the name is `<platform>-<env>-<role or anon>` and is in `session start`'s output, or the only one for `--platform`); without one they open a one-shot
 browser for that call (slower: start, sign in, close). A session is one page: state carries over between calls.
 
 The loop, for writing or fixing a tour:
 
 ```
-aft session start --platform todomvc --json                      # once; {"data": {"status": "ready", "url": …}}
+aft session start --platform todomvc --json                      # once; data: { name: "todomvc-demo-anon", status: "ready", url, port, services }
 aft snapshot --url "#/" --json                                   # read data.aria for the real names
 aft locate "What needs to be done?" --json                       # {"resolved": true, "strategy": {"role": "textbox", "name": …}}
 aft try-step '{"use": "add-todo", "with": {"text": "Buy milk"}}' --json
 aft try-step '{"verify": {"text": "Buy milk"}}' --json             # {"ok": true, …}; on false: data.steps[n].suggestions
 #  … write the steps that worked into the tour …
-aft validate <tour.json> --json                                  # every step against a fresh browser
+aft validate <tour.json> --json                                  # every step, in its own fresh browser (never a session)
 aft run <tour.json> --json                                       # the video; on failure read data / report.json / triage/
 aft session stop
 ```

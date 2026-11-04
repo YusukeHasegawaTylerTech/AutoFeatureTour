@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../schemas/tour.schema.json",
+  "name": "clear-completed",
+  "platform": "todomvc",
+  "fixtures": ["three-tasks"],
+  "story": { "id": "TODO-202", "title": "Clear completed tasks", "acceptanceCriteria": [
+    "With some tasks completed, the footer shows a \"Clear completed\" action.",
+    "Clear completed removes only the completed tasks; active tasks stay in the list.",
+    "The items-left counter is unchanged by clearing."] },
+  "scenes": [
+    { "title": "Clear completed appears", "url": "#/", "criteria": [1],
+      "narration": "Criterion one. Our list has three tasks, and one of them is done. Because a task is completed, the footer shows a Clear completed action.",
+      "steps": [
+        { "verify": { "role": "checkbox", "name": "Toggle Todo", "nth": 1 }, "state": "checked" },
+        { "verify": { "role": "button", "name": "Clear completed" } },
+        { "point": { "role": "button", "name": "Clear completed" } } ] },
+    { "title": "Only completed tasks are removed", "criteria": [2],
+      "narration": "Criterion two. We click Clear completed. The finished task disappears, and the two active tasks stay in the list.",
+      "steps": [
+        { "verify": { "testId": "todo-count" }, "text": "2 items left" },
+        { "click": { "role": "button", "name": "Clear completed" } },
+        { "use": "todo-count", "with": { "count": 2 } },
+        { "verify": { "text": "{data.first}" } },
+        { "verify": { "text": "{data.third}" } },
+        { "verify": { "text": "{data.second}" }, "state": "hidden" } ] },
+    { "title": "The counter is unchanged", "criteria": [3],
+      "narration": "Criterion three. The items left counter still reads two, the same as before we cleared.",
+      "steps": [
+        { "verify": { "testId": "todo-count" }, "text": "2 items left" },
+        { "point": { "testId": "todo-count" } } ] }
+  ]
+}
