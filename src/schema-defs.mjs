@@ -248,7 +248,7 @@ const launch1 = obj('A service the run starts when nothing answers at healthUrl 
 });
 const attach1 = obj('A service the environment expects to be running; a run never starts it, and if it is down the run is UNREACHABLE.', { name: str('Label.'), healthUrl: str('Default baseUrl.'), anyStatus: bool('Any HTTP status counts as up.') });
 const environment = obj('One deployment of the app.', {
-  comment: str('A note for people.'), baseUrl: str('Root URL of the app in this environment.'),
+  comment: str('A note for people.'), baseUrl: str('Root URL of the app in this environment.'), data: { type: 'object', description: 'Values for {data.<key>} in login steps, fixtures and tours (credentials: username, password…). Strings may use {env:NAME}. Environment data overrides the platform data; fixture data overrides both.' },
   launch: { description: 'Start the app if it isn\'t running: one service or a list.', anyOf: [launch1, { type: 'array', items: launch1 }] },
   attach: { description: 'Attach-only: these must already be running.', type: 'array', items: attach1 },
   timeouts, ready, ignoreHTTPSErrors: bool('Accept self-signed certificates.'),
@@ -299,7 +299,7 @@ export const SCHEMAS = {
     properties: { ...$schemaProp, comment: str('A note for people.'), ready, errors, appErrors, ignore: appErrors.properties.ignore, mask, pronounce, viewport, voice: str('SAPI voice.'),
       ignoreHTTPSErrors: bool('Accept self-signed certificates.'), startPath: str('Where sessions and discovery start (default /).'),
       discover: obj('Discovery hints.', { paths: { type: 'array', items: { type: 'string' }, description: 'Extra paths to crawl.' } }),
-      timeouts, retries: num('Retries for actions that time out (default 1).'), trace: bool('false: no trace.zip.'), video, workarounds },
+      timeouts, retries: num('Retries for actions that time out (default 1).'), trace: bool('false: no trace.zip.'), video, workarounds, data: { type: 'object', description: 'Values for {data.<key>} in login steps, fixtures and tours (credentials: username, password…). Strings may use {env:NAME}. Environment data overrides the platform data; fixture data overrides both.' } },
   }),
   environments: file('environments', 'AutoFeatureTour environments (platforms/<name>/environments.json)', 'Where the app runs: one entry per environment, plus "default".', {
     type: 'object', properties: { ...$schemaProp, default: str('The environment used when none is given.') },

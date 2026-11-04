@@ -161,6 +161,8 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
     const p = loadPlatform(toolRoot, raw.platform, { from: dir });
     const { cfg: base, env: envName } = platformConfig(p, { env: env ?? raw.env, role: role ?? raw.role, platformRulesOnly: !!(baseUrl || process.env.BASE_URL) });
     const fx = loadFixtures(p, raw.fixtures);
+    // Data, most specific last: the platform's, the environment's, then the tour's fixtures.
+    const data = { ...base.data, ...fx.data };
     const dirs = [path.join(p.dir, 'fragments'), dir];
     const cfg = {
       ...base, ...raw,
@@ -168,10 +170,10 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
       pronounce: { ...base.pronounce, ...raw.pronounce },
       hooks: { setup: [...fx.setup, ...(raw.hooks?.setup ?? [])], teardown: [...(raw.hooks?.teardown ?? []), ...fx.teardown] },
       // Mock sets first (they must be in place before anything loads), then the fixtures' own steps.
-      fixtureSteps: [...loadMocks(p, raw.mocks), ...expandSteps(fx.steps, { dirs, data: fx.data })],
-      data: fx.data,
-      scenes: (raw.scenes ?? []).map(s => ({ ...s, steps: expandSteps(s.steps, { dirs, data: fx.data }) })),
-      ...(base.login ? { login: { ...base.login, steps: expandSteps(base.login.steps, { dirs }) } } : {}),
+      fixtureSteps: [...loadMocks(p, raw.mocks), ...expandSteps(fx.steps, { dirs, data })],
+      data,
+      scenes: (raw.scenes ?? []).map(s => ({ ...s, steps: expandSteps(s.steps, { dirs, data }) })),
+      ...(base.login ? { login: { ...base.login, steps: expandSteps(base.login.steps, { dirs, data }) } } : {}),
     };
     if (process.env.BASE_URL) cfg.baseUrl = process.env.BASE_URL;
     if (baseUrl) cfg.baseUrl = baseUrl;
@@ -318,17 +320,28 @@ export async function startServices(cfg, vars, { outDir, log, dir }) {
 }
 
 /**
+ * What login steps need and don't have: an {env:NAME} that is empty, a {data.x} that no platform, environment or
+ * fixture data provides. Each as a hint for the person fixing it.
+ */
+export function missingCredentials(steps = []) {
+  const json = JSON.stringify(steps);
+  return [...new Set([
+    ...[...json.matchAll(/\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g)].map(m => m[1]).filter(k => !process.env[k]).map(k => `set ${k} (environment or .env)`),
+    ...[...json.matchAll(/\{data\.([A-Za-z0-9_.-]+)\}/g)].map(m => `data.${m[1]} (add it to "data" in platform.json, the environment, or a fixture)`),
+  ])];
+}
+
+/**
  * Saved login for the run's role: beforeStart() signs in (off camera, separate browser) when there's no saved state,
  * it's too old or --fresh-login; ensure(t) opens the check page and, if the session has expired, signs in again and
  * restarts the browser context.
  */
 export function makeLogin(cfg, cfg0, composed, { outDir, log, options = {}, baseUrl }) {
   const state = cfg.login ? composed.authFile(cfg.login.role) : null;
-  // Credentials the login steps need ({env:NAME} references that are empty mean we can't sign in by ourselves).
-  const missingCreds = [...JSON.stringify(cfg0.login?.steps ?? []).matchAll(/\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g)].map(m => m[1]).filter(k => !process.env[k]);
+  const missingCreds = missingCredentials(cfg0.login?.steps);
   const canLogin = !!cfg.login?.steps?.length && !missingCreds.length;
   const cannot = () => (!cfg.login?.steps?.length ? `there are no login steps: run aft login --platform <name> --manual (or aft login <tour.json> --manual)${options.env ? ` --target ${options.env}` : ''}`
-    : `credentials missing: set ${missingCreds.join(', ')} (environment or .env)`);
+    : `credentials missing: ${missingCreds.join(', ')}`);
   let fresh = false;
   const signIn = async why => {
     if (!canLogin) throw new Failure('login', `${why}, and the tour can't sign in by itself: ${cannot()}`);

@@ -616,6 +616,10 @@
             "type": "string",
             "description": "Root URL of the app in this environment."
           },
+          "data": {
+            "type": "object",
+            "description": "Values for {data.<key>} in login steps, fixtures and tours (credentials: username, password…). Strings may use {env:NAME}. Environment data overrides the platform data; fixture data overrides both."
+          },
           "launch": {
             "description": "Start the app if it isn't running: one service or a list.",
             "anyOf": [

@@ -7,8 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { composeTour, ConfigError } from '../src/declarative.mjs';
+import { composeTour, ConfigError, missingCredentials } from '../src/declarative.mjs';
 import { expandSteps, homeOf, initPlatform, loadPlatform } from '../src/platform.mjs';
+import { exportTour, importTour } from '../src/exchange.mjs';
 import { startFixture } from './fixture/server.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -66,6 +67,26 @@ describe('platforms', () => {
     assert.equal(qa.authFile('admin'), path.join(root, 'auth', 'app', 'qa', 'admin.json'));
   });
 
+  test('login credentials from data: platform, then environment, then fixture (the more specific wins); missing ones named', () => {
+    const { dir, p } = makePlatform();
+    write(path.join(p, 'platform.json'), { data: { user: 'plat-user', pass: '{env:AFT_TEST_PASS}', other: 'x' } });
+    write(path.join(p, 'environments.json'), { default: 'local', local: { baseUrl: 'http://localhost:9/' }, qa: { baseUrl: 'http://qa.example.test/', data: { user: 'qa-user' } } });
+    write(path.join(p, 'login.json'), { default: 'clerk', roles: { clerk: { steps: [{ fill: 'User', text: '{data.user}' }, { fill: 'Pass', text: '{data.pass}', secret: true }, { fill: 'X', text: '{data.nope}' }] } } });
+    write(path.join(p, 'fixtures', 'as-ann.json'), { data: { user: 'ann' } });
+    const file = tourFile(dir, { scenes: [] });
+    const texts = c => c.cfg.login.steps.map(s => s.text);
+    const local = composeTour({ name: 't', platform: 'app', scenes: [] }, { file, toolRoot: root });
+    assert.deepEqual(texts(local), ['plat-user', '{env:AFT_TEST_PASS}', '{data.nope}']);
+    assert.equal(local.cfg.data.other, 'x');
+    assert.deepEqual(texts(composeTour({ name: 't', platform: 'app', scenes: [] }, { file, toolRoot: root, env: 'qa' })).slice(0, 1), ['qa-user']);
+    assert.deepEqual(texts(composeTour({ name: 't', platform: 'app', fixtures: ['as-ann'], scenes: [] }, { file, toolRoot: root, env: 'qa' })).slice(0, 1), ['ann']);
+    delete process.env.AFT_TEST_PASS;
+    const missing = missingCredentials(local.cfg.login.steps);
+    assert.equal(missing.length, 2);
+    assert.match(missing[0], /AFT_TEST_PASS/);
+    assert.match(missing[1], /data\.nope/);
+  });
+
   test('a platform tour may not carry URLs, credentials, launch commands or app-wide settings', () => {
     const { dir } = makePlatform();
     for (const bad of [{ baseUrl: 'http://x/' }, { login: {} }, { launch: { command: 'x' } }, { errors: {} }, { ready: {} }]) {
@@ -113,6 +134,42 @@ describe('platforms', () => {
       const pl = loadPlatform(root, 'newapp');
       assert.equal(pl.defaultEnv, 'local');
       assert.equal(pl.environments.local.baseUrl, 'http://localhost:5000/');
+    } finally { delete process.env.AFT_PLATFORMS; }
+  });
+
+  test('export → import: fragments inlined, code files carried, {data.x} kept, missing fixtures named, no overwrite', () => {
+    const { dir } = makePlatform();
+    const file = tourFile(dir, { name: 'ex', env: 'qa', fixtures: ['person', 'other'], scenes: scene([
+      { use: 'save-name', with: { name: '{data.name}' } }, { use: 'saved', with: { expect: 'x' } }]) });
+    const { doc } = exportTour(file, { toolRoot: root, outRoot: tmp() });
+    assert.equal(doc.schema, 'aft-export/1');
+    assert.equal(doc.source.platform, 'app');
+    assert.equal(doc.source.env, 'qa');
+    assert.equal(doc.tour.platform, undefined);
+    assert.deepEqual(doc.tour.scenes[0].steps.slice(0, 2), [
+      { fill: 'Name', text: '{data.name}', comment: 'from fragment save-name' },
+      { click: { role: 'button', name: 'Save' }, comment: 'from fragment save-name' }]);
+    assert.equal(doc.tour.scenes[0].steps[2].code, 'saved.mjs');
+    assert.ok(doc.files['saved.mjs'].base64);
+    const bundle = path.join(tmp(), 'ex.aft.json');
+    write(bundle, doc);
+    process.env.AFT_PLATFORMS = dir;
+    try {
+      const r = importTour(bundle, { toolRoot: root, platform: 'app', name: 'ex-imported' });
+      assert.deepEqual(r.missing, ['fixture "other" (platforms/app/fixtures/other.json)']);
+      const t = JSON.parse(fs.readFileSync(r.tour, 'utf8'));
+      assert.equal(t.platform, 'app');
+      assert.equal(t.scenes[0].steps[2].code, 'ex-imported-files/saved.mjs');
+      assert.match(t.comment, /Imported from app \(qa\)/);
+      assert.ok(fs.existsSync(path.join(path.dirname(r.tour), 'ex-imported-files', 'saved.mjs')));
+      assert.throws(() => importTour(bundle, { toolRoot: root, platform: 'app', name: 'ex-imported' }), /exists; pass --force/);
+      write(path.join(dir, 'app', 'fixtures', 'other.json'), { data: {} });
+      const again = importTour(bundle, { toolRoot: root, platform: 'app', name: 'ex-imported', force: true });
+      assert.deepEqual(again.missing, []);
+      // It loads as a tour of the target platform: code resolves next to it, data from the fixtures.
+      const c = composeTour(JSON.parse(fs.readFileSync(again.tour, 'utf8')), { file: again.tour, toolRoot: root });
+      assert.equal(c.cfg.scenes[0].steps[0].text, 'Ann');
+      assert.ok(c.cfg.scenes[0].steps[2].code.endsWith(path.join('ex-imported-files', 'saved.mjs')));
     } finally { delete process.env.AFT_PLATFORMS; }
   });
 });

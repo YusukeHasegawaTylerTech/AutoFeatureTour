@@ -469,6 +469,10 @@
         ]
       },
       "description": "Known issues (see the workaround definition). Platform rules apply everywhere; environments refine them by name."
+    },
+    "data": {
+      "type": "object",
+      "description": "Values for {data.<key>} in login steps, fixtures and tours (credentials: username, password…). Strings may use {env:NAME}. Environment data overrides the platform data; fixture data overrides both."
     }
   }
 }

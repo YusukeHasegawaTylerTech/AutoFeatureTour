@@ -272,7 +272,11 @@ platforms/<name>/
                       past "timeoutSeconds" it keeps waiting (up to 3×) while the service's log is still growing
                       attach: [{ "name", "healthUrl" }]: never start anything; down = UNREACHABLE (exit 3)
   login.json          { "default": "<role>", "signedIn": "<css>", "checkPath", "maxAgeMinutes", "roles": { "<role>": { "steps": [...] } } }
-                      credentials only as "{env:NAME}"; saved state: auth/<platform>/<env>/<role>.json (git-ignored)
+                      credentials as "{data.username}" / "{data.password}" (or "{env:NAME}"); saved state: auth/<platform>/<env>/<role>.json (git-ignored)
+  "data"              in platform.json and in each environment: values for {data.<key>} in login steps, fixtures and
+                      tours, e.g. the account to sign in as; strings may be "{env:NAME}" (keep passwords in .env).
+                      The more specific wins: platform < environment < the tour's fixtures. Another account:
+                      another environment, a fixture, or a copy of the platform
   fragments/          reusable steps: <name>.json { "params": {...}, "steps": [...] } or <name>.mjs (a code step)
   fixtures/           test data: <name>.json { "data": {...}, "setup": [hooks], "teardown": [hooks], "steps": [...] }
   mocks/              opt-in canned responses: <name>.json { "mocks": [mock steps] }
@@ -431,6 +435,28 @@ aft session stop
 6. Example: [platforms/rms/tours/RMS-6142.tour.json](platforms/rms/tours/RMS-6142.tour.json) (generated, then corrected by hand).
 7. Flows you write twice become fragments; data the story needs becomes a fixture (see Platforms).
 
+### Dev to QA: export and import
+
+A tour is best written where the code and the data are (a dev's local platform), then run where the change is
+deployed (QA). The two are separate platforms of the same app (QA's: a copy with its own environments, account and
+known-issue policy).
+
+```
+aft export platforms/rms-local-dev/tours/RMS-6399.tour.json   # or a run folder: out/RMS-6399/<run>
+#  → out/RMS-6399/<run>/RMS-6399.aft.json: send it to QA
+aft import RMS-6399.aft.json --platform rms-qa                # → platforms/rms-qa/tours/RMS-6399.tour.json (--name, --force)
+aft validate platforms/rms-qa/tours/RMS-6399.tour.json        # then aft run
+```
+
+The export (`"schema": "aft-export/1"`) is one file: the tour with its fragments inlined (each step's `comment` says
+which fragment it came from, so the target's fragments can't change what was checked), code steps and upload files
+embedded, and `source`: platform, environment and the dev's last result for it (run or validate, PASSED/FAILED, each
+criterion). It holds no URLs, credentials or platform settings; the target platform supplies them. Fixtures and mock
+sets travel by name (data lookups differ per environment): import lists any the target doesn't have, and `{data.x}`
+stays for its fixtures to fill. Import never overwrites a tour unless `--force`. If the tour fails on QA where it
+passed on dev, the report says what differs: a SCRIPT failure is usually a label that differs between versions
+(fix the step, or match it more loosely); CRITERION or APP is what the deployed version does, so report it.
+
 ## Rules
 
 - **Synthetic or test data only.** Local or dedicated QA/test environments are fine; never production or real
@@ -470,7 +496,7 @@ snapshots, the console and network; find the last red action.
 
 ## Code map
 
-`src/cli.mjs` commands and run folders · `schema-defs.mjs` the schemas' source, `schema.mjs` validation and messages · `steps.mjs` step runner, locators, suggestions, code steps · `declarative.mjs`
+`src/cli.mjs` commands and run folders · `exchange.mjs` export/import between platforms · `schema-defs.mjs` the schemas' source, `schema.mjs` validation and messages · `steps.mjs` step runner, locators, suggestions, code steps · `declarative.mjs`
 tour.json → a run (platform composition, launch/attach, login, hooks, fixtures) · `platform.mjs` platforms, fragments,
 fixtures, init · `platform-cli.mjs` `aft platform` · `session.mjs` / `session-daemon.mjs` sessions, snapshot, locate,
 try-step · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·

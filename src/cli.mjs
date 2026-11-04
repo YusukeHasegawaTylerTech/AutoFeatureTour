@@ -10,6 +10,8 @@
 //   aft discover <url>   [--max-pages 12]             crawl screens (used by generate/auto)
 //   aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm claude]
 //   aft auto     <url> [--prompt ...]                 discover → plan → run, no story needed
+//   aft export   <tour.json|run folder>             one self-contained <name>.aft.json (fragments inlined, files embedded, the last result)
+//   aft import   <file.aft.json> --platform <name> [--name n] [--force]   into platforms/<name>/tours/ (lists missing fixtures)
 //   aft login    --platform <name> | <tour.json> [--target <env>] [--role <name>] [--manual]   save auth/<platform>/<env>/<role>.json
 //   aft platform list | init <name> [--base-url <url>] [--no-login] | discover <name> | check <name>   onboard an app (AGENTS.md, Platforms)
 //   aft schema   [tour|platform|environments|login|fragment|fixture]   print a definition file's JSON Schema (no type: the list)
@@ -51,12 +53,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { saveLogin } from './auth.mjs';
-import { ConfigError, loadTourJson } from './declarative.mjs';
+import { ConfigError, loadTourJson, materialize, missingCredentials } from './declarative.mjs';
 import { check as checkSchema, schemaFor, schemasDir, schemaTypes } from './schema.mjs';
 import { appSettingsFor } from './cli-app.mjs';
 import { platformCommand } from './platform-cli.mjs';
 import { call, parseArg, readSessions, Session, sessionName, sessionsDir, startDaemon } from './session.mjs';
 import { loadPlatform } from './platform.mjs';
+import { exportTour, importTour } from './exchange.mjs';
 import { discover } from './discover.mjs';
 import { doctor } from './doctor.mjs';
 import { plan, readStory } from './plan.mjs';
@@ -577,11 +580,43 @@ const commands = {
     const file = args.script ?? args._[1];
     if (!file && !args.platform) throw new UsageError('Usage: aft login --platform <name> [--target <env>] [--role <name>] [--manual]  (or aft login <tour.json>)');
     const app = appSettings({ ...args, tour: file });
-    const { cfg } = app;
-    if (!cfg.baseUrl) throw new UsageError(`${app.name}: no baseUrl for environment ${app.env ?? '(none)'}`);
+    if (!app.cfg.baseUrl) throw new UsageError(`${app.name}: no baseUrl for environment ${app.env ?? '(none)'}`);
+    const missing = args.manual ? [] : missingCredentials(app.cfg.login?.steps);
+    if (missing.length) throw new Failure('login', `can't sign in: credentials missing: ${missing.join(', ')}`);
+    // Fill {env:NAME} (credentials) as a run does; the step runner never sees placeholders.
+    const { cfg } = await materialize(app.cfg);
     const state = await saveLogin({ baseUrl: cfg.baseUrl, steps: cfg.login?.steps, file: app.authFile(cfg.login?.role), manual: !!args.manual, viewport: cfg.viewport,
       timeouts: cfg.timeouts, ready: cfg.ready, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, signedIn: cfg.login?.signedIn, workarounds: cfg.workarounds });
     return { platform: app.platform?.name ?? null, env: app.env ?? null, role: cfg.login?.role ?? null, state };
+  },
+
+  async export(args) {
+    const src = args._[1] ?? args.script;
+    if (!src || !fs.existsSync(src)) throw new UsageError('Usage: aft export <tour.json | run folder> [--out <folder>]  (writes <run>/<name>.aft.json)');
+    const { doc, name } = exportTour(src, { toolRoot, outRoot: path.resolve(process.env.AFT_OUT_DIR ?? path.join(toolRoot, 'out')) });
+    return withRun(name, args, 'export', async out => {
+      const file = path.join(out, `${safeName(name)}.aft.json`);
+      fs.writeFileSync(file, JSON.stringify(doc, null, 2) + '\n');
+      const last = doc.source.last;
+      log(`exported ${name} from ${doc.source.platform ?? 'a stand-alone tour'}${doc.source.env ? ` (${doc.source.env})` : ''}${last ? `, last ${last.command} ${last.result ?? last.status}` : ', no run of it found'}: ${file}`);
+      if (!last) log('warning: no successful run or validation of this tour was found; the import will carry no evidence that it worked here');
+      if (!args.json) console.log(`${file}\n  on the other machine: aft import "${path.basename(file)}" --platform <their platform>`);
+      return { file, name, source: doc.source, requires: doc.requires, files: Object.keys(doc.files) };
+    });
+  },
+
+  async import(args) {
+    const file = args._[1];
+    if (!file || !args.platform) throw new UsageError('Usage: aft import <file.aft.json> --platform <name> [--name <tour name>] [--force]');
+    const r = importTour(path.resolve(file), { toolRoot, platform: args.platform, name: args.name, force: !!args.force });
+    const rel = path.relative(process.cwd(), r.tour);
+    for (const m of r.missing) log(`missing on ${args.platform}: ${m}`);
+    if (!args.json) {
+      console.log(`✔ ${rel}${r.files.length ? ` (+ ${r.files.length} file(s))` : ''}`);
+      if (r.missing.length) console.log(`  before it can run here, add: ${r.missing.join('; ')}`);
+      console.log(`  next: aft validate ${rel}   then: aft run ${rel}`);
+    }
+    return { ...r, ready: !r.missing.length };
   },
 
   async platform(args) {

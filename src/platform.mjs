@@ -91,6 +91,9 @@ export function platformConfig(p, { env, role, platformRulesOnly = false } = {})
   if (envName && !e) throw new PlatformError(`Platform ${p.name} has no environment "${envName}" (has: ${envNames(p).join(', ') || 'none'})`);
   const { ignore, ...base } = p.platform;
   const cfg = { ...base, ...e, timeouts: { ...base.timeouts, ...e?.timeouts } };
+  // Data (credentials, ids): the platform's, then the environment's; a fixture's merges over it in the tour.
+  cfg.data = { ...base.data, ...e?.data };
+  if (!Object.keys(cfg.data).length) delete cfg.data;
   // Commands in the platform run from the platform's folder, wherever the tour file is.
   if (cfg.launch) cfg.launch = [cfg.launch].flat().map(l => ({ ...l, cwd: path.resolve(p.dir, l.cwd ?? '.') }));
   delete cfg.comment;
