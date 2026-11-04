@@ -19,7 +19,7 @@ export default {
   script: 'scripts/pdf-ocr.md',
   pronounce,
   async record(ctx) {
-    const s = settings(ctx);
+    const s = await settings(ctx);
     findTesseract(s); // the scanned-PDF tour needs only Tesseract
     s.media = { Tesseract: s.media.Tesseract };
     const bins = await build(ctx, s);

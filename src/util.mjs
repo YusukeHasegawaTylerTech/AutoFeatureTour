@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -17,6 +18,40 @@ export function run(exe, args = [], { cwd, env, capture = false, shell = false }
     proc.stdout?.on('data', d => { out += d; });
     proc.on('error', reject);
     proc.on('exit', code => (code === 0 ? resolve(out) : reject(new Error(`${exe} exited with ${code}: ${args.join(' ')}`))));
+  });
+}
+
+/** A sortable, collision-resistant run id: 20261104-143210-k3f9. */
+export function runId(date = new Date()) {
+  const p = n => String(n).padStart(2, '0');
+  const stamp = `${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}-${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}`;
+  return `${stamp}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/**
+ * Creates a fresh run folder that no other run uses. base/<runId> normally; with an explicit folder, that folder
+ * if it's empty or missing, else a run-id subfolder inside it. mkdir without recursive on the leaf fails if another
+ * process got there first, so concurrent runs can't share a folder.
+ */
+export function newRunDir(base, { explicit = false } = {}) {
+  if (explicit && (!fs.existsSync(base) || !fs.readdirSync(base).length)) {
+    fs.mkdirSync(base, { recursive: true });
+    return path.resolve(base);
+  }
+  fs.mkdirSync(base, { recursive: true });
+  for (;;) {
+    const dir = path.join(base, runId());
+    try { fs.mkdirSync(dir); return path.resolve(dir); } catch (e) { if (e.code !== 'EEXIST') throw e; }
+  }
+}
+
+/** A TCP port that's free right now (the OS picks it), for private API/web servers. */
+export function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
   });
 }
 

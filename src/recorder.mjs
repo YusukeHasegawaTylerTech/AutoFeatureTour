@@ -40,11 +40,17 @@ export class Tour {
   }
 
   /** Launches the browser and starts recording. initScripts: functions or [fn, arg] pairs run in every page. */
-  async start({ initScripts = [], cursor = true, headless = true } = {}) {
+  async start({ initScripts = [], cursor = true, headless = true, storageState, trace = true } = {}) {
     fs.mkdirSync(this.outDir, { recursive: true });
     this.browser = await chromium.launch({ headless });
     // Video frames are CSS pixels (deviceScaleFactor isn't applied), so record at the viewport size and scale later.
-    this.context = await this.browser.newContext({ viewport: this.viewport, recordVideo: { dir: this.outDir, size: this.viewport } });
+    this.context = await this.browser.newContext({
+      viewport: this.viewport,
+      recordVideo: { dir: this.outDir, size: this.viewport },
+      ...(storageState ? { storageState } : {}), // a saved login (aft login), so tours never type credentials on camera
+    });
+    // Always trace: a failed run can be opened with `npx playwright show-trace <run>/trace.zip`.
+    if (trace) { await this.context.tracing.start({ screenshots: true, snapshots: true, sources: false }); this.tracing = true; }
     for (const s of initScripts) await (Array.isArray(s) ? this.context.addInitScript(s[0], s[1]) : this.context.addInitScript(s));
     if (cursor) await this.context.addInitScript(cursorScript);
     this.page = await this.context.newPage();
@@ -72,6 +78,7 @@ export class Tour {
     const end = this.now();
     this.timings.push({ id, start: +this.current.start.toFixed(3), end: +end.toFixed(3) });
     log(`${id} end (${(end - this.current.start).toFixed(1)} s)`);
+    await this.screenshot(id);
   }
 
   async moveTo(target, { dx = 0.5, dy = 0.5, steps = 25 } = {}) {
@@ -114,6 +121,7 @@ export class Tour {
   async finish(extra = {}) {
     await sleep(500);
     const video = this.page.video();
+    await this.saveTrace('trace.zip');
     await this.context.close();
     const recording = path.join(this.outDir, 'recording.webm');
     fs.rmSync(recording, { force: true });
@@ -122,6 +130,25 @@ export class Tour {
     fs.writeFileSync(path.join(this.outDir, 'timings.json'), JSON.stringify({ ...extra, scenes: this.timings }, null, 2));
     log(`recording: ${recording}`);
     return recording;
+  }
+
+  /** Saves a still of the current page (screens/<name>.png in outDir); handy for reviewing a run. */
+  async screenshot(name) {
+    const dir = path.join(this.outDir, 'screens');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${name}.png`);
+    await this.page.screenshot({ path: file }).catch(e => log(`screenshot ${name} failed: ${e.message}`));
+    return file;
+  }
+
+  /** Stops tracing into outDir/name (once). Called by finish(), and by the CLI when a run fails. */
+  async saveTrace(name = 'trace.zip') {
+    if (!this.tracing) return null;
+    this.tracing = false;
+    const file = path.join(this.outDir, name);
+    await this.context.tracing.stop({ path: file }).catch(e => log(`trace not saved: ${e.message}`));
+    log(`trace: ${file}  (npx playwright show-trace "${file}")`);
+    return file;
   }
 
   async close() { await this.browser?.close(); }
@@ -167,14 +194,24 @@ export function startStaticServer({ port, routes = [], spa, proxy }) {
   return new Promise(r => server.listen(port, () => r(server)));
 }
 
-/** Starts a long-running process (an API, a dev server) with its output in logFile. */
-export function startProcess(exe, args = [], { env, cwd, logFile }) {
-  const proc = spawn(exe, args, { env: { ...process.env, ...env }, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+/**
+ * Starts a long-running process (an API, a dev server) with its output in logFile. With shell: true, exe is a whole
+ * command line (for tour.json "launch" commands written by the app's own team).
+ */
+export function startProcess(exe, args = [], { env, cwd, logFile, shell = false }) {
+  const proc = spawn(exe, args, { env: { ...process.env, ...env }, cwd, shell, stdio: ['ignore', 'pipe', 'pipe'] });
   const out = fs.createWriteStream(logFile);
   proc.stdout.pipe(out);
   proc.stderr.pipe(out);
-  proc.on('exit', code => { if (code) log(`${path.basename(exe)} exited with ${code}; see ${logFile}`); });
+  proc.on('exit', code => { if (code) log(`${shell ? 'launch command' : path.basename(exe)} exited with ${code}; see ${logFile}`); });
   return proc;
+}
+
+/** Stops a process and its children (a shell's dev server, say). */
+export function stopProcess(proc) {
+  if (!proc || proc.exitCode !== null) return;
+  if (process.platform === 'win32') spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
+  else proc.kill();
 }
 
 export async function waitForHttp(url, { ms = 60000, hint = '' } = {}) {

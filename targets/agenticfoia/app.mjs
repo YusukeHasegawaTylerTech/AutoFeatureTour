@@ -3,22 +3,23 @@
 //
 // Target options (CLI flags): --app-repo <path to AgenticFOIA> (default: ../AgenticFOIA next to this repo, or
 // AFT_AGENTICFOIA_REPO), --engine <ClaudeCli|Placeholder|Http> (default ClaudeCli; synthetic data only),
-// --api-port 5190, --web-port 4310, --skip-build, --whisper-model, --vad-model, --tesseract, --detection-models
+// --api-port / --web-port (default: free ports), --skip-build, --whisper-model, --vad-model, --tesseract, --detection-models
 // (default: the AGENTICFOIA_Media__* environment variables the AgenticFOIA CLI uses).
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { startProcess, startStaticServer, waitForHttp } from '../../src/recorder.mjs';
-import { run, sleep, which } from '../../src/util.mjs';
+import { freePort, run, sleep, which } from '../../src/util.mjs';
 
 export const REVIEWER = 'J. Alvarez (Records)';
 export const pronounce = { 'Agentic FOIA': 'Agentic Foya', FOIA: 'Foya' };
 
-export function settings(ctx) {
+export async function settings(ctx) {
   const o = ctx.options;
   const repo = path.resolve(o.appRepo ?? process.env.AFT_AGENTICFOIA_REPO ?? path.join(ctx.toolRoot, '..', 'AgenticFOIA'));
   if (!fs.existsSync(path.join(repo, 'AgenticFOIACompute'))) throw new Error(`AgenticFOIA repo not found at ${repo}; pass --app-repo`);
-  const apiPort = Number(o.apiPort ?? 5190), webPort = Number(o.webPort ?? 4310);
+  // Free ports by default, so concurrent runs (and your own dev servers) never clash.
+  const apiPort = Number(o.apiPort ?? await freePort()), webPort = Number(o.webPort ?? await freePort());
   return {
     repo, apiPort, webPort,
     engine: o.engine ?? 'ClaudeCli',

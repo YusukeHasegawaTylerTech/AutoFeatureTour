@@ -1,0 +1,57 @@
+{
+  "name": "todomvc",
+  "baseUrl": "https://demo.playwright.dev/todomvc/",
+  "environments": {
+    "demo": { "baseUrl": "https://demo.playwright.dev/todomvc/" },
+    "local": { "baseUrl": "http://localhost:8080/", "timeouts": { "navigation": 60000 } }
+  },
+  "timeouts": { "action": 8000, "verify": 10000 },
+  "story": {
+    "id": "TODO-101",
+    "title": "Track and filter tasks",
+    "acceptanceCriteria": [
+      "A user can add tasks and see them in the list",
+      "A user can mark a task complete",
+      "The Active and Completed filters show only matching tasks"
+    ]
+  },
+  "scenes": [
+    {
+      "title": "Adding tasks",
+      "url": "#/",
+      "criteria": [1],
+      "narration": "This is TodoMVC, a small task list. To meet the first acceptance criterion, we type a task into the box at the top and press Enter, then add two more. Each one appears in the list straight away.",
+      "steps": [
+        { "fill": "What needs to be done?", "text": "Renew the parking permit" },
+        { "press": "Enter" },
+        { "fill": "What needs to be done?", "text": "Book the conference room" },
+        { "press": "Enter" },
+        { "fill": "What needs to be done?", "text": "Send the weekly report" },
+        { "press": "Enter" },
+        { "verify": { "text": "Send the weekly report" } }
+      ]
+    },
+    {
+      "title": "Completing a task",
+      "criteria": [2],
+      "narration": "For the second criterion, ticking the checkbox next to a task marks it complete. It's struck through, and the counter at the bottom now says two items are left.",
+      "steps": [
+        { "point": { "text": "Book the conference room" } },
+        { "click": { "role": "checkbox", "name": "Toggle Todo", "nth": 1 } },
+        { "verify": { "text": "2 items left" } }
+      ]
+    },
+    {
+      "title": "Filtering",
+      "criteria": [3],
+      "narration": "Finally, the filters. Active shows only the tasks still to do, Completed shows only the finished one, and All brings everything back. That covers all three acceptance criteria.",
+      "steps": [
+        { "click": { "role": "link", "name": "Active" } },
+        { "verify": { "text": "Renew the parking permit" } },
+        { "click": { "role": "link", "name": "Completed" } },
+        { "verify": { "text": "Book the conference room" } },
+        { "click": { "role": "link", "name": "All" } }
+      ]
+    }
+  ]
+}

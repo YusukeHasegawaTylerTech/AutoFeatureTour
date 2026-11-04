@@ -22,7 +22,7 @@ export default {
   script: 'scripts/main.md',
   pronounce,
   async record(ctx) {
-    const s = settings(ctx);
+    const s = await settings(ctx);
     for (const k of ['WhisperModel', 'VadModel'])
       if (!s.media[k] || !fs.existsSync(s.media[k])) throw new Error(`--${k.replace(/[A-Z]/g, c => '-' + c.toLowerCase()).slice(1)} (or AGENTICFOIA_Media__${k}) must point to the model file`);
     findTesseract(s);
