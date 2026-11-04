@@ -193,6 +193,10 @@ another locator finds; nest them to chain) and `frame` (iframe selector, or a li
 
 ## Platforms
 
+**`platforms/` is local and git-ignored**: each machine keeps its own platforms, and none are committed (shared examples
+may get their own home later). The `todomvc`, `rms` and `agenticfoia` examples below exist only where someone has
+set them up; `aft platform init <name>` creates a new one.
+
 A **platform** is everything about one app that isn't a particular tour. Tours name a platform and only describe
 what to show; they never contain a base URL, credentials, launch commands or app-wide selectors (the loader refuses
 those keys, and absolute URLs, in a platform tour). Platforms today: `todomvc` (the reference), `rms` (local NWPS

@@ -1,8 +1,0 @@
-{
-  "$schema": "../../../schemas/tour.schema.json",
-  "name": "todomvc-smoke",
-  "platform": "todomvc",
-  "scenes": [
-    { "title": "Home", "url": "#/", "narration": "This is TodoMVC, an empty task list.", "steps": [ { "verify": "What needs to be done?" } ] }
-  ]
-}

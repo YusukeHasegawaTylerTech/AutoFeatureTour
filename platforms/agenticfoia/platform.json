@@ -1,5 +1,0 @@
-{
-  "$schema": "../../schemas/platform.schema.json",
-  "comment": "AgenticFOIA (AI-assisted FOIA redaction). Its tours are code tours (tours/*.tour.mjs): each builds the app, starts a private API + web server on free ports with its own data folder in the run folder, and uploads synthetic files only. So there is no environments.json or login.json: nothing here attaches to a running instance.",
-  "pronounce": { "Agentic FOIA": "Agentic Foya", "FOIA": "Foya" }
-}

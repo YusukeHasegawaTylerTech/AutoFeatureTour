@@ -3,11 +3,10 @@ out/
 auth/
 .env
 .env.*
-platforms/*/clips/
-platforms/*/tours/clips/
 *.webm
 .sessions/
 
 # Local model files (whisper, VAD, detection); large, downloaded separately
 models/
-platforms/hopinline/
+# Platforms are local configuration (one folder per app), never committed; shared examples may get their own home later.
+platforms/

@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { SCHEMAS } from '../src/schema-defs.mjs';
 import { check } from '../src/schema.mjs';
+import { initPlatform } from '../src/platform.mjs';
 import { plan } from '../src/plan.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -29,9 +30,12 @@ test('schemas/*.schema.json are up to date with src/schema-defs.mjs (node src/sc
   }
 });
 
-test('every definition file in platforms/ matches its schema and names it in "$schema"', () => {
-  const files = walk(path.join(root, 'platforms')).filter(typeOf);
-  assert.ok(files.length >= 15);
+// platforms/ is local and git-ignored: check a freshly scaffolded platform, plus whatever this machine has.
+test('scaffolded and local definition files match their schemas and name them in "$schema"', () => {
+  const scaffold = initPlatform(fs.mkdtempSync(path.join(os.tmpdir(), 'aft-scaffold-')), 'demo');
+  const local = path.join(root, 'platforms');
+  const files = [...walk(scaffold), ...(fs.existsSync(local) ? walk(local) : [])].filter(typeOf);
+  assert.ok(files.length >= 4);
   for (const f of files) {
     const doc = JSON.parse(fs.readFileSync(f, 'utf8'));
     assert.deepEqual(check(typeOf(f), doc), [], f);
