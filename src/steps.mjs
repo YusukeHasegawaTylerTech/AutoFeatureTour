@@ -23,6 +23,7 @@
 //   { "label": "Email" } { "placeholder": "Search" } { "text": "Welcome" } { "testId": "save" } { "css": "..." }
 //   plus "nth": n to pick among several matches (default: the first visible one).
 
+import { Failure } from './failures.mjs';
 import { log, sleep } from './util.mjs';
 
 const ROLES = ['button', 'link', 'tab', 'menuitem', 'checkbox', 'radio', 'option', 'switch', 'combobox', 'textbox'];
@@ -58,7 +59,7 @@ function candidates(page, target) {
 }
 
 /** Resolves a target to one visible element, retrying until timeout (pages render asynchronously). */
-export async function resolve(page, target, { timeout = 10000 } = {}) {
+export async function resolve(page, target, { timeout = 10000, warnings } = {}) {
   const until = Date.now() + timeout;
   const nth = typeof target === 'object' ? target.nth : undefined;
   for (;;) {
@@ -66,7 +67,13 @@ export async function resolve(page, target, { timeout = 10000 } = {}) {
       const n = await loc.count().catch(() => 0);
       if (!n) continue;
       if (nth !== undefined) { if (n > nth && await loc.nth(nth).isVisible()) return loc.nth(nth); continue; }
-      for (let i = 0; i < Math.min(n, 20); i++) if (await loc.nth(i).isVisible().catch(() => false)) return loc.nth(i);
+      const visible = [];
+      for (let i = 0; i < Math.min(n, 20) && visible.length < 2; i++) if (await loc.nth(i).isVisible().catch(() => false)) visible.push(i);
+      if (visible.length) {
+        // Several visible matches: use the first, but say so (add "nth" or a role to pick one deliberately).
+        if (visible.length > 1) warnings?.push(`ambiguous target ${JSON.stringify(target)}: ${n} matches, used the first visible one (add "nth" or a role)`);
+        return loc.nth(visible[0]);
+      }
     }
     if (Date.now() > until) throw new Error(`Target not found: ${JSON.stringify(target)}`);
     await sleep(250);
@@ -95,9 +102,15 @@ const absolute =(baseUrl, url) => new URL(url, baseUrl).href;
 export async function settle(page, ready) {
   await page.waitForLoadState('domcontentloaded').catch(() => {});
   if (!ready) { await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {}); return; }
-  if (ready.busy)
-    await page.waitForFunction(busy => ![...document.querySelectorAll(busy)].some(el => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden'),
-      ready.busy, { timeout: ready.timeout ?? 60000, polling: 250 }).catch(() => {});
+  if (ready.busy) {
+    const ok = await page.waitForFunction(busy => ![...document.querySelectorAll(busy)].some(el => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden'),
+      ready.busy, { timeout: ready.timeout ?? 60000, polling: 250 }).then(() => true, () => false);
+    if (!ok) {
+      const msg = `page never settled: a busy indicator (${ready.busy}) was still visible after ${(ready.timeout ?? 60000) / 1000}s`;
+      if (ready.strict) throw new Failure('app', `the app showed an error: ${msg}`);
+      ready.warnings?.push(msg);
+    }
+  }
   const until = Date.now() + (ready.stableTimeout ?? 15000);
   let last = null, since = Date.now();
   while (Date.now() < until) {
@@ -127,16 +140,24 @@ export async function appError(page, errors) {
 export const shown = step => (step.secret ? { ...step, text: '***' } : step);
 
 /** Runs one step on the tour. Pacing ("at") is the caller's business unless the step is an explicit "at". */
-export async function runStep(t, step, { baseUrl, timeouts = {}, ready, errors }) {
+export async function runStep(t, step, { baseUrl, timeouts = {}, ready: readyCfg, errors, warnings = [] }) {
   const page = t.page;
+  const ready = readyCfg ? { ...readyCfg, warnings } : readyCfg;
   // Per-target defaults (tour.json "timeouts"), per-step override; slow screens such as reports need more.
   // An optional step gives up sooner, so a miss doesn't stall the scene.
   const timeout = step.timeout ?? (step.optional ? timeouts.optional ?? 3000 : timeouts.action ?? 10000);
   switch (actionOf(step)) {
-    case 'goto': await page.goto(absolute(baseUrl, step.goto), { timeout: timeouts.navigation ?? 30000 }); await settle(page, ready); break;
-    case 'click': await t.click(await resolve(page, step.click, { timeout })); await settle(page, ready); break;
+    case 'goto':
+      // A page that doesn't load in time is the app's (or the network's) problem, not the script's.
+      await page.goto(absolute(baseUrl, step.goto), { timeout: timeouts.navigation ?? 30000 }).catch(e => {
+        if (/Timeout/i.test(e.message)) throw new Error(`the app showed an error: page didn't load within ${(timeouts.navigation ?? 30000) / 1000}s (${absolute(baseUrl, step.goto)})`);
+        throw e;
+      });
+      await settle(page, ready);
+      break;
+    case 'click': await t.click(await resolve(page, step.click, { timeout, warnings })); await settle(page, ready); break;
     case 'fill': {
-      const el = await resolve(page, step.fill, { timeout });
+      const el = await resolve(page, step.fill, { timeout, warnings });
       if (step.secret) {
         // Set through the DOM, not typed: the value never appears in Playwright's action log or a trace.
         await t.moveTo(el);
@@ -146,8 +167,8 @@ export async function runStep(t, step, { baseUrl, timeouts = {}, ready, errors }
       break;
     }
     case 'press': await page.keyboard.press(step.press); await sleep(300); await settle(page, ready); break;
-    case 'hover': await t.moveTo(await resolve(page, step.hover, { timeout }), { steps: 35 }); break;
-    case 'point': await t.moveTo(await resolve(page, step.point, { timeout }), { steps: 35 }); break;
+    case 'hover': await t.moveTo(await resolve(page, step.hover, { timeout, warnings }), { steps: 35 }); break;
+    case 'point': await t.moveTo(await resolve(page, step.point, { timeout, warnings }), { steps: 35 }); break;
     case 'select': {
       const el = await resolve(page, step.select, { timeout });
       await t.moveTo(el);
@@ -164,7 +185,7 @@ export async function runStep(t, step, { baseUrl, timeouts = {}, ready, errors }
     case 'waitFor': await resolve(page, step.waitFor, { timeout: step.timeout ?? timeouts.waitFor ?? 30000 }); break;
     case 'verify': {
       let el;
-      try { el = await resolve(page, step.verify, { timeout: step.timeout ?? timeouts.verify ?? 15000 }); }
+      try { el = await resolve(page, step.verify, { timeout: step.timeout ?? timeouts.verify ?? 15000, warnings }); }
       catch { throw new Error(`Verification failed: ${JSON.stringify(step.verify)} is not on the page (${page.url()})`); }
       await t.moveTo(el, { steps: 30 });
       break;
@@ -180,6 +201,28 @@ export async function runStep(t, step, { baseUrl, timeouts = {}, ready, errors }
  * Runs a scene's steps. Unless the scene places its own "at" steps, actions are spread evenly across the narration
  * (the first right away, the last by about 80%), so the video moves while the narrator talks.
  */
+/**
+ * Per-target policy for app errors seen during a step (tour "appErrors"):
+ *   { "network": "fail"|"warn", "console": "fail"|"warn", "pageErrors": "fail"|"warn", "ignore": ["<regex>", ...] }
+ * Defaults: network 5xx and uncaught page exceptions are warnings, console errors are warnings. Ignored entries
+ * (known noisy endpoints or messages) are kept in network.json/console.json, marked "ignored".
+ * "fail": the step fails as an APP error naming the request, e.g. "GET /internal/DynamicReports/Modules 500".
+ */
+function appErrorPolicy(t, marks, entry) {
+  const p = t.policy ?? {};
+  const fresh = [
+    ...(t.networkFailures ?? []).slice(marks.net).filter(n => !n.ignored && (n.status >= 500 || (p.network4xx === 'fail' && n.status >= 400)))
+      .map(n => ({ rule: p.network, text: `${n.method} ${n.request.replace(/\?.*$/, '')} ${n.status}` })),
+    ...(t.consoleErrors ?? []).slice(marks.con).filter(c => !c.ignored && c.type === 'pageerror')
+      .map(c => ({ rule: p.pageErrors, text: `uncaught exception: ${c.text.split('\n')[0].slice(0, 200)}` })),
+    ...(t.consoleErrors ?? []).slice(marks.con).filter(c => !c.ignored && c.type === 'error')
+      .map(c => ({ rule: p.console, text: `console error: ${c.text.split('\n')[0].slice(0, 200)}` })),
+  ];
+  const fatal = fresh.find(f => f.rule === 'fail');
+  if (fatal) throw new Error(`the app showed an error: ${fatal.text}`);
+  if (fresh.length) (entry.warnings ??= []).push(...fresh.slice(0, 5).map(f => f.text));
+}
+
 /** Thrown at --until-step: the requested part of the run is done. */
 export class StopRun extends Error {}
 
@@ -206,24 +249,33 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
     const covers = kind === 'check' ? [step.criterion ?? criteria].flat().filter(c => c !== undefined && c !== '').map(String) : [];
     const started = Date.now();
     const entry = { scene, step: index, action: a, kind, ...(covers.length ? { criteria: covers } : {}), spec: shown(step) };
+    const warnings = [];
+    // Attribution: browser errors and failing requests from now on belong to this step.
+    t.stepKey = `${scene ?? 'setup'}#${index}`;
+    t.stepLabel = `${a} ${JSON.stringify(shown(step)[a] ?? '').slice(0, 60)}`;
+    const marks = { net: t.networkFailures?.length ?? 0, con: t.consoleErrors?.length ?? 0 };
     try {
       // Rule-based retries for actions only (timeouts, elements not there yet). A failed check is never retried.
       for (let attempt = 0; ; attempt++) {
-        try { await runStep(t, step, { baseUrl, timeouts, ready, errors }); break; } catch (e) {
+        try {
+          await runStep(t, step, { baseUrl, timeouts, ready, errors, warnings });
+          appErrorPolicy(t, marks, entry);
+          break;
+        } catch (e) {
           if (kind === 'check' || attempt >= (step.retries ?? retries) || !/Timeout|not found|not visible|detached/i.test(e.message)) throw e;
           log(`${scene ?? 'setup'} step ${index}: retrying (${e.message.split('\n')[0]})`);
           await settle(t.page, ready);
           entry.retried = attempt + 1;
         }
       }
-      report?.push({ ...entry, ok: true, ms: Date.now() - started });
+      report?.push({ ...entry, ok: true, ms: Date.now() - started, ...(warnings.length ? { warnings } : {}) });
     } catch (e) {
       const message = e.message.split('\n')[0];
       const target = targetOf(step);
       const suggestions = target ? await suggest(t.page, target) : [];
       // The app's own error UI (tour "errors") during a step is an APP failure, whatever the step.
       const failure = /^the app showed an error/.test(message) ? 'app' : kind === 'check' ? 'criterion' : 'script';
-      Object.assign(entry, { ok: false, failure, optional: !!step.optional, error: message, url: t.page.url(), ms: Date.now() - started,
+      Object.assign(entry, { ok: false, failure, optional: !!step.optional, error: message, url: t.page.url(), ms: Date.now() - started, ...(warnings.length ? { warnings } : {}),
         ...(target && failure !== 'app' ? { expected: target, found: suggestions.length ? `closest on the page: ${suggestions.join(' | ')}` : 'nothing similar on the page' } : {}),
         suggestions });
       report?.push(entry);
@@ -243,14 +295,16 @@ export class StepError extends Error {}
 const targetOf = step => step[actionOf(step)] && actionOf(step) !== 'goto' && typeof step[actionOf(step)] !== 'number' ? step[actionOf(step)] : null;
 const targetText = t => (typeof t === 'string' ? t.replace(/^css=/, '') : t.name ?? t.label ?? t.placeholder ?? t.text ?? t.testId ?? t.css ?? '');
 
-/** Levenshtein distance, for closest-match suggestions. */
+/** Edit distance (optimal string alignment: a swapped pair of letters is one edit), for closest-match suggestions. */
 function distance(a, b) {
-  const d = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    let prev = d[0]; d[0] = i;
-    for (let j = 1; j <= b.length; j++) { const tmp = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = tmp; }
-  }
-  return d[b.length];
+  const d = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i ? (j ? 0 : i) : j)));
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  return d[a.length][b.length];
 }
 
 /** Up to three visible names on the page closest to a target that didn't resolve. */

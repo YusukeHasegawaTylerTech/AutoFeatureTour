@@ -117,13 +117,32 @@ export class Tour {
     // Browser-side evidence for the triage bundle (bounded, so a chatty app can't grow it without limit).
     this.consoleErrors = [];
     this.networkFailures = [];
-    const keep = (list, item) => { if (list.length < 500) list.push({ at: +this.now().toFixed(2), url: this.page.url(), ...item }); };
+    // Each entry records the step that was running (attribution); entries matching the tour's appErrors.ignore are
+    // kept but marked "ignored", so known noisy endpoints don't count as causes.
+    const ignore = (this.policy?.ignore ?? []).map(r => new RegExp(r, 'i'));
+    const keep = (list, item) => {
+      if (list.length >= 500) return;
+      const text = `${item.request ?? ''} ${item.text ?? ''}`;
+      list.push({ at: +this.now().toFixed(2), url: this.page.url(), stepKey: this.stepKey ?? 'setup', step: this.stepLabel ?? null, ...item,
+        ...(ignore.some(r => r.test(text)) ? { ignored: true } : {}) });
+    };
+    this.page.on('crash', () => { this.crashed = true; keep(this.consoleErrors, { type: 'crash', text: 'the browser page crashed' }); });
     this.page.on('console', m => { if (['error', 'warning'].includes(m.type())) keep(this.consoleErrors, { type: m.type(), text: m.text().slice(0, 2000) }); });
     this.page.on('pageerror', e => keep(this.consoleErrors, { type: 'pageerror', text: String(e.stack ?? e).slice(0, 2000) }));
     this.page.on('requestfailed', r => keep(this.networkFailures, { method: r.method(), request: r.url(), failure: r.failure()?.errorText }));
     this.page.on('response', r => { if (r.status() >= 400) keep(this.networkFailures, { method: r.request().method(), request: r.url(), status: r.status() }); });
     this.t0 = Date.now();
     return this.page;
+  }
+
+  /** A fresh browser context (e.g. after re-login), before any scene: the old one and its video are discarded. */
+  async restart(opts) {
+    const old = this.page?.video();
+    await this.context?.close().catch(() => {});
+    await old?.delete().catch(() => {});
+    await this.browser?.close().catch(() => {});
+    this.timings = [];
+    return this.start(opts);
   }
 
   now() { return (Date.now() - this.t0) / 1000; }
@@ -161,6 +180,16 @@ export class Tour {
   async click(target, opts) {
     const { x, y } = await this.moveTo(target, opts);
     await sleep(250);
+    // The click goes to a screen position (so the cursor is filmed), so check first that the element would get it:
+    // not disabled, and not covered by an overlay, a dialog or a spinner.
+    if (!(await target.isEnabled().catch(() => true))) throw new Error('action blocked: the element is disabled');
+    const cover = await target.evaluate((el, [px, py]) => {
+      const hit = document.elementFromPoint(px, py);
+      if (!hit || el === hit || el.contains(hit) || hit.contains(el) || (el.getRootNode?.() !== document && el.getRootNode().host?.contains(hit))) return null;
+      const d = n => `<${n.tagName.toLowerCase()}${n.id ? `#${n.id}` : ''}${n.className && typeof n.className === 'string' ? `.${n.className.trim().split(/\s+/).slice(0, 2).join('.')}` : ''}>`;
+      return d(hit);
+    }, [x, y]).catch(e => (/detached|not attached/i.test(e.message) ? '(element detached from the page)' : null));
+    if (cover) throw new Error(`action blocked: ${cover.startsWith('(') ? cover : `the element is covered by ${cover}`}`);
     await this.page.mouse.click(x, y);
     await sleep(300);
   }
@@ -211,7 +240,8 @@ export class Tour {
     const dir = path.join(this.outDir, 'screens');
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, `${name}.png`);
-    await this.page.screenshot({ path: file }).catch(e => log(`screenshot ${name} failed: ${e.message}`));
+    const mask = (this.mask?.selectors ?? []).map(s => this.page.locator(s)); // PII also masked by Playwright, on top of the in-page blur
+    await this.page.screenshot({ path: file, mask, timeout: 10000 }).catch(e => log(`screenshot ${name} failed: ${e.message}`));
     return file;
   }
 

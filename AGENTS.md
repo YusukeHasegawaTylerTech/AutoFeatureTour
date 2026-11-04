@@ -60,34 +60,58 @@ scripts), `validation.md`, `discovery.json`, `run.json` (command, args, status).
 ## When a run fails
 
 A tour video never silently shows an error: a failed run behaves like a failed test. Detection, classification and
-reporting are deterministic (no LLM anywhere on the run path).
+reporting are deterministic (no LLM on the run path). Classes describe what was observed, not why.
 
-| exit | class | meaning |
+| exit | class | observed |
 |---|---|---|
 | 0 | ok | every step and check passed; `tour.mp4` written |
-| 1 | error | usage, config or unexpected error |
-| 2 | SCRIPT | an action step (goto/click/fill/select/…) couldn't be done, or the script isn't ready (unresolved or empty scenes). The script is wrong or the UI changed |
-| 3 | unreachable | nothing answers at the app's URL |
-| 4 | CRITERION | a `verify` ran and its check failed: possibly a real app bug ("AC2 not met") |
-| 5 | APP | the app showed its own error UI (tour `"errors"`) during a step: the environment or a bug |
+| 1 | error | a usage or config problem, or an unexpected error in the tool |
+| 2 | SCRIPT | an action step couldn't be performed: target not found, covered by another element, disabled, or detached; or the script isn't ready (unresolved or empty scenes) |
+| 3 | UNREACHABLE | nothing answered at the app's URL |
+| 4 | CRITERION | a `verify` ran and its check failed ("AC2 NOT MET") |
+| 5 | APP | during a step the app showed its error UI (`"errors"`), returned an HTTP error or threw an uncaught exception (per `"appErrors"`), or a page didn't finish loading |
+| 6 | LOGIN | signing in didn't reach a signed-in page (also: an expired session with no credentials to sign in again) |
+| 7 | TOOLING | a local tool failed: ffmpeg, the voice, the browser, or the disk |
+| 130 | INTERRUPTED | Ctrl+C or a kill signal; the partial report and bundle are written and marked incomplete |
 
-`verify` steps count for the scene's `"criteria"` (or their own `"criterion"`); `report.md` gives each acceptance
-criterion as met, met so far, NOT MET, not run or not checked. Actions that time out are retried (`"retries"`,
-default 1); checks never are. A failed run writes **no** `tour.mp4`. It keeps `recording-failed.webm`,
-`report.json`/`report.md`, `screens/failure.png`, `trace-failed.zip`, and a **triage bundle**:
+Every run writes `report.json` (schema `aft-report/1`, written after each scene too, so a crash leaves it current) and
+`report.md`, which starts with five lines: **what failed**, **why we think so** (the rule above), **first cause** (the
+failing request or browser error during that step, e.g. `GET /internal/DynamicReports/Modules 500`, kept apart from
+earlier unrelated ones), **look next**, **criteria so far**. Then the failing step, the warnings (ambiguous targets,
+pages that never settled, app errors that didn't fail the step) and every step. Actions that time out are retried
+(`"retries"`, default 1); checks never are. A failed run writes **no** `tour.mp4`. It keeps
+`recording-failed.webm`, `screens/failure.png`, `trace-failed.zip` and a **triage bundle**:
 
 ```
-<run>/triage/            (--zip: also <run>/triage.zip)
-  report.md / report.json   failing step, raw Playwright error, did-you-mean matches, criteria so far (schema aft-triage/1)
-  script.json               the script that ran, failing step marked "__FAILED__" (secret values masked)
+<run>/triage/            (--zip: also <run>/triage.zip; "INCOMPLETE" present if the run was cut short)
+  report.md / report.json   the same report; report.json "failing", "firstCause", "criteria", "steps"
+  script.json               the script that ran, failing step marked "__FAILED__"
   page/aria.yml             accessibility snapshot at the failure · page/page.json (URL, title) · page/text.txt · page/dom.html
-  screenshot.png  trace.zip  console.json (console + page errors)  network.json (failed requests, HTTP >= 400)
-  PROMPT.md                 a tool-agnostic brief: paste the folder into any AI assistant to triage it
+  screenshot.png            (PII mask applied) · login-failure.png for LOGIN failures
+  console.json  network.json  every console error / failed request, with the step that was running ("stepKey")
+  trace.zip                 Playwright trace (full network traffic, cookies, DOM: sensitive; "trace": false turns it off)
+  PROMPT.md                 a brief for any AI assistant, about triaging the run
 ```
 
-The tool doesn't triage. Hand the bundle to a person or any AI. To replay by hand: `aft run <tour> --headed --pause`
-(stops at the failure with the Playwright inspector), `--until-step N` (stop after step N; scene steps counted across
-the tour as in report.md; exit 0, no video), `--from-step N` (steps before N run fast, unpaced).
+**App errors policy** (per target): `"appErrors": { "network": "fail"|"warn", "pageErrors": "fail"|"warn",
+"console": "fail"|"warn", "ignore": ["<regex>"] }`. Default: warn (listed in the report, the step passes). Ignored
+entries (known noisy endpoints or messages) stay in network.json/console.json marked `"ignored"`. `"errors"` names
+the app's error UI (a selector plus text regex); it always fails the step.
+
+**Redaction:** every text file in the report and bundle has the tour's secret values (`"secret": true` steps and
+credential-like env vars), auth headers, cookies, bearer tokens, JWTs and token-like URL parameters replaced with
+`***`. Screenshots get the `mask` applied. The trace can't be scrubbed: set `"trace": false` for targets where
+that matters.
+
+**Your job as the agent: get the run to pass, or report a blocker.** SCRIPT: fix the step (the "did you mean"
+matches and `triage/page/aria.yml` show the names on the page) and re-run. CRITERION, APP, UNREACHABLE: if the
+step itself is wrong, fix it; otherwise stop and report the blocker (the failing step, what was observed: request and
+status, error text, screenshot). App defects go to the app's owners with the bundle; finding their root cause is not
+part of this job.
+
+To replay by hand: `aft run <tour> --headed --pause` (stops at the failure with the Playwright inspector),
+`--until-step N` (stop after step N, counted across the tour as in report.md; exit 0, no video), `--from-step N`
+(steps before N run fast, unpaced).
 
 ## Adding a target app
 
@@ -97,7 +121,7 @@ Start from `examples/todomvc/tour.json`; most apps need nothing more than a `tou
    same script then runs against each with `--target`. `--base-url` / `BASE_URL` override.
 2. Login: add `"login": { "role": "...", "steps": [...] }` with credentials as `"{env:NAME}"` (from env vars or a
    git-ignored `.env`). `aft login <tour.json> --target qa` saves `auth/<target>-qa/<role>.json`; for SSO/MFA use
-   `--manual` and log in by hand. Runs load the saved state; re-run `login` when it expires.
+   `--manual` and log in by hand. Runs load the saved state and sign in again on their own when it has expired.
 3. Test data: `"hooks": { "setup": [...], "teardown": [...] }` with `{ "run": "<cmd>" }`, `{ "node": "<script>" }` or
    `{ "http": { "method", "url", "body" } }`. Hooks get `BASE_URL` and `RUN_DIR`.
 4. Sensitive data on screen: `"mask": { "selectors": [...], "patterns": [...] }` blurs it before recording.
@@ -143,10 +167,10 @@ Start from `examples/todomvc/tour.json`; most apps need nothing more than a `tou
 | `ffmpeg not found` | install it (see Setup) and open a new terminal |
 | `The sapi speech provider needs Windows` / no voices | `--speech silent` |
 | `SCRIPT failure … Target not found` (exit 2) | the name differs on the page; see the "did you mean" suggestion, or `aft validate` for all of them; check with `npx playwright codegen <url>` |
-| `CRITERION … not met` (exit 4) | the app doesn't show what the criterion expects (a real bug?), or it's slow: raise `timeouts.verify` |
-| `APP error` (exit 5) | the app's own error dialog; see `triage/network.json` for the failing request (e.g. HTTP 500) and the server log |
-| lands on a login page / 401s | saved login expired: `aft login <tour.json> --target <env>` (`--manual` for SSO) |
-| `No saved login at …` | the tour has `login` without steps: run `aft login --manual` first |
+| `CRITERION … not met` (exit 4) | the page didn't show what the check expects; if it's just slow, raise `timeouts.verify`; else report it |
+| `APP error` (exit 5) | the report's "first cause" names the failing request or error during that step; report it as a blocker |
+| `saved login expired; signed in again` | normal: an expired session is renewed automatically, off camera, when the tour has login steps and its credentials are set. `--fresh-login` forces it; `login.maxAgeMinutes` renews old sessions early |
+| `LOGIN: … can't sign in by itself` (exit 6) | set the credentials it names, or (SSO/MFA, no login steps) run `aft login <tour.json> --manual` |
 | exit 3, `didn't come up` | app not running at `baseUrl`, or `launch.healthUrl` wrong; see `app.log` |
 | scene overruns its narration | a step waited for its timeout; mark it `"optional": true` (3 s limit) or fix the target |
 

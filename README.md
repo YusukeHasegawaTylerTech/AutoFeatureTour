@@ -61,11 +61,11 @@ aft doctor | --help | --version | --list-voices
 | `--no-captions`, `--no-record` | skip tour.vtt; `auto` without recording |
 | anything else | passed to a `.tour.mjs` target as `ctx.options` (e.g. `--engine`, `--skip-build`) |
 
-**Exit codes:** 0 ok · 1 usage/config/unexpected · 2 SCRIPT failure (an action couldn't be done, or the script isn't
-ready) · 3 app unreachable · 4 CRITERION failure (a `verify` failed) · 5 APP error (the app showed its error UI).
-A failed run writes no `tour.mp4`, but a report per acceptance criterion and a **triage bundle** (`<run>/triage/`:
-report, script with the failing step marked, ARIA snapshot, screenshot, trace, console and network errors,
-PROMPT.md for any AI tool). See [AGENTS.md](AGENTS.md#when-a-run-fails). Hand triage: `--headed --pause`,
+**Exit codes:** 0 ok · 1 usage/config · 2 SCRIPT (an action couldn't be performed) · 3 UNREACHABLE · 4 CRITERION
+(a `verify` failed) · 5 APP (error UI, HTTP error or exception during a step) · 6 LOGIN · 7 TOOLING · 130 interrupted.
+A failed run writes no `tour.mp4`; it writes a cause-first `report.md` and a **triage bundle** (`<run>/triage/`:
+report, script with the failing step marked, ARIA snapshot, screenshot, trace, console and network errors per step,
+PROMPT.md), with secrets scrubbed. See [AGENTS.md](AGENTS.md#when-a-run-fails). Hand triage: `--headed --pause`,
 `--until-step N`, `--from-step N`, `--zip`. Everything is non-interactive unless you ask.
 
 ## Output

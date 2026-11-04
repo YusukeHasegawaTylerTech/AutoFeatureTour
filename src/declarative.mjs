@@ -14,6 +14,9 @@
 //     "stop": true                              // false: leave it running after the run (slow-starting services)
 //   },                                          // already answering at healthUrl? it's used as is and never stopped
 //   "ready": { "busy": ".spinner, .loading", "stableMs": 1500, "timeout": 60000 },  // instead of network idle
+//   "appErrors": { "network": "fail", "console": "warn", "pageErrors": "warn", "ignore": ["/telemetry", "favicon"] },
+//   "trace": true,                               // false: no trace.zip (it holds full network traffic and DOM)
+//   "login": { ..., "signedIn": "<css>", "checkPath": "/home", "maxAgeMinutes": 30 },  // re-login on expiry, off camera
 //   "retries": 1,                                // rule-based retries of action steps that time out (checks: never)
 //   "errors": { "selector": ".error-dialog", "text": "error|exception" },  // the app's error UI: a step showing it fails
 //   "login": { "role": "clerk", "steps": [ { "goto": "/login" }, { "fill": "Email", "text": "{env:DEMO_USER}" }, ... ] },
@@ -41,7 +44,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { authFile, saveLogin } from './auth.mjs';
 import { probe, startProcess, stopProcess, waitForHttp } from './recorder.mjs';
-import { runSteps, settle, StepError } from './steps.mjs';
+import { Failure } from './failures.mjs';
+import { runSteps, settle } from './steps.mjs';
 import { freePort, run } from './util.mjs';
 
 /** Runs setup/teardown hooks: a shell command, an HTTP call, or a Node script. */
@@ -122,6 +126,8 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
       const vars = { port: port ?? '' };
       vars.baseUrl = fill(cfg0.baseUrl, vars).replace(/\/$/, '');
       const cfg = fill(cfg0, vars);
+      // Values marked secret (resolved from the environment) are scrubbed from every report and bundle file.
+      ctx.secrets?.push(...[...(cfg.login?.steps ?? []), ...cfg.scenes.flatMap(s => s.steps ?? [])].filter(s => s.secret && s.text).map(s => s.text));
       const procs = [];
       let setupDone = false;
       const hookCtx = { dir, outDir: ctx.outDir, baseUrl: vars.baseUrl, log: ctx.log };
@@ -141,30 +147,52 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
         await runHooks(cfg.hooks?.setup, hookCtx);
         setupDone = true;
         const state = cfg.login ? authFile(ctx.toolRoot, authTarget(cfg, ctx.options.env), ctx.options.role ?? cfg.login.role) : null;
-        const haveState = state && fs.existsSync(state);
-        if (cfg.login && !haveState && !cfg.login.steps?.length)
-          throw new Error(`No saved login at ${state}; run: aft login <tour.json> --manual${ctx.options.env ? ` --env ${ctx.options.env}` : ''}`);
-        if (cfg.login && !haveState) {
+        // Credentials the login steps need ({env:NAME} references that are empty mean we can't sign in by ourselves).
+        const missingCreds = [...JSON.stringify(cfg0.login?.steps ?? []).matchAll(/\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g)].map(m => m[1]).filter(k => !process.env[k]);
+        const canLogin = !!cfg.login?.steps?.length && !missingCreds.length;
+        const cannot = () => (!cfg.login?.steps?.length ? `the tour has no login steps: run aft login <tour.json> --manual${ctx.options.env ? ` --target ${ctx.options.env}` : ''}`
+          : `credentials missing: set ${missingCreds.join(', ')} (environment or .env)`);
+        const signIn = async why => {
+          if (!canLogin) throw new Failure('login', `${why}, and the tour can't sign in by itself: ${cannot()}`);
           // In a separate browser that is neither recorded nor traced, so credentials never reach the run's files.
-          ctx.log('logging in (separate browser, not recorded)');
+          ctx.log(`${why}: signing in (separate browser, not recorded)`);
           await saveLogin({ baseUrl: vars.baseUrl + '/', steps: cfg.login.steps, file: state, viewport: cfg.viewport, timeouts: cfg.timeouts, ready: cfg.ready,
-            ignoreHTTPSErrors: cfg.ignoreHTTPSErrors });
+            ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, failureShot: path.join(ctx.outDir, 'login-failure.png'), signedIn: cfg.login.signedIn });
+        };
+        let fresh = false;
+        if (cfg.login) {
+          const age = fs.existsSync(state) ? (Date.now() - fs.statSync(state).mtimeMs) / 60000 : null;
+          const why = age === null ? 'no saved login' : ctx.options.freshLogin ? '--fresh-login' : cfg.login.maxAgeMinutes && age > cfg.login.maxAgeMinutes ? `saved login is ${Math.round(age)} min old (maxAgeMinutes ${cfg.login.maxAgeMinutes})` : null;
+          if (why) { await signIn(why); fresh = true; }
         }
         const t = ctx.tour;
-        await t.start({ storageState: state ?? undefined, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors });
+        t.policy = cfg.appErrors ?? {};
+        const startOpts = { storageState: state ?? undefined, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, trace: cfg.trace !== false };
+        await t.start(startOpts);
         const opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report, ready: cfg.ready, errors: cfg.errors, retries: cfg.retries ?? 1,
           range: ctx.range,
           onError: ctx.dryRun ? 'collect' : ctx.options.onError ?? cfg.onError ?? 'fail' };
-        await t.page.goto(vars.baseUrl + '/' + (cfg.startPath ?? '').replace(/^\//, ''), { timeout: cfg.timeouts?.navigation ?? 30000 });
-        await settle(t.page, cfg.ready);
-        if (cfg.login?.signedIn && !(await t.page.locator(cfg.login.signedIn).first().isVisible().catch(() => false)))
-          await t.page.locator(cfg.login.signedIn).first().waitFor({ timeout: cfg.ready?.timeout ?? 30000 }).catch(() => {
-            throw new StepError(`not signed in (no ${cfg.login.signedIn} on ${t.page.url()}): the saved login may have expired; run aft login again`);
-          });
+        // Check the session where the tour starts (off camera: before the first scene, so it's cut from the video).
+        const startAt = vars.baseUrl + '/' + String(cfg.login?.checkPath ?? cfg.startPath ?? cfg.scenes[0]?.url ?? '').replace(/^\//, '');
+        const signedIn = async () => {
+          await t.page.goto(startAt, { timeout: cfg.timeouts?.navigation ?? 30000 });
+          await settle(t.page, cfg.ready);
+          if (!cfg.login?.signedIn) return true;
+          return t.page.locator(cfg.login.signedIn).first().waitFor({ timeout: fresh ? cfg.ready?.timeout ?? 30000 : cfg.timeouts?.waitFor ?? 15000 }).then(() => true, () => false);
+        };
+        if (!(await signedIn())) {
+          if (fresh) throw new Failure('login', `signed in, but ${cfg.login.signedIn} isn't on ${t.page.url()}: check login.signedIn / login.checkPath in the tour`);
+          await signIn('saved login expired');
+          fresh = true;
+          await t.restart(startOpts); // a fresh recorded context with the new session; nothing has been filmed yet
+          if (!(await signedIn())) throw new Failure('login', `signed in again, but ${cfg.login.signedIn} isn't on ${t.page.url()}: check login.signedIn / login.checkPath`);
+          ctx.log('saved login expired; signed in again');
+        }
         for (const [i, s] of cfg.scenes.entries()) {
           const id = ctx.scenes[i].id;
           if (s.url) await runSteps(t, [{ goto: s.url }], { ...opts, unpaced: true, scene: `${id} (url)` });
           await t.scene(id, () => runSteps(t, s.steps ?? [], { ...opts, scene: id, criteria: s.criteria ?? [] }));
+          ctx.progress?.();
         }
         await t.finish({ baseUrl: vars.baseUrl });
       } finally {

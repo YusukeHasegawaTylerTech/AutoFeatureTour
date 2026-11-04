@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { chromium } from 'playwright';
+import { Failure } from './failures.mjs';
 import { plainActor, runSteps } from './steps.mjs';
 import { log } from './util.mjs';
 
@@ -18,7 +19,7 @@ export function authFile(toolRoot, target, role = 'default') {
 }
 
 /** Logs in and saves storageState to file. Returns file. */
-export async function saveLogin({ baseUrl, steps, file, manual = false, viewport, timeouts, ready, ignoreHTTPSErrors }) {
+export async function saveLogin({ baseUrl, steps, file, manual = false, viewport, timeouts, ready, ignoreHTTPSErrors, failureShot, signedIn }) {
   if (!manual && !steps?.length) throw new Error('No login steps in the tour; add "login": { "steps": [...] } or use --manual');
   const browser = await chromium.launch({ headless: !manual });
   try {
@@ -30,7 +31,14 @@ export async function saveLogin({ baseUrl, steps, file, manual = false, viewport
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       await new Promise(r => rl.question('', () => { rl.close(); r(); }));
     } else {
-      await runSteps(plainActor(page), steps, { baseUrl, unpaced: true, timeouts, ready });
+      try {
+        await runSteps(plainActor(page), steps, { baseUrl, unpaced: true, timeouts, ready });
+        if (signedIn) await page.locator(signedIn).first().waitFor({ timeout: timeouts?.waitFor ?? 30000 });
+      } catch (e) {
+        if (failureShot) await page.screenshot({ path: failureShot }).catch(() => {});
+        const sso = !/^https?:\/\/(localhost|127\.)/.test(page.url()) && new URL(page.url()).host !== new URL(baseUrl).host;
+        throw new Failure('login', `sign-in failed at ${page.url()}: ${e.message.split('\n')[0].replace(/^SCRIPT failure: /, '')}${sso ? ' (redirected to another site: SSO? use aft login --manual)' : ''}`);
+      }
     }
     fs.mkdirSync(path.dirname(file), { recursive: true });
     await context.storageState({ path: file });
