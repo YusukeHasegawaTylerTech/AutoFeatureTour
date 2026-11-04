@@ -18,11 +18,11 @@ export function authFile(toolRoot, target, role = 'default') {
 }
 
 /** Logs in and saves storageState to file. Returns file. */
-export async function saveLogin({ baseUrl, steps, file, manual = false, viewport, timeouts }) {
+export async function saveLogin({ baseUrl, steps, file, manual = false, viewport, timeouts, ready, ignoreHTTPSErrors }) {
   if (!manual && !steps?.length) throw new Error('No login steps in the tour; add "login": { "steps": [...] } or use --manual');
   const browser = await chromium.launch({ headless: !manual });
   try {
-    const context = await browser.newContext({ viewport });
+    const context = await browser.newContext({ viewport, ignoreHTTPSErrors });
     const page = await context.newPage();
     await page.goto(baseUrl);
     if (manual) {
@@ -30,7 +30,7 @@ export async function saveLogin({ baseUrl, steps, file, manual = false, viewport
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       await new Promise(r => rl.question('', () => { rl.close(); r(); }));
     } else {
-      await runSteps(plainActor(page), steps, { baseUrl, unpaced: true, timeouts });
+      await runSteps(plainActor(page), steps, { baseUrl, unpaced: true, timeouts, ready });
     }
     fs.mkdirSync(path.dirname(file), { recursive: true });
     await context.storageState({ path: file });

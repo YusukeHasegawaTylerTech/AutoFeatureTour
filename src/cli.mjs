@@ -227,13 +227,21 @@ async function render(def, tourDir, outDir, args) {
 
 // ---- Generate (story/prompt → editable tour.json + script.md) ----------------------------------------------------
 
+/** The app URL for generate/all: --base-url, BASE_URL, or the --tour target file (its environment or baseUrl). */
+function targetUrl(args) {
+  if (args.baseUrl || process.env.BASE_URL || !args.tour) return args.baseUrl ?? process.env.BASE_URL;
+  const raw = resolveConfig(JSON.parse(fs.readFileSync(args.tour, 'utf8')), { env: envOf(args) });
+  return raw.baseUrl ? new URL(raw.startPath ?? '', raw.baseUrl.replace(/\/?$/, '/')).href : undefined;
+}
+
 function loginStepsFor(args) {
   if (!args.tour) return {};
   const raw = resolveConfig(JSON.parse(fs.readFileSync(args.tour, 'utf8')), { env: envOf(args), baseUrl: args.baseUrl });
   raw.name ??= path.basename(args.tour).replace(/\.tour\.json$|\.json$/, '');
-  if (!raw.login) return {};
+  if (!raw.login) return { ready: raw.ready, ignoreHTTPSErrors: raw.ignoreHTTPSErrors, paths: raw.discover?.paths ?? [] };
   const state = authFile(toolRoot, authTarget(raw, envOf(args)), args.role ?? raw.login.role);
-  return fs.existsSync(state) ? { storageState: state } : { loginSteps: raw.login.steps };
+  const common = { ready: raw.ready, ignoreHTTPSErrors: raw.ignoreHTTPSErrors, paths: raw.discover?.paths ?? [] };
+  return fs.existsSync(state) ? { ...common, storageState: state } : { ...common, loginSteps: raw.login.steps };
 }
 
 /** Discovers (when there's a URL), plans into out, and merges login/environments/hooks/mask from --tour. */
@@ -246,7 +254,10 @@ async function generateInto(out, args, { url, story, name }) {
   const tourFile = path.join(out, 'tour.json');
   if (args.tour) { // the app's own settings from a hand-written tour.json: login, environments, hooks, mask, timeouts
     const base = JSON.parse(fs.readFileSync(args.tour, 'utf8'));
-    for (const k of ['login', 'environments', 'hooks', 'mask', 'timeouts', 'launch', 'viewport', 'voice', 'pronounce']) if (base[k]) tour[k] = base[k];
+    for (const k of ['login', 'environments', 'hooks', 'mask', 'timeouts', 'launch', 'viewport', 'voice', 'pronounce', 'ready', 'ignoreHTTPSErrors', 'startPath', 'baseUrl'])
+      if (base[k] !== undefined) tour[k] = base[k];
+    if (tour.draft && tour.baseUrl) tour.needs = tour.needs?.filter(n => !n.startsWith('a target'));
+    if (tour.needs && !tour.needs.length) { delete tour.needs; delete tour.draft; }
     tour.target = base.target ?? base.name;
     fs.writeFileSync(tourFile, JSON.stringify(tour, null, 2));
   }
@@ -266,7 +277,7 @@ const commands = {
 
   async generate(args) {
     const story = readStory(args.story);
-    const url = args.baseUrl ?? process.env.BASE_URL;
+    const url = targetUrl(args);
     if (!story && !args.prompt) throw new UsageError('Usage: aft generate --story <file|text> [--base-url <url>] [--llm claude] [--style ...]');
     await withRun(args.name ?? storyName(story, url), args, 'generate', async out => {
       const { tour, tourFile } = await generateInto(out, args, { url, story, name: args.name ?? storyName(story, url) });
@@ -295,7 +306,7 @@ const commands = {
 
   async all(args) {
     const story = readStory(args.story);
-    const url = args.baseUrl ?? process.env.BASE_URL;
+    const url = targetUrl(args);
     if (!url) throw new UsageError('aft all needs the app: --base-url <url> (or BASE_URL). Example: aft all --story story.md --base-url https://qa.example.com/ --llm claude [--tour app.tour.json for login/hooks]');
     const name = args.name ?? storyName(story, url);
     let blocking = 0;
@@ -354,7 +365,8 @@ const commands = {
     const raw = resolveConfig(JSON.parse(fs.readFileSync(file, 'utf8')), { env: envOf(args), baseUrl: args.baseUrl });
     raw.name ??= path.basename(file).replace(/\.tour\.json$|\.json$/, '');
     const state = authFile(toolRoot, authTarget(raw, envOf(args)), args.role ?? raw.login?.role);
-    await saveLogin({ baseUrl: raw.baseUrl, steps: raw.login?.steps, file: state, manual: !!args.manual, viewport: raw.viewport, timeouts: raw.timeouts });
+    await saveLogin({ baseUrl: raw.baseUrl, steps: raw.login?.steps, file: state, manual: !!args.manual, viewport: raw.viewport, timeouts: raw.timeouts,
+      ready: raw.ready, ignoreHTTPSErrors: raw.ignoreHTTPSErrors });
   },
 };
 

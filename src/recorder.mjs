@@ -4,6 +4,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { log, sleep } from './util.mjs';
@@ -96,7 +97,7 @@ export class Tour {
   }
 
   /** Launches the browser and starts recording. initScripts: functions or [fn, arg] pairs run in every page. */
-  async start({ initScripts = [], cursor = true, headless = this.headless, storageState, trace = true } = {}) {
+  async start({ initScripts = [], cursor = true, headless = this.headless, storageState, trace = true, ignoreHTTPSErrors = false } = {}) {
     fs.mkdirSync(this.outDir, { recursive: true });
     this.browser = await chromium.launch({ headless });
     // Video frames are CSS pixels (deviceScaleFactor isn't applied), so record at the viewport size and scale later.
@@ -104,6 +105,7 @@ export class Tour {
       viewport: this.viewport,
       ...(this.dryRun ? {} : { recordVideo: { dir: this.outDir, size: this.viewport } }),
       ...(storageState ? { storageState } : {}), // a saved login (aft login), so tours never type credentials on camera
+      ignoreHTTPSErrors, // dev/test servers with self-signed certificates
     });
     // Always trace: a failed run can be opened with `npx playwright show-trace <run>/trace.zip`.
     if (trace) { await this.context.tracing.start({ screenshots: true, snapshots: true, sources: false }); this.tracing = true; }
@@ -278,11 +280,29 @@ export function stopProcess(proc) {
   else proc.kill();
 }
 
-export async function waitForHttp(url, { ms = 60000, hint = '' } = {}) {
+/**
+ * True if url answers. any: any HTTP status counts (a 401/404 still means the server is up); otherwise 2xx/3xx.
+ * Self-signed certificates are accepted: this only checks a dev or test server is listening.
+ */
+export function probe(url, { any = false, timeout = 3000 } = {}) {
+  return new Promise(resolve => {
+    const u = new URL(url);
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.request(u, { method: 'GET', timeout, rejectUnauthorized: false }, res => {
+      res.resume();
+      resolve(any ? true : res.statusCode < 400);
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve(false));
+    req.end();
+  });
+}
+
+export async function waitForHttp(url, { ms = 60000, hint = '', any = false } = {}) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
-    try { if ((await fetch(url)).ok) return; } catch { /* not up yet */ }
-    await sleep(500);
+    if (await probe(url, { any })) return;
+    await sleep(1000);
   }
   throw new Error(`${url} didn't come up${hint ? `; ${hint}` : ''}`);
 }

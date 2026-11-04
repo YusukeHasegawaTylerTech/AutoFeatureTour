@@ -7,11 +7,13 @@
 //     "local": { "baseUrl": "http://localhost:3000" },
 //     "test":  { "baseUrl": "https://myapp-test.example.com", "timeouts": { "verify": 30000 } }
 //   },
-//   "launch": {                                 // optional: start the app for this run, stop it afterwards
+//   "launch": {                                 // optional; or a list of these (an API and a web server, say)
 //     "command": "npm start", "cwd": "../my-app", "env": { "PORT": "{port}" },
 //     "port": "auto",                           // a free port per run, so concurrent runs don't clash
-//     "healthUrl": "{baseUrl}/health", "timeoutSeconds": 120
-//   },
+//     "healthUrl": "{baseUrl}/health", "anyStatus": true, "timeoutSeconds": 120,
+//     "stop": true                              // false: leave it running after the run (slow-starting services)
+//   },                                          // already answering at healthUrl? it's used as is and never stopped
+//   "ready": { "busy": ".spinner, .loading", "stableMs": 1500, "timeout": 60000 },  // instead of network idle
 //   "login": { "role": "clerk", "steps": [ { "goto": "/login" }, { "fill": "Email", "text": "{env:DEMO_USER}" }, ... ] },
 //   "timeouts": { "action": 10000, "verify": 15000, "waitFor": 30000, "navigation": 30000 },
 //   "viewport": { "width": 1440, "height": 810 },
@@ -35,9 +37,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { authFile } from './auth.mjs';
-import { startProcess, stopProcess, waitForHttp } from './recorder.mjs';
-import { runSteps } from './steps.mjs';
+import { authFile, saveLogin } from './auth.mjs';
+import { probe, startProcess, stopProcess, waitForHttp } from './recorder.mjs';
+import { runSteps, settle, StepError } from './steps.mjs';
 import { freePort, run } from './util.mjs';
 
 /** Runs setup/teardown hooks: a shell command, an HTTP call, or a Node script. */
@@ -118,14 +120,21 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
       const vars = { port: port ?? '' };
       vars.baseUrl = fill(cfg0.baseUrl, vars).replace(/\/$/, '');
       const cfg = fill(cfg0, vars);
-      let proc, setupDone = false;
+      const procs = [];
+      let setupDone = false;
       const hookCtx = { dir, outDir: ctx.outDir, baseUrl: vars.baseUrl, log: ctx.log };
       try {
-        if (cfg.launch?.command) {
-          const logFile = path.join(ctx.outDir, 'app.log');
-          proc = startProcess(cfg.launch.command, [], { shell: true, cwd: path.resolve(dir, cfg.launch.cwd ?? '.'), env: cfg.launch.env, logFile });
-          await waitForHttp(cfg.launch.healthUrl ?? vars.baseUrl, { ms: (cfg.launch.timeoutSeconds ?? 120) * 1000, hint: `see ${logFile}` });
-          ctx.log(`app up at ${vars.baseUrl}`);
+        for (const [n, l] of [cfg.launch ?? []].flat().entries()) {
+          const health = l.healthUrl ?? vars.baseUrl;
+          const label = l.name ?? (n ? `service ${n + 1}` : 'app');
+          if (await probe(health, { any: l.anyStatus })) { ctx.log(`${label}: already running at ${health}; using it (it won't be stopped)`); continue; }
+          if (!l.command) throw new Error(`${label} didn't come up: nothing answers at ${health} and the tour has no launch command for it`);
+          const logFile = path.join(ctx.outDir, `${label.replace(/[^A-Za-z0-9_-]+/g, '-')}.log`);
+          ctx.log(`${label}: starting (${l.command}); log: ${logFile}`);
+          const proc = startProcess(l.command, [], { shell: true, cwd: path.resolve(dir, l.cwd ?? '.'), env: l.env, logFile });
+          if (l.stop !== false) procs.push(proc);
+          await waitForHttp(health, { ms: (l.timeoutSeconds ?? 120) * 1000, any: l.anyStatus, hint: `see ${logFile}` });
+          ctx.log(`${label}: up at ${health}${l.stop === false ? ' (left running afterwards)' : ''}`);
         }
         await runHooks(cfg.hooks?.setup, hookCtx);
         setupDone = true;
@@ -133,18 +142,22 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
         const haveState = state && fs.existsSync(state);
         if (cfg.login && !haveState && !cfg.login.steps?.length)
           throw new Error(`No saved login at ${state}; run: aft login <tour.json> --manual${ctx.options.env ? ` --env ${ctx.options.env}` : ''}`);
-        const t = ctx.tour;
-        await t.start({ storageState: haveState ? state : undefined });
-        const opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report,
-          onError: ctx.dryRun ? 'collect' : ctx.options.onError ?? cfg.onError ?? 'fail' };
-        await t.page.goto(vars.baseUrl + '/', { timeout: cfg.timeouts?.navigation ?? 30000 });
         if (cfg.login && !haveState) {
-          ctx.log('logging in (off camera)');
-          await runSteps(t, cfg.login.steps, { ...opts, onError: 'fail', unpaced: true, scene: 'login' });
-          fs.mkdirSync(path.dirname(state), { recursive: true });
-          await t.context.storageState({ path: state });
-          ctx.log(`saved login: ${state}`);
+          // In a separate browser that is neither recorded nor traced, so credentials never reach the run's files.
+          ctx.log('logging in (separate browser, not recorded)');
+          await saveLogin({ baseUrl: vars.baseUrl + '/', steps: cfg.login.steps, file: state, viewport: cfg.viewport, timeouts: cfg.timeouts, ready: cfg.ready,
+            ignoreHTTPSErrors: cfg.ignoreHTTPSErrors });
         }
+        const t = ctx.tour;
+        await t.start({ storageState: state ?? undefined, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors });
+        const opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report, ready: cfg.ready,
+          onError: ctx.dryRun ? 'collect' : ctx.options.onError ?? cfg.onError ?? 'fail' };
+        await t.page.goto(vars.baseUrl + '/' + (cfg.startPath ?? '').replace(/^\//, ''), { timeout: cfg.timeouts?.navigation ?? 30000 });
+        await settle(t.page, cfg.ready);
+        if (cfg.login?.signedIn && !(await t.page.locator(cfg.login.signedIn).first().isVisible().catch(() => false)))
+          await t.page.locator(cfg.login.signedIn).first().waitFor({ timeout: cfg.ready?.timeout ?? 30000 }).catch(() => {
+            throw new StepError(`not signed in (no ${cfg.login.signedIn} on ${t.page.url()}): the saved login may have expired; run aft login again`);
+          });
         for (const [i, s] of cfg.scenes.entries()) {
           const id = ctx.scenes[i].id;
           if (s.url) await runSteps(t, [{ goto: s.url }], { ...opts, unpaced: true, scene: `${id} (url)` });
@@ -153,7 +166,7 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
         await t.finish({ baseUrl: vars.baseUrl });
       } finally {
         if (setupDone) await runHooks(cfg.hooks?.teardown, hookCtx).catch(e => ctx.log(`teardown failed: ${e.message}`));
-        stopProcess(proc);
+        for (const p of procs) stopProcess(p);
       }
     },
   };

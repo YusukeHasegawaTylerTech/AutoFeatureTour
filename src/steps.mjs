@@ -17,6 +17,7 @@
 //
 // A target is either a string or an object:
 //   "Save"                                    a button/link/tab/menu item named Save, else a label, placeholder or text
+//                                             (a custom-element tag name such as "forge-app-bar" is finally tried as CSS)
 //   "css=.toolbar button"  "#id"  ".class"    CSS (anything starting with # . [ or css=)
 //   { "role": "button", "name": "Save" }     ARIA role + accessible name
 //   { "label": "Email" } { "placeholder": "Search" } { "text": "Welcome" } { "testId": "save" } { "css": "..." }
@@ -40,7 +41,9 @@ function candidates(page, target) {
     if (/^[#.[]/.test(target)) return [page.locator(target)];
     const exact = ROLES.map(role => page.getByRole(role, { name: target, exact: true }));
     return [...exact, page.getByLabel(target, { exact: true }), page.getByPlaceholder(target, { exact: true }),
-      ...ROLES.slice(0, 4).map(role => page.getByRole(role, { name: target })), page.getByText(target, { exact: true }), page.getByText(target)];
+      ...ROLES.slice(0, 4).map(role => page.getByRole(role, { name: target })), page.getByText(target, { exact: true }), page.getByText(target),
+      // Last resort: something shaped like a custom element's tag name (forge-app-bar, my-widget) as CSS.
+      ...(/^[a-z][a-z0-9]*(-[a-z0-9]+)+$/.test(target) ? [page.locator(target)] : [])];
   }
   const t = target;
   if (t.css) return [page.locator(t.css)];
@@ -81,22 +84,50 @@ export function plainActor(page) {
 
 const absolute =(baseUrl, url) => new URL(url, baseUrl).href;
 
-async function settle(page) {
+/**
+ * Waits for the page to be ready after an action. Default: DOM loaded, then network idle (briefly). Apps with
+ * long-lived connections never go network-idle; for them a tour sets "ready" (see declarative.mjs):
+ *   { "busy": "<css of spinners/splash>", "stableMs": 1500, "timeout": 60000, "stableTimeout": 15000 }
+ * = wait until no busy element is visible, then until the page's text and element count stop changing.
+ */
+export async function settle(page, ready) {
   await page.waitForLoadState('domcontentloaded').catch(() => {});
-  await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+  if (!ready) { await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {}); return; }
+  if (ready.busy)
+    await page.waitForFunction(busy => ![...document.querySelectorAll(busy)].some(el => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden'),
+      ready.busy, { timeout: ready.timeout ?? 60000, polling: 250 }).catch(() => {});
+  const until = Date.now() + (ready.stableTimeout ?? 15000);
+  let last = null, since = Date.now();
+  while (Date.now() < until) {
+    const now = await page.evaluate(() => `${document.body?.innerText.length}:${document.getElementsByTagName('*').length}`).catch(() => null);
+    if (now !== last) { last = now; since = Date.now(); } else if (Date.now() - since >= (ready.stableMs ?? 1500)) return;
+    await page.waitForTimeout(250);
+  }
 }
 
+/** A step as it may be shown in logs, reports and errors: secret values never are. */
+export const shown = step => (step.secret ? { ...step, text: '***' } : step);
+
 /** Runs one step on the tour. Pacing ("at") is the caller's business unless the step is an explicit "at". */
-export async function runStep(t, step, { baseUrl, timeouts = {} }) {
+export async function runStep(t, step, { baseUrl, timeouts = {}, ready }) {
   const page = t.page;
   // Per-target defaults (tour.json "timeouts"), per-step override; slow screens such as reports need more.
   // An optional step gives up sooner, so a miss doesn't stall the scene.
   const timeout = step.timeout ?? (step.optional ? timeouts.optional ?? 3000 : timeouts.action ?? 10000);
   switch (actionOf(step)) {
-    case 'goto': await page.goto(absolute(baseUrl, step.goto), { timeout: timeouts.navigation ?? 30000 }); await settle(page); break;
-    case 'click': await t.click(await resolve(page, step.click, { timeout })); await settle(page); break;
-    case 'fill': await t.typeInto(await resolve(page, step.fill, { timeout }), String(step.text ?? '')); break;
-    case 'press': await page.keyboard.press(step.press); await sleep(300); await settle(page); break;
+    case 'goto': await page.goto(absolute(baseUrl, step.goto), { timeout: timeouts.navigation ?? 30000 }); await settle(page, ready); break;
+    case 'click': await t.click(await resolve(page, step.click, { timeout })); await settle(page, ready); break;
+    case 'fill': {
+      const el = await resolve(page, step.fill, { timeout });
+      if (step.secret) {
+        // Set through the DOM, not typed: the value never appears in Playwright's action log or a trace.
+        await t.moveTo(el);
+        await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); },
+          String(step.text ?? ''));
+      } else await t.typeInto(el, String(step.text ?? ''));
+      break;
+    }
+    case 'press': await page.keyboard.press(step.press); await sleep(300); await settle(page, ready); break;
     case 'hover': await t.moveTo(await resolve(page, step.hover, { timeout }), { steps: 35 }); break;
     case 'point': await t.moveTo(await resolve(page, step.point, { timeout }), { steps: 35 }); break;
     case 'select': {
@@ -129,7 +160,7 @@ export async function runStep(t, step, { baseUrl, timeouts = {} }) {
  * Runs a scene's steps. Unless the scene places its own "at" steps, actions are spread evenly across the narration
  * (the first right away, the last by about 80%), so the video moves while the narrator talks.
  */
-export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = false, timeouts, report, scene } = {}) {
+export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = false, timeouts, report, scene, ready } = {}) {
   const paced = unpaced || steps.some(s => 'at' in s); // unpaced: off camera (login, setup), as fast as possible
   const actions = steps.filter(s => !['at', 'wait', 'waitFor'].includes(actionOf(s)));
   let i = 0;
@@ -141,19 +172,19 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
     }
     const index = steps.indexOf(step) + 1;
     try {
-      await runStep(t, step, { baseUrl, timeouts });
-      report?.push({ scene, step: index, action: a, ok: true, spec: step });
+      await runStep(t, step, { baseUrl, timeouts, ready });
+      report?.push({ scene, step: index, action: a, ok: true, spec: shown(step) });
     } catch (e) {
       const message = e.message.split('\n')[0];
       const target = targetOf(step);
       const suggestions = target ? await suggest(t.page, target) : [];
-      report?.push({ scene, step: index, action: a, ok: false, optional: !!step.optional, spec: step, error: message, url: t.page.url(), suggestions });
+      report?.push({ scene, step: index, action: a, ok: false, optional: !!step.optional, spec: shown(step), error: message, url: t.page.url(), suggestions });
       const hint = suggestions.length ? ` (did you mean ${suggestions.map(x => JSON.stringify(x)).join(', ')}?)` : '';
       // collect (dry run): report everything and carry on. Otherwise a failed "verify" always stops the run (it's an
       // acceptance check) unless that step is marked optional.
       if (onError === 'collect' || step.optional || (onError === 'skip' && a !== 'verify'))
         log(`${scene ?? 'setup'} step ${index} ${onError === 'collect' ? 'FAILED' : 'skipped'}: ${message}${hint}`);
-      else throw new StepError(`${scene ?? 'setup'} step ${index} ${JSON.stringify(step)}: ${message}${hint}`);
+      else throw new StepError(`${scene ?? 'setup'} step ${index} ${JSON.stringify(shown(step))}: ${message}${hint}`);
     }
   }
 }

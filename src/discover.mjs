@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
-import { plainActor, runSteps } from './steps.mjs';
+import { plainActor, runSteps, settle } from './steps.mjs';
 import { log } from './util.mjs';
 
 const SKIP = /log ?out|sign ?out|delete|remove|destroy|unsubscribe|reset|\.(pdf|zip|csv|xlsx?|docx?|png|jpe?g|mp[34]|exe)(\?|$)/i;
@@ -39,20 +39,21 @@ function inventory() {
   };
 }
 
-export async function discover({ url, outDir, maxPages = 12, viewport = { width: 1440, height: 810 }, loginSteps, storageState, include, exclude }) {
+export async function discover({ url, outDir, maxPages = 12, viewport = { width: 1440, height: 810 }, loginSteps, storageState, include, exclude, ready, ignoreHTTPSErrors, paths = [] }) {
   const start = new URL(url);
   const browser = await chromium.launch();
   const pages = [];
   try {
-    const context = await browser.newContext({ viewport, ...(storageState ? { storageState } : {}) });
+    const context = await browser.newContext({ viewport, ignoreHTTPSErrors, ...(storageState ? { storageState } : {}) });
     const page = await context.newPage();
     page.on('dialog', d => d.dismiss());
     if (loginSteps?.length) {
       await page.goto(start.href);
       log('logging in for discovery');
-      await runSteps(plainActor(page), loginSteps, { baseUrl: start.href, unpaced: true });
+      await runSteps(plainActor(page), loginSteps, { baseUrl: start.href, unpaced: true, ready });
     }
-    const queue = [start.href];
+    // Extra start points (screens the story names, which nav links may not reach) are crawled first.
+    const queue = [start.href, ...paths.map(p => new URL(p, start.href).href)];
     const seen = new Set();
     fs.mkdirSync(path.join(outDir, 'screens'), { recursive: true });
     while (queue.length && pages.length < maxPages) {
@@ -62,7 +63,7 @@ export async function discover({ url, outDir, maxPages = 12, viewport = { width:
       seen.add(key);
       try {
         await page.goto(next, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+        await settle(page, ready);
         await page.waitForTimeout(400);
       } catch (e) { log(`skip ${next}: ${e.message.split('\n')[0]}`); continue; }
       const landed = page.url();
