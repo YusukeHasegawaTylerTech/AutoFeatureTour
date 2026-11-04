@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>How AgenticFOIA slots into RMS</title>
+  <link rel="stylesheet" href="tour.css" />
+  <style>
+    main { display: grid; grid-template-columns: 1fr 260px 1fr; gap: 22px; align-items: stretch; }
+    .box { background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.2); padding: 14px 18px; border-top: 5px solid #3f51b5; }
+    .box h3 { margin: 0 0 8px; font-weight: 500; }
+    .box p, .box li { font-size: 15px; color: #424242; }
+    .box ul { margin: 6px 0 0; padding-left: 20px; }
+    .seam { display: flex; flex-direction: column; justify-content: center; gap: 14px; text-align: center; }
+    .seam .iface { background: #263238; color: #fff; border-radius: 8px; padding: 14px; font: 500 18px Consolas, monospace; }
+    .arrow { font-size: 14px; color: #424242; background: #e8eaf6; border-radius: 6px; padding: 8px; text-align: left; }
+    .arrow b { color: #283593; }
+    .side { display: flex; flex-direction: column; gap: 18px; }
+    .impl { transition: opacity .5s, transform .5s, box-shadow .5s; }
+    .impl.dim { opacity: .3; }
+    .impl.on { transform: translateY(-3px); box-shadow: 0 6px 16px rgba(0,0,0,.25); }
+    .mock { border-top-color: #ef6c00; } .mock .tag { background: #fff3e0; color: #e65100; }
+    .real { border-top-color: #2e7d32; } .real .tag { background: #e8f5e9; color: #1b5e20; }
+    .tag { display: inline-block; border-radius: 4px; padding: 1px 8px; font-size: 13px; margin-left: 6px; vertical-align: middle; }
+    .same { border-top-color: #9fa8da; }
+    .foot { grid-column: 1 / -1; text-align: center; font-size: 16px; color: #37474f; opacity: 0; transition: opacity .6s; }
+    .foot.on { opacity: 1; }
+  </style>
+</head>
+<body>
+  <!-- Tour helper: the records-system seam. window.step(n): 1 app, 2 mock, 3 RMS adapter, 4 footer. -->
+  <header>How it slots into RMS · one seam between the app and the records module</header>
+  <main>
+    <div class="side">
+      <div class="box same" id="app">
+        <h3>AgenticFOIA (unchanged)</h3>
+        <ul>
+          <li>Review screens: approve, deny, add, rules</li>
+          <li>Text, OCR and speech extraction (local)</li>
+          <li>Redaction engine (CJIS LLM gateway)</li>
+          <li>Exports, leak checks, redaction logs</li>
+          <li>Response packet sign-off</li>
+        </ul>
+      </div>
+    </div>
+    <div class="seam">
+      <div class="arrow"><b>In:</b> record request, details (requestor removed), type → rules, due date, assignee, referenced records' attachments</div>
+      <div class="iface">IRecordsSystem</div>
+      <div class="arrow"><b>Out:</b> events, status (In Progress → Done), date responded, time spent, rejection reason, response packet</div>
+    </div>
+    <div class="side">
+      <div class="box impl mock" id="mock">
+        <h3>Mock RMS <span class="tag">today</span></h3>
+        <p>JSON files with the same shapes and labels as the RMS records module: General, Referenced Records, Event Log,
+          Comments, Documents. Sample data only.</p>
+      </div>
+      <div class="box impl real dim" id="real">
+        <h3>RMS adapter <span class="tag">next</span></h3>
+        <p>Same interface over the RMS records API, under the user's own RMS login. Opened from a Redaction Review section
+          on the record request. Nothing else in the app changes.</p>
+      </div>
+    </div>
+    <div class="foot" id="foot">Swap one class, keep every screen, rule and audit trail.</div>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    window.step = n => {
+      $('mock').classList.toggle('on', n === 2); $('mock').classList.toggle('dim', n >= 3);
+      $('real').classList.toggle('on', n >= 3); $('real').classList.toggle('dim', n < 3);
+      $('foot').classList.toggle('on', n >= 4);
+    };
+    window.tourReady = true;
+  </script>
+</body>
+</html>

@@ -28,11 +28,20 @@
     const log = await (await fetch(q.get('url'))).json();
     const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
     const when = s => s ? new Date(s).toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' }) : '';
-    document.getElementById('name').textContent = q.get('name') ?? log.originalFileName;
-    document.getElementById('summary').innerHTML =
-      `<div><b>Exported</b>${esc(when(log.exportedAt))}</div><div><b>Approved</b>${log.approved}</div>` +
-      `<div><b>Denied</b>${log.denied}</div><div><b>Original SHA-256</b>${esc(log.originalSha256.slice(0, 16))}…</div>`;
-    document.getElementById('rows').innerHTML = log.entries.map((e, n) =>
+    // A response packet's combined log (log.documents[].log) is shown as one table, with the file in place of the page.
+    const packet = Array.isArray(log.documents);
+    const entries = packet
+      ? log.documents.flatMap(d => (d.log?.entries ?? []).map(e => ({ ...e, page: d.source?.documentName ?? d.log?.originalFileName })))
+      : log.entries;
+    document.getElementById('name').textContent = q.get('name') ?? log.originalFileName ?? log.requestNumber;
+    document.getElementById('summary').innerHTML = packet
+      ? `<div><b>Request</b>${esc(log.requestNumber)}</div><div><b>Packet approved by</b>${esc(log.approvedBy)}</div>` +
+        `<div><b>Approved</b>${esc(when(log.approvedAt))}</div><div><b>Files</b>${log.documents.length}</div>` +
+        `<div><b>Redactions</b>${entries.filter(e => e.decision === 'Approved').length}</div>`
+      : `<div><b>Exported</b>${esc(when(log.exportedAt))}</div><div><b>Approved</b>${log.approved}</div>` +
+        `<div><b>Denied</b>${log.denied}</div><div><b>Original SHA-256</b>${esc(log.originalSha256.slice(0, 16))}…</div>`;
+    if (packet) document.querySelector('thead th:nth-child(5)').textContent = 'File';
+    document.getElementById('rows').innerHTML = entries.map((e, n) =>
       `<tr><td>${n + 1}</td><td class="${esc(e.decision)}">${esc(e.decision)}</td><td>${esc(e.category)}</td><td>${esc(e.reason)}</td>` +
       `<td>${esc(e.page)}</td><td>${esc(e.reviewer)}</td><td>${esc(when(e.decidedAt))}</td><td>${esc(e.note)}</td></tr>`).join('');
     window.tourReady = true;

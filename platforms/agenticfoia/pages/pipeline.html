@@ -31,8 +31,8 @@
         <p>Pages with real text use it directly. A page with no text is a picture.</p></div>
       <div class="step"><div class="n">2</div><div class="t">Render the page</div><span class="tech">PDFium</span><span class="tech">PDFtoImage</span>
         <p>Drawn as an image at 200 DPI, the same resolution the export uses.</p></div>
-      <div class="step"><div class="n">3</div><div class="t">Read the words</div><span class="tech">Tesseract 5 OCR</span>
-        <p>Each word, its line, and its box in pixels.</p></div>
+      <div class="step"><div class="n">3</div><div class="t">Read words, find faces</div><span class="tech">Tesseract 5 OCR</span><span class="tech">YuNet faces</span>
+        <p>Each word and its box in pixels. Faces in photos become suggestions.</p></div>
       <div class="step"><div class="n">4</div><div class="t">Save text + word map</div><span class="tech">SHA-256</span>
         <p>The word map is stored with the file and tied to its fingerprint.</p></div>
       <div class="step"><div class="n">5</div><div class="t">Suggest redactions</div><span class="tech">AI language model</span>
@@ -44,8 +44,8 @@
         <p>If the file changed since it was read, <span class="stop">the export stops</span>.</p></div>
       <div class="step"><div class="n">7</div><div class="t">Render the page again</div><span class="tech">PDFium</span>
         <p>Same 200 DPI, so the saved word boxes line up exactly.</p></div>
-      <div class="step"><div class="n">8</div><div class="t">Paint over approved words</div><span class="tech">SkiaSharp</span>
-        <p>Solid black, a few pixels wider than each word, into the pixels themselves.</p></div>
+      <div class="step"><div class="n">8</div><div class="t">Paint over approved items</div><span class="tech">SkiaSharp</span>
+        <p>Solid black over each approved word and face box, into the pixels themselves.</p></div>
       <div class="step"><div class="n">9</div><div class="t">Build a new PDF</div><span class="tech">PdfPig</span>
         <p>From the images only: no text layer, no metadata.</p></div>
       <div class="step"><div class="n">10</div><div class="t">Read it again</div><span class="tech">Tesseract 5 OCR</span>

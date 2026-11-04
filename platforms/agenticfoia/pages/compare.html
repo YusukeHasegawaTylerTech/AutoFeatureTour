@@ -12,7 +12,7 @@
   </style>
 </head>
 <body>
-  <!-- Tour helper: page 1 of the original and the redacted PDF side by side (?a=<original url>&b=<redacted url>). -->
+  <!-- Tour helper: a page (?page=n, default 1) of the original and the redacted PDF side by side (?a=<original url>&b=<redacted url>). -->
   <header>Original and redacted copy, side by side</header>
   <main class="panes">
     <figure><figcaption>Original <span class="muted">(never released)</span></figcaption><canvas id="a"></canvas></figure>
@@ -22,16 +22,28 @@
     import * as pdfjs from '/tour/pdfjs/pdf.min.mjs';
     pdfjs.GlobalWorkerOptions.workerSrc = '/tour/pdfjs/pdf.worker.min.mjs';
     const q = new URLSearchParams(location.search);
-    async function draw(id, url) {
-      const pdf = await pdfjs.getDocument(url).promise;
-      const pg = await pdf.getPage(1);
+    // ?page=n picks the page (default 1); window.showPage(n) switches both panes.
+    const docs = {};
+    // ?kind=image: the two URLs are images (a photo and its redacted export), drawn as they are.
+    if (q.get('kind') === 'image') document.querySelector('#b').previousElementSibling.lastElementChild.textContent = '(words painted out, metadata removed)';
+    async function draw(id, url, n) {
+      if (q.get('kind') === 'image') {
+        const img = new Image(); img.src = url; await img.decode();
+        const canvas = document.getElementById(id);
+        canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+        canvas.getContext('2d').drawImage(img, 0, 0);
+        return;
+      }
+      const pdf = docs[id] ??= await pdfjs.getDocument(url).promise;
+      const pg = await pdf.getPage(Math.min(n, pdf.numPages));
       const canvas = document.getElementById(id);
       const width = canvas.clientWidth * devicePixelRatio;
       const vp = pg.getViewport({ scale: width / pg.getViewport({ scale: 1 }).width });
       canvas.width = vp.width; canvas.height = vp.height;
       await pg.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
     }
-    await Promise.all([draw('a', q.get('a')), draw('b', q.get('b'))]);
+    window.showPage = n => Promise.all([draw('a', q.get('a'), n), draw('b', q.get('b'), n)]);
+    await window.showPage(Number(q.get('page') ?? 1));
     window.tourReady = true;
   </script>
 </body>
