@@ -10,3 +10,4 @@ platforms/*/tours/clips/
 
 # Local model files (whisper, VAD, detection); large, downloaded separately
 models/
+platforms/hopinline/
