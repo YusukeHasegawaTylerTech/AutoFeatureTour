@@ -1,0 +1,217 @@
+// Platforms: everything about one app that isn't a particular tour, in platforms/<name>/:
+//
+//   platform.json       how the app behaves, the same everywhere it runs:
+//                       { "ready", "errors", "appErrors", "ignore": ["<regex>"], "mask", "pronounce", "viewport",
+//                         "voice", "ignoreHTTPSErrors", "startPath", "discover", "trace", "retries", "timeouts" }
+//   environments.json   where it runs: { "default": "local", "local": { "baseUrl", "launch" | "attach", "timeouts" }, "qa": {...} }
+//                       "launch": start the app if nothing answers (see declarative.mjs); "attach": [{ "name", "healthUrl" }]
+//                       never starts anything, an environment that isn't up is UNREACHABLE (exit 3)
+//   login.json          how to sign in: { "default": "<role>", "signedIn", "checkPath", "maxAgeMinutes",
+//                         "roles": { "<role>": { "steps": [...] } } }, credentials only as "{env:NAME}";
+//                       saved state: auth/<platform>/<env>/<role>.json
+//   fragments/          reusable steps, called from any step list as { "use": "<name>", "with": { ... } }:
+//                         <name>.json  { "params": { "<p>": { "required": true } | { "default": v } }, "steps": [...] }
+//                                      with "{args.<p>}" in its strings (a string that is only "{args.p}" takes the
+//                                      argument's value as is, so a target object can be passed)
+//                         <name>.mjs   a code step: export default async ({ page, context, args, ctx }) => { ... }
+//   fixtures/           test data a tour needs: <name>.json { "data": { ... }, "setup": [hooks], "teardown": [hooks],
+//                       "steps": [...] }; hooks run before the browser starts / after it closes, steps run in the
+//                       signed-in browser off camera before the first scene. A tour lists them in "fixtures", and
+//                       their data is "{data.<key>}" in its steps
+//   requirements.mjs    extra `aft doctor` checks for this platform
+//   tours/              the platform's own tours (a smoke.tour.json is what `aft platform check` runs)
+//
+// A tour names its platform ("platform": "rms") and may pick "env", "role" and "fixtures". It never contains a base
+// URL, credentials, launch commands or app-wide settings; those keys are refused so they can't drift into tours.
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+const SAFE = /^[A-Za-z0-9_-]+$/;
+
+export class PlatformError extends Error {}
+
+/** Keys that belong to the platform; a platform tour may not set them. */
+export const PLATFORM_KEYS = ['baseUrl', 'environments', 'launch', 'attach', 'login', 'ready', 'errors', 'appErrors', 'ignore', 'mask',
+  'ignoreHTTPSErrors', 'startPath', 'discover', 'target'];
+
+/** Where platforms live: AFT_PLATFORMS, else the nearest platforms/ above `from`, else the tool's own. */
+export function platformsDir(toolRoot, from) {
+  if (process.env.AFT_PLATFORMS) return path.resolve(process.env.AFT_PLATFORMS);
+  for (let d = from ? path.resolve(from) : null; d; ) {
+    if (path.basename(d) === 'platforms' && fs.existsSync(d)) return d;
+    if (fs.existsSync(path.join(d, 'platforms'))) return path.join(d, 'platforms');
+    const up = path.dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return path.join(toolRoot, 'platforms');
+}
+
+export function listPlatforms(dir) {
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter(n => SAFE.test(n) && fs.statSync(path.join(dir, n)).isDirectory()) : [];
+}
+
+function readJson(file, fallback) {
+  if (!fs.existsSync(file)) return fallback;
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw new PlatformError(`${file}: not valid JSON (${e.message})`); }
+}
+
+/** Reads platforms/<name>/ into one object. */
+export function loadPlatform(toolRoot, name, { from } = {}) {
+  if (!SAFE.test(String(name))) throw new PlatformError(`Platform names must match ${SAFE} (got "${name}")`);
+  const root = platformsDir(toolRoot, from);
+  const dir = path.join(root, name);
+  if (!fs.existsSync(dir)) throw new PlatformError(`No platform "${name}" in ${root} (has: ${listPlatforms(root).join(', ') || 'none'}); create one with aft platform init ${name}`);
+  const environments = readJson(path.join(dir, 'environments.json'), {});
+  return {
+    name, dir,
+    platform: readJson(path.join(dir, 'platform.json'), {}),
+    environments,
+    defaultEnv: environments.default ?? Object.keys(environments).find(k => k !== 'default'),
+    login: readJson(path.join(dir, 'login.json'), null),
+  };
+}
+
+export const envNames = p => Object.keys(p.environments).filter(k => k !== 'default');
+
+/**
+ * The settings a run needs for one platform, environment and role, in the shape tour.json used to carry them:
+ * platform.json, then the environment over it (timeouts merged), then login for the role.
+ */
+export function platformConfig(p, { env, role } = {}) {
+  const envName = env ?? p.defaultEnv;
+  const e = envName ? p.environments[envName] : {};
+  if (envName && !e) throw new PlatformError(`Platform ${p.name} has no environment "${envName}" (has: ${envNames(p).join(', ') || 'none'})`);
+  const { ignore, ...base } = p.platform;
+  const cfg = { ...base, ...e, timeouts: { ...base.timeouts, ...e?.timeouts } };
+  // Commands in the platform run from the platform's folder, wherever the tour file is.
+  if (cfg.launch) cfg.launch = [cfg.launch].flat().map(l => ({ ...l, cwd: path.resolve(p.dir, l.cwd ?? '.') }));
+  delete cfg.comment;
+  if (ignore?.length) cfg.appErrors = { ...cfg.appErrors, ignore: [...(cfg.appErrors?.ignore ?? []), ...ignore] };
+  if (p.login) {
+    const roleName = role ?? p.login.default ?? Object.keys(p.login.roles ?? {})[0];
+    const r = p.login.roles?.[roleName];
+    if (!r) throw new PlatformError(`Platform ${p.name} has no login role "${roleName}" (has: ${Object.keys(p.login.roles ?? {}).join(', ') || 'none'})`);
+    const { roles, default: _, ...common } = p.login;
+    cfg.login = { ...common, ...r, role: roleName };
+  }
+  return { cfg, env: envName };
+}
+
+/** auth/<platform>/<env>/<role>.json */
+export function platformAuthFile(toolRoot, platform, env, role = 'default') {
+  for (const s of [platform, env ?? 'default', role]) if (!SAFE.test(s)) throw new PlatformError(`Platform, environment and role names must match ${SAFE} (got "${s}")`);
+  return path.join(toolRoot, 'auth', platform, env ?? 'default', `${role}.json`);
+}
+
+/** Refuses platform settings in a tour that names a platform; absolute URLs anywhere in it too. */
+export function checkTour(raw, file) {
+  const bad = PLATFORM_KEYS.filter(k => k in raw);
+  const problems = bad.map(k => `"${k}" belongs in the platform (platforms/${raw.platform}/), not in a tour`);
+  const urls = JSON.stringify(raw.scenes ?? []).match(/https?:\/\/[^"\s]+/g) ?? [];
+  if (urls.length) problems.push(`absolute URLs in scenes (${[...new Set(urls)].slice(0, 3).join(', ')}): use paths relative to the environment's baseUrl`);
+  if (problems.length) throw new PlatformError(`${file}:\n  ${problems.join('\n  ')}`);
+}
+
+// ---- Fragments and fixtures --------------------------------------------------------------------------------------
+
+/** A dotted lookup in vars ("args.target", "data.task"), or undefined. */
+const lookup = (vars, key) => key.split('.').reduce((o, k) => (o && typeof o === 'object' && k in o ? o[k] : undefined), vars);
+
+/** Replaces {args.x} / {data.x} in strings. A string that is exactly one placeholder takes its value as is. */
+export function substitute(value, vars, prefixes = ['args', 'data']) {
+  const re = new RegExp(`\\{((?:${prefixes.join('|')})\\.[A-Za-z0-9_.-]+)\\}`, 'g');
+  if (typeof value === 'string') {
+    const whole = value.match(new RegExp(`^\\{((?:${prefixes.join('|')})\\.[A-Za-z0-9_.-]+)\\}$`));
+    if (whole) { const v = lookup(vars, whole[1]); return v === undefined ? value : v; }
+    return value.replace(re, (m, k) => { const v = lookup(vars, k); return v === undefined ? m : typeof v === 'object' ? JSON.stringify(v) : String(v); });
+  }
+  if (Array.isArray(value)) return value.map(v => substitute(v, vars, prefixes));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, substitute(v, vars, prefixes)]));
+  return value;
+}
+
+function fragmentFile(dirs, name) {
+  if (!/^[A-Za-z0-9_/-]+(\.(json|mjs))?$/.test(name) || name.includes('..')) throw new PlatformError(`Fragment names must be plain names (got "${name}")`);
+  for (const d of dirs) for (const f of /\.(json|mjs)$/.test(name) ? [name] : [`${name}.json`, `${name}.mjs`]) {
+    const file = path.join(d, f);
+    if (fs.existsSync(file)) return file;
+  }
+  throw new PlatformError(`No fragment "${name}" (looked in ${dirs.join(', ')})`);
+}
+
+/**
+ * Expands { "use": name } steps in place (recursively, with a cycle check). JSON fragments become their steps, each
+ * marked with "from": "<fragment>"; code fragments become { "code": file, "with": args }. { "code": "x.mjs" } steps
+ * are resolved to a file in the same folders. `dirs`: the platform's fragments/, then the tour's own folder.
+ */
+export function expandSteps(steps = [], { dirs, data = {}, stack = [] } = {}) {
+  const out = [];
+  for (const step of steps) {
+    if (step && typeof step === 'object' && 'use' in step) {
+      const file = fragmentFile(dirs, step.use);
+      if (stack.includes(file)) throw new PlatformError(`Fragment cycle: ${[...stack, file].map(f => path.basename(f)).join(' → ')}`);
+      if (file.endsWith('.mjs')) { out.push({ ...omit(step, ['use']), code: file, with: substitute(step.with ?? {}, { data }), from: step.use }); continue; }
+      const frag = readJson(file);
+      const args = { ...step.with };
+      for (const [k, spec] of Object.entries(frag.params ?? {})) {
+        if (!(k in args) && spec && 'default' in spec) args[k] = spec.default;
+        if (!(k in args) && spec?.required) throw new PlatformError(`Fragment "${step.use}" needs "with": { "${k}": … }`);
+      }
+      const unknown = Object.keys(step.with ?? {}).filter(k => frag.params && !(k in frag.params));
+      if (unknown.length) throw new PlatformError(`Fragment "${step.use}" has no parameter ${unknown.map(k => `"${k}"`).join(', ')} (has: ${Object.keys(frag.params).join(', ')})`);
+      const inner = substitute(frag.steps ?? [], { args: substitute(args, { data }), data });
+      const extra = omit(step, ['use', 'with']); // "optional", "timeout"… on the call apply to each of its steps
+      for (const s of expandSteps(inner, { dirs, data, stack: [...stack, file] })) out.push({ ...s, ...extra, from: s.from ? `${step.use} › ${s.from}` : step.use });
+    } else if (step && typeof step === 'object' && 'code' in step) {
+      out.push({ ...step, code: path.isAbsolute(step.code) ? step.code : fragmentFile(dirs, step.code), with: substitute(step.with ?? {}, { data }) });
+    } else out.push(substitute(step, { data }));
+  }
+  return out;
+}
+
+const omit = (o, keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
+
+/** Reads the tour's fixtures: their data (merged, later wins) and setup/teardown hooks (run in the fixture's folder). */
+export function loadFixtures(p, names = []) {
+  const data = {}, setup = [], teardown = [], steps = [];
+  for (const n of names) {
+    if (!SAFE.test(n)) throw new PlatformError(`Fixture names must match ${SAFE} (got "${n}")`);
+    const file = path.join(p.dir, 'fixtures', `${n}.json`);
+    if (!fs.existsSync(file)) throw new PlatformError(`Platform ${p.name} has no fixture "${n}" (${file})`);
+    const f = readJson(file);
+    Object.assign(data, f.data);
+    const dir = path.join(p.dir, 'fixtures');
+    setup.push(...(f.setup ?? []).map(h => ({ ...h, dir })));
+    teardown.unshift(...(f.teardown ?? []).map(h => ({ ...h, dir })));
+    steps.push(...(f.steps ?? []));
+  }
+  return { data, setup, teardown, steps };
+}
+
+// ---- aft platform init -------------------------------------------------------------------------------------------
+
+/** Scaffolds platforms/<name>/ with every file, mostly empty, and a smoke tour. Never overwrites. */
+export function initPlatform(root, name, { baseUrl = 'http://localhost:3000/' } = {}) {
+  if (!SAFE.test(name)) throw new PlatformError(`Platform names must match ${SAFE} (got "${name}")`);
+  const dir = path.join(root, name);
+  if (fs.existsSync(dir)) throw new PlatformError(`${dir} already exists; edit it instead`);
+  const files = {
+    'platform.json': { ready: null, errors: null, appErrors: { network: 'warn', console: 'warn', pageErrors: 'warn' }, ignore: [], mask: { selectors: [], patterns: [] }, pronounce: {} },
+    'environments.json': { default: 'local', local: { baseUrl, timeouts: {} } },
+    'login.json': { default: 'user', signedIn: null, checkPath: '/', roles: { user: { steps: [
+      { goto: '/login' }, { fill: 'Username', text: `{env:AFT_${name.toUpperCase().replace(/-/g, '_')}_USERNAME}` },
+      { fill: 'Password', text: `{env:AFT_${name.toUpperCase().replace(/-/g, '_')}_PASSWORD}`, secret: true }, { click: { role: 'button', name: 'Sign in' } }] } } },
+    'tours/smoke.tour.json': { name: `${name}-smoke`, platform: name, scenes: [{ title: 'Home', url: '/', narration: `The ${name} home page.`, steps: [] }] },
+  };
+  for (const [f, v] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+    fs.writeFileSync(path.join(dir, f), JSON.stringify(v, null, 2) + '\n');
+  }
+  for (const d of ['fragments', 'fixtures']) { fs.mkdirSync(path.join(dir, d), { recursive: true }); fs.writeFileSync(path.join(dir, d, '.gitkeep'), ''); }
+  fs.writeFileSync(path.join(dir, 'requirements.mjs'),
+    `// ${name}: extra checks for \`aft doctor --platform ${name}\` (see src/doctor.mjs).\nexport default async function requirements({ add }) {\n}\n`);
+  fs.writeFileSync(path.join(dir, 'README.md'), `# Platform: ${name}\n\nWhat it is, where it runs, how to sign in, what data tours may touch.\n`);
+  return dir;
+}

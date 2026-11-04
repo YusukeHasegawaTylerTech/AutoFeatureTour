@@ -3,10 +3,10 @@
 Audience: a manager, with enough detail for a technical lead. Seven scenes, about 3½ minutes at the default SAPI rate.
 The italic lines are the capture cues. Build the video with:
 
-`node src/cli.mjs targets/agenticfoia/pdf-ocr.tour.mjs --record` (from the AutoFeatureTour repo)
+`node src/cli.mjs platforms/agenticfoia/tours/pdf-ocr.tour.mjs --record` (from the AutoFeatureTour repo)
 
-That narrates this file and records `targets/agenticfoia/pdf-ocr.tour.mjs` in the real app. The sample is a synthetic
-scan made by `targets/agenticfoia/make-scan.cs` from corpus file `014-witness-statement.pdf`: the page is rendered, tilted, tinted
+That narrates this file and records `platforms/agenticfoia/tours/pdf-ocr.tour.mjs` in the real app. The sample is a synthetic
+scan made by `platforms/agenticfoia/make-scan.cs` from corpus file `014-witness-statement.pdf`: the page is rendered, tilted, tinted
 and saved as an image-only PDF. Never use a real record.
 
 Presenter notes (not narrated):

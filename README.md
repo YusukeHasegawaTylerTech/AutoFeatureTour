@@ -26,7 +26,7 @@ Elsewhere: Node 22+, ffmpeg/ffprobe on PATH, then `npm ci && npx playwright inst
 
 ```
 aft doctor                    # what's installed, what's missing and how to fix it (exit 1 if something required is missing)
-aft doctor --target <app>     # also that target's own requirements (targets/<app>/requirements.mjs)
+aft doctor --platform <name> # also that platform's own requirements (platforms/<name>/requirements.mjs)
 ```
 
 Without `npm link`, use `node src/cli.mjs` wherever this README says `aft`.
@@ -42,13 +42,15 @@ aft auto     <url> [--prompt "..."]                                  discover �
 aft discover <url> [--max-pages 12] [--include <regex>] [--exclude <regex>]
 aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm claude]
 aft render   <tour> [--record]  narration over title cards or hand-made clips (no browser), or a recording
-aft login    <tour.json> [--target <env>] [--role <name>] [--manual]
-aft doctor | --help | --version | --list-voices
+aft login    --platform <name> [--target <env>] [--role <name>] [--manual]   (or aft login <tour.json>)
+aft platform list | init <name> | discover <name> | check <name> [--target <env>]
+aft doctor [--platform <name>] | --help | --version | --list-voices
 ```
 
 | Flag | Meaning |
 |---|---|
-| `--target <env>` (alias `--env`) | an environment from the tour's `environments` (e.g. `local`, `qa`) |
+| `--platform <name>` | the app (`platforms/<name>/`) for generate, discover, login and doctor; tours name theirs |
+| `--target <env>` (alias `--env`) | an environment of the platform (e.g. `local`, `qa`); `--role <name>` a login role |
 | `--base-url <url>` | overrides the environment's URL; so does the `BASE_URL` environment variable (flag wins) |
 | `--script <file>` | the tour file, as an alternative to the positional argument |
 | `--out <folder>` | use this folder if it's new or empty; otherwise a run subfolder is made inside it |
@@ -59,7 +61,7 @@ aft doctor | --help | --version | --list-voices
 | `--on-error fail\|skip` | skip steps that can't be done instead of failing (a failed `verify` still fails) |
 | `--llm claude [--model <id>]` | plan with local `claude -p` instead of the built-in heuristic (see Data below) |
 | `--no-captions`, `--no-record` | skip tour.vtt; `auto` without recording |
-| anything else | passed to a `.tour.mjs` target as `ctx.options` (e.g. `--engine`, `--skip-build`) |
+| anything else | passed to a `.tour.mjs` code tour as `ctx.options` (e.g. `--engine`, `--skip-build`) |
 
 **Exit codes:** 0 ok · 1 usage/config · 2 SCRIPT (an action couldn't be performed) · 3 UNREACHABLE · 4 CRITERION
 (a `verify` failed) · 5 APP (error UI, HTTP error or exception during a step) · 6 LOGIN · 7 TOOLING · 130 interrupted.
@@ -84,65 +86,65 @@ out/<name>/latest.json   pointer to the newest successful run      out/<name>/ru
 Set `AFT_OUT_DIR` to put `out/` elsewhere. Concurrent runs are safe: separate folders, free ports for launched apps,
 no shared temp files.
 
-## Writing a tour (tour.json)
+## Platforms and tours
+
+An app is a **platform**, `platforms/<name>/`: `platform.json` (readiness, error UI, app-error policy and ignore list,
+mask, pronunciations), `environments.json` (`local`, `qa`, … with `baseUrl` and `launch` or `attach`),
+`login.json` (steps per role, credentials as `{env:NAME}`), `fragments/` (reusable steps, JSON or code),
+`fixtures/` (test data with setup/teardown), `requirements.mjs`, `README.md` and `tours/`. A tour names its platform
+and holds only what to show:
 
 ```json
 {
   "name": "todomvc",
-  "environments": { "local": { "baseUrl": "http://localhost:8080/" }, "qa": { "baseUrl": "https://qa.example.com/", "timeouts": { "verify": 30000 } } },
-  "login": { "role": "clerk", "steps": [ { "goto": "/login" }, { "fill": "Email", "text": "{env:DEMO_USER}" }, { "fill": "Password", "text": "{env:DEMO_PASSWORD}" }, { "click": { "role": "button", "name": "Sign in" } } ] },
-  "hooks": { "setup": [ { "run": "npm run seed:demo" } ], "teardown": [ { "http": { "method": "POST", "url": "/api/test/reset" } } ] },
-  "mask": { "selectors": ["[data-pii]"], "patterns": ["\\b\\d{3}-\\d{2}-\\d{4}\\b"] },
+  "platform": "todomvc",
   "story": { "id": "TODO-101", "title": "Track tasks", "acceptanceCriteria": ["A user can add tasks"] },
   "scenes": [
     { "title": "Adding tasks", "url": "#/", "criteria": [1],
       "narration": "We type a task and press Enter. It appears in the list straight away.",
-      "steps": [ { "fill": "What needs to be done?", "text": "Renew the permit" }, { "press": "Enter" }, { "verify": { "text": "Renew the permit" } } ] }
+      "steps": [ { "use": "add-todo", "with": { "text": "Renew the permit" } }, { "verify": { "text": "Renew the permit" } } ] }
   ]
 }
 ```
 
 Steps: `goto`, `click`, `fill` (+`text`), `press`, `hover`, `point`, `select` (+`option`), `scroll`, `verify`, `waitFor`,
-`wait`, `at` (a fraction of the narration). Any step can be `"optional": true` or have a `"timeout"`. Actions spread
-across the narration automatically unless a scene uses `at`. Targets: a plain string tries role (button, link, tab…),
-label, placeholder, then text; or be explicit with `{ "role", "name" }`, `{ "label" }`, `{ "placeholder" }`,
-`{ "text" }`, `{ "testId" }`, and only as a last resort `{ "css" }`; add `"nth"` to pick among matches.
-`npx playwright codegen <url>` is a quick way to find the right role and name for an element.
+`wait`, `at` (a fraction of the narration), `use` (a fragment) and `code` (a code step). Any step can be
+`"optional": true` or have a `"timeout"`. Actions spread across the narration automatically unless a scene uses `at`.
+Targets: a plain string tries role (button, link, tab…), label, placeholder, then text; or be explicit with
+`{ "role", "name" }`, `{ "label" }`, `{ "placeholder" }`, `{ "text" }`, `{ "testId" }`, and only as a last resort
+`{ "css" }`; add `"nth"` to pick among matches. `npx playwright codegen <url>` finds the right role and name.
 
-Other keys: `launch` (start the app for the run: `command`, `cwd`, `env`, `port: "auto"`, `healthUrl`), `timeouts`
-(`action`, `verify`, `waitFor`, `navigation`, `optional`, in ms; per environment too), `viewport`, `voice`,
-`pronounce`, `onError`. Full reference: the top of [src/declarative.mjs](src/declarative.mjs) and
-[src/steps.mjs](src/steps.mjs). Example: [examples/todomvc/tour.json](examples/todomvc/tour.json).
+Onboarding a new app (`aft platform init` → doctor → login → `platform discover` → fragments → `aft platform check`),
+the run lifecycle, fragments, code steps and fixtures: [AGENTS.md](AGENTS.md#platforms). Reference: the tops of
+[src/platform.mjs](src/platform.mjs), [src/declarative.mjs](src/declarative.mjs) and [src/steps.mjs](src/steps.mjs).
 
-**Logins** are saved Playwright storage state, `auth/<target>[-<env>]/<role>.json` (git-ignored). `aft login` runs
-the tour's login steps with credentials from environment variables or a `.env` file (git-ignored), or with
-`--manual` opens a browser for SSO/MFA and saves the state once you've logged in. `run` loads the saved state (or
-logs in off camera and saves it). Credentials never appear on camera or in the tour file.
+**Logins** are saved Playwright storage state, `auth/<platform>/<env>/<role>.json` (git-ignored). `aft login` runs
+the platform's login steps with credentials from environment variables or a `.env` file (git-ignored), or with
+`--manual` opens a browser for SSO/MFA. Runs load the saved state, and sign in again off camera when it has expired.
+Credentials never appear on camera or in a tour.
 
-**Test data:** `hooks.setup` / `hooks.teardown` run off camera: `{ "run": "<shell command>" }`, `{ "node": "<script>" }`
-or `{ "http": { "method", "url", "body" } }`, with `BASE_URL` and `RUN_DIR` in their environment. Note that
-`validate` really performs the steps (without recording), so it changes data the same way a run does.
+**Test data:** fixtures (`fixtures/<name>.json`, listed in the tour's `"fixtures"`) run setup/teardown hooks off camera
+(`{ "run" }`, `{ "node" }` or `{ "http" }`, with `BASE_URL` and `RUN_DIR`) and optional browser steps before the first
+scene. `validate` really performs the steps (without recording), so it changes data the same way a run does.
 
 **Sensitive data:** `mask.selectors` (CSS) and `mask.patterns` (regex) are blurred in the page before anything is
 recorded, so the video, screenshots and trace all see the blurred version. It's a hook point, not a guarantee.
 
 ## Stories → scripts
 
-`aft generate --story story.md --base-url <url> --llm claude` reads a pasted story (id such as `RMS-6142`, title,
+`aft generate --story story.md --platform <name> --llm claude` reads a pasted story (id such as `RMS-6142`, title,
 acceptance criteria), crawls the app, and asks Claude for scenes that demonstrate each criterion, with `verify` steps
 and narration that refers back to the criteria. Steps it can't ground are listed under `unresolved` in the script.
 Without `--llm`, a story gives a draft with one scene per criterion for a person to fill in. Examples:
-[examples/stories](examples/stories).
+[examples/stories](examples/stories), and the result for one: [platforms/rms/tours/RMS-6142.tour.json](platforms/rms/tours/RMS-6142.tour.json).
 
-## Code targets (.tour.mjs)
+## Code tours (.tour.mjs)
 
-When a tour needs more than steps (building and launching a private app, seeding through an API, custom helper
-pages), write a module: `export default { name, script, pronounce?, viewport?, async record(ctx) }`, where `ctx` has
-`{ tour, scenes, outDir, options, toolRoot, targetDir, log, run }` and `ctx.tour` offers `start`, `scene(id, fn)`,
-`at`, `click`, `typeInto`, `moveTo`, `drag`, `helper(url)`, `screenshot`, `finish`. An optional
-`targets/<app>/requirements.mjs` adds checks to `aft doctor`.
-
-Targets: [targets/agenticfoia](targets/agenticfoia/README.md) (the app this tool started from).
+When a tour needs more than steps and code steps (building and launching a private app, seeding through an API,
+custom helper pages), write a module: `export default { platform?, name, script, pronounce?, viewport?, async record(ctx) }`,
+where `ctx` has `{ tour, scenes, outDir, options, toolRoot, targetDir, platformDir, log, run }` and `ctx.tour` offers
+`start`, `scene(id, fn)`, `at`, `click`, `typeInto`, `moveTo`, `drag`, `helper(url)`, `screenshot`, `finish`.
+Example: [platforms/agenticfoia](platforms/agenticfoia/README.md) (the app this tool started from).
 
 ## Data and environments
 

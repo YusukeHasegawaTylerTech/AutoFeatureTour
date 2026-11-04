@@ -1,0 +1,8 @@
+{
+  "description": "Types a task into the new-todo box and presses Enter.",
+  "params": { "text": { "required": true } },
+  "steps": [
+    { "fill": "What needs to be done?", "text": "{args.text}" },
+    { "press": "Enter" }
+  ]
+}

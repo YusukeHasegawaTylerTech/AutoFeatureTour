@@ -1,11 +1,6 @@
 {
   "name": "todomvc",
-  "baseUrl": "https://demo.playwright.dev/todomvc/",
-  "environments": {
-    "demo": { "baseUrl": "https://demo.playwright.dev/todomvc/" },
-    "local": { "baseUrl": "http://localhost:8080/", "timeouts": { "navigation": 60000 } }
-  },
-  "timeouts": { "action": 8000, "verify": 10000 },
+  "platform": "todomvc",
   "story": {
     "id": "TODO-101",
     "title": "Track and filter tasks",
@@ -22,12 +17,9 @@
       "criteria": [1],
       "narration": "This is TodoMVC, a small task list. To meet the first acceptance criterion, we type a task into the box at the top and press Enter, then add two more. Each one appears in the list straight away.",
       "steps": [
-        { "fill": "What needs to be done?", "text": "Renew the parking permit" },
-        { "press": "Enter" },
-        { "fill": "What needs to be done?", "text": "Book the conference room" },
-        { "press": "Enter" },
-        { "fill": "What needs to be done?", "text": "Send the weekly report" },
-        { "press": "Enter" },
+        { "use": "add-todo", "with": { "text": "Renew the parking permit" } },
+        { "use": "add-todo", "with": { "text": "Book the conference room" } },
+        { "use": "add-todo", "with": { "text": "Send the weekly report" } },
         { "verify": { "text": "Send the weekly report" } }
       ]
     },
@@ -38,7 +30,8 @@
       "steps": [
         { "point": { "text": "Book the conference room" } },
         { "click": { "role": "checkbox", "name": "Toggle Todo", "nth": 1 } },
-        { "verify": { "text": "2 items left" } }
+        { "verify": { "text": "2 items left" } },
+        { "use": "todo-count", "with": { "count": 1, "completed": true } }
       ]
     },
     {

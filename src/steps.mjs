@@ -12,6 +12,8 @@
 //   { "verify": <target> }                    assert it's visible (fails clearly if not) and point at it
 //   { "wait": 1.5 }                           pause, in seconds
 //   { "at": 0.5 }                             wait until 50% of the scene's narration has played
+//   { "code": "x.mjs", "with": { ... } }      run a code step (a platform fragment): see runCode below
+//   { "use": "name", "with": { ... } }        a fragment's steps (expanded when the tour loads; see platform.mjs)
 // Optional on any step: "optional": true (log and continue if it fails), "timeout": ms (defaults: tour.json
 // "timeouts": { "action": 10000, "verify": 15000, "waitFor": 30000, "navigation": 30000 }).
 //
@@ -23,11 +25,13 @@
 //   { "label": "Email" } { "placeholder": "Search" } { "text": "Welcome" } { "testId": "save" } { "css": "..." }
 //   plus "nth": n to pick among several matches (default: the first visible one).
 
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Failure } from './failures.mjs';
 import { log, sleep } from './util.mjs';
 
 const ROLES = ['button', 'link', 'tab', 'menuitem', 'checkbox', 'radio', 'option', 'switch', 'combobox', 'textbox'];
-const ACTIONS = ['goto', 'click', 'fill', 'press', 'hover', 'point', 'select', 'scroll', 'waitFor', 'verify', 'wait', 'at'];
+const ACTIONS = ['goto', 'click', 'fill', 'press', 'hover', 'point', 'select', 'scroll', 'waitFor', 'verify', 'wait', 'at', 'code'];
 
 export function actionOf(step) {
   const a = ACTIONS.find(k => k in step);
@@ -136,8 +140,39 @@ export async function appError(page, errors) {
   return null;
 }
 
-/** A step as it may be shown in logs, reports and errors: secret values never are. */
-export const shown = step => (step.secret ? { ...step, text: '***' } : step);
+/** A step as it may be shown in logs, reports and errors: secret values never are; code steps by file name. */
+export const shown = step => {
+  let s = step.secret ? { ...step, text: '***' } : step;
+  if (typeof s.code === 'string' && path.isAbsolute(s.code)) s = { ...s, code: path.basename(s.code) };
+  return s;
+};
+
+const modules = new Map();
+
+/**
+ * A code step: { "code": "<file>.mjs", "with": { ... } } (normally a platform fragment). The module's default export
+ * is called as  async ({ page, context, args, ctx }) => { ... }  and must be deterministic: no LLM, no randomness
+ * that changes what's on screen. It is classified like any step: a plain throw is a SCRIPT failure;
+ * ctx.check(condition, message) fails as a CRITERION (the step's "criterion", else the scene's criteria);
+ * ctx.appError(message) fails as APP. ctx also has baseUrl, timeouts, log, url(path), the paced tour (ctx.tour:
+ * click(el), typeInto(el, text), moveTo(el)) and ctx.resolve(target) (the same target rules as JSON steps).
+ * Code steps are never retried (they may not be safe to repeat).
+ */
+async function runCode(t, step, { baseUrl, timeouts, warnings }) {
+  const href = pathToFileURL(path.resolve(step.code)).href;
+  if (!modules.has(href)) modules.set(href, import(href));
+  const fn = (await modules.get(href)).default;
+  if (typeof fn !== 'function') throw new Error(`${path.basename(step.code)} has no default export function`);
+  const page = t.page;
+  const ctx = {
+    baseUrl, timeouts, log, warnings, tour: t, args: step.with ?? {},
+    url: p => absolute(baseUrl, p),
+    resolve: (target, o = {}) => resolve(page, target, { timeout: o.timeout ?? timeouts.action ?? 10000, warnings }),
+    check: (ok, message = 'check failed') => { if (!ok) throw Object.assign(new Error(`Verification failed: ${message}`), { failure: 'criterion' }); },
+    appError: message => { throw new Error(`the app showed an error: ${message}`); },
+  };
+  await fn({ page, context: page.context(), args: ctx.args, ctx });
+}
 
 /** Runs one step on the tour. Pacing ("at") is the caller's business unless the step is an explicit "at". */
 export async function runStep(t, step, { baseUrl, timeouts = {}, ready: readyCfg, errors, warnings = [] }) {
@@ -192,6 +227,7 @@ export async function runStep(t, step, { baseUrl, timeouts = {}, ready: readyCfg
     }
     case 'wait': await sleep(Number(step.wait) * 1000); break;
     case 'at': await t.at(Number(step.at)); break;
+    case 'code': await runCode(t, step, { baseUrl, timeouts, warnings }); await settle(page, ready); break;
   }
   const err = await appError(page, errors);
   if (err) throw new Error(`the app showed an error: ${err}`);
@@ -246,9 +282,10 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
     // A check (verify) tests the app; anything else is the script driving it. Checks carry the acceptance criteria
     // they cover: the step's own "criterion" (e.g. "AC2" or 2), else the scene's "criteria".
     const kind = a === 'verify' ? 'check' : 'action';
-    const covers = kind === 'check' ? [step.criterion ?? criteria].flat().filter(c => c !== undefined && c !== '').map(String) : [];
+    const covers = kind === 'check' || a === 'code' ? [step.criterion ?? criteria].flat().filter(c => c !== undefined && c !== '').map(String) : [];
     const started = Date.now();
-    const entry = { scene, step: index, action: a, kind, ...(covers.length ? { criteria: covers } : {}), spec: shown(step) };
+    const entry = { scene, step: index, action: a, kind, ...(covers.length && kind === 'check' ? { criteria: covers } : {}), spec: shown(step),
+      ...(step.from ? { from: step.from } : {}) };
     const warnings = [];
     // Attribution: browser errors and failing requests from now on belong to this step.
     t.stepKey = `${scene ?? 'setup'}#${index}`;
@@ -262,7 +299,7 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
           appErrorPolicy(t, marks, entry);
           break;
         } catch (e) {
-          if (kind === 'check' || attempt >= (step.retries ?? retries) || !/Timeout|not found|not visible|detached/i.test(e.message)) throw e;
+          if (kind === 'check' || a === 'code' || e.failure || attempt >= (step.retries ?? retries) || !/Timeout|not found|not visible|detached/i.test(e.message)) throw e;
           log(`${scene ?? 'setup'} step ${index}: retrying (${e.message.split('\n')[0]})`);
           await settle(t.page, ready);
           entry.retried = attempt + 1;
@@ -274,7 +311,9 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
       const target = targetOf(step);
       const suggestions = target ? await suggest(t.page, target) : [];
       // The app's own error UI (tour "errors") during a step is an APP failure, whatever the step.
-      const failure = /^the app showed an error/.test(message) ? 'app' : kind === 'check' ? 'criterion' : 'script';
+      const failure = /^the app showed an error/.test(message) ? 'app' : e.failure ?? (kind === 'check' ? 'criterion' : 'script');
+      // A code step that failed its ctx.check() counts as a check of the criteria it covers.
+      if (failure === 'criterion' && kind !== 'check') Object.assign(entry, { kind: 'check', ...(covers.length ? { criteria: covers } : {}) });
       Object.assign(entry, { ok: false, failure, optional: !!step.optional, error: message, url: t.page.url(), ms: Date.now() - started, ...(warnings.length ? { warnings } : {}),
         ...(target && failure !== 'app' ? { expected: target, found: suggestions.length ? `closest on the page: ${suggestions.join(' | ')}` : 'nothing similar on the page' } : {}),
         suggestions });
@@ -284,7 +323,7 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
       // acceptance check) unless that step is marked optional.
       if (onError === 'collect' || step.optional || (onError === 'skip' && a !== 'verify'))
         log(`${scene ?? 'setup'} step ${index} ${onError === 'collect' ? 'FAILED' : 'skipped'}: ${message}${hint}`);
-      else throw Object.assign(new StepError(`${failure === 'criterion' ? `CRITERION${covers.length ? ` ${covers.join(', ')}` : ''} not met` : failure === 'app' ? 'APP error' : 'SCRIPT failure'}: ${scene ?? 'setup'} step ${index} ${JSON.stringify(shown(step))}: ${message}${hint}`), { failure, entry });
+      else throw Object.assign(new StepError(`${failure === 'criterion' ? `CRITERION${entry.criteria?.length ? ` ${entry.criteria.join(', ')}` : ''} not met` : failure === 'app' ? 'APP error' : 'SCRIPT failure'}: ${scene ?? 'setup'} step ${index}${step.from ? ` (fragment ${step.from})` : ''} ${JSON.stringify(shown(step))}: ${message}${hint}`), { failure, entry });
     }
   }
 }
@@ -292,7 +331,7 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
 /** A step that couldn't be done; the CLI maps it to exit code 2. */
 export class StepError extends Error {}
 
-const targetOf = step => step[actionOf(step)] && actionOf(step) !== 'goto' && typeof step[actionOf(step)] !== 'number' ? step[actionOf(step)] : null;
+const targetOf = step => step[actionOf(step)] && !['goto', 'code', 'press'].includes(actionOf(step)) && typeof step[actionOf(step)] !== 'number' ? step[actionOf(step)] : null;
 const targetText = t => (typeof t === 'string' ? t.replace(/^css=/, '') : t.name ?? t.label ?? t.placeholder ?? t.text ?? t.testId ?? t.css ?? '');
 
 /** Edit distance (optimal string alignment: a swapped pair of letters is one edit), for closest-match suggestions. */

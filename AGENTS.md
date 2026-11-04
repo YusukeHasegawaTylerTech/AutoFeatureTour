@@ -34,18 +34,18 @@ date, `npx playwright install chromium`, `npm link` with `-Link`, then `doctor`.
 | npm packages / Playwright Chromium | `npm ci`, `npx playwright install chromium` |
 | no SAPI voices (warn) | add a voice in Windows Settings > Speech, or run with `--speech silent` |
 | claude CLI (warn) | only for `--llm claude`; install Claude Code |
-| `<app>: …` | that target's own requirements; see `targets/<app>/README.md` |
+| `<platform>: …` | that platform's own requirements; see `platforms/<name>/README.md` (`aft doctor --platform <name>` makes them required) |
 
 ## Running
 
 ```
-aft validate examples/todomvc/tour.json                          # dry run: every step, no video → validation.md
-aft render   examples/todomvc/tour.json                          # preview: narration over title cards, no browser
-aft run      examples/todomvc/tour.json --target demo            # record (an environment from the tour's "environments")
-aft run      my.tour.json --base-url http://localhost:3000/      # local dev server (or BASE_URL=...)
-aft run      my.tour.json --target qa                            # deployed QA environment (+ saved login, see below)
+aft validate platforms/todomvc/tours/track-and-filter.tour.json             # dry run: every step, no video → validation.md
+aft render   platforms/todomvc/tours/track-and-filter.tour.json             # preview: narration over title cards, no browser
+aft run      platforms/todomvc/tours/track-and-filter.tour.json             # record (the platform's default environment)
+aft run      my.tour.json --target qa                                       # another environment of the tour's platform
+aft run      my.tour.json --base-url http://localhost:3000/                 # a one-off URL (or BASE_URL=...)
 aft run      my.tour.json --speech silent                        # headless/CI: silent audio, captions carry the narration
-aft all      --story story.md --base-url <url> --llm claude      # story → script → dry run → video
+aft all      --story story.md --platform todomvc --llm claude                # story → script → dry run → video
 ```
 
 Exit codes: 0 ok · 1 usage/config · 2 SCRIPT failure · 3 app unreachable · 4 CRITERION failure · 5 APP error (see
@@ -113,29 +113,108 @@ To replay by hand: `aft run <tour> --headed --pause` (stops at the failure with 
 `--until-step N` (stop after step N, counted across the tour as in report.md; exit 0, no video), `--from-step N`
 (steps before N run fast, unpaced).
 
-## Adding a target app
+## Platforms
 
-Start from `examples/todomvc/tour.json`; most apps need nothing more than a `tour.json`.
+A **platform** is everything about one app that isn't a particular tour. Tours name a platform and only describe
+what to show; they never contain a base URL, credentials, launch commands or app-wide selectors (the loader refuses
+those keys, and absolute URLs, in a platform tour). Platforms today: `todomvc` (the reference), `rms` (local NWPS
+RMS), `agenticfoia` (code tours that build and start their own app). `aft platform list` shows them.
 
-1. `targets/<app>/<tour>.tour.json` (or anywhere). Set `environments` (`local`, `qa`, …) with each `baseUrl`; the
-   same script then runs against each with `--target`. `--base-url` / `BASE_URL` override.
-2. Login: add `"login": { "role": "...", "steps": [...] }` with credentials as `"{env:NAME}"` (from env vars or a
-   git-ignored `.env`). `aft login <tour.json> --target qa` saves `auth/<target>-qa/<role>.json`; for SSO/MFA use
-   `--manual` and log in by hand. Runs load the saved state and sign in again on their own when it has expired.
-3. Test data: `"hooks": { "setup": [...], "teardown": [...] }` with `{ "run": "<cmd>" }`, `{ "node": "<script>" }` or
-   `{ "http": { "method", "url", "body" } }`. Hooks get `BASE_URL` and `RUN_DIR`.
-4. Sensitive data on screen: `"mask": { "selectors": [...], "patterns": [...] }` blurs it before recording.
-5. Slow screens: `"timeouts": { "action", "verify", "waitFor", "navigation" }` (ms), per environment if needed.
-6. Starting the app: `"launch": { "command", "cwd", "port": "auto", "healthUrl" }` (optional).
-7. Extra machine requirements: `targets/<app>/requirements.mjs` (see `src/doctor.mjs`), checked by `aft doctor`.
-8. Only if steps aren't enough (building the app, API seeding, helper pages): a `.tour.mjs` code target, like
-   [targets/agenticfoia](targets/agenticfoia/README.md). Its CLI options pass through as `ctx.options`.
+```
+platforms/<name>/
+  platform.json       how the app behaves everywhere: ready (busy indicators, stable page), errors (its error UI),
+                      appErrors, ignore (noisy requests/messages, regex), mask, pronounce, viewport, voice,
+                      ignoreHTTPSErrors, startPath, discover.paths, timeouts, retries, trace
+  environments.json   where it runs: { "default": "local", "local": { "baseUrl", "launch" | "attach", "timeouts" }, "qa": {...} }
+                      launch: start it if nothing answers (attaches if it's already up; "stop": false leaves it running)
+                      attach: [{ "name", "healthUrl" }]: never start anything; down = UNREACHABLE (exit 3)
+  login.json          { "default": "<role>", "signedIn": "<css>", "checkPath", "maxAgeMinutes", "roles": { "<role>": { "steps": [...] } } }
+                      credentials only as "{env:NAME}"; saved state: auth/<platform>/<env>/<role>.json (git-ignored)
+  fragments/          reusable steps: <name>.json { "params": {...}, "steps": [...] } or <name>.mjs (a code step)
+  fixtures/           test data: <name>.json { "data": {...}, "setup": [hooks], "teardown": [hooks], "steps": [...] }
+  requirements.mjs    extra `aft doctor --platform <name>` checks       README.md   what it is, data rules
+  tours/              its tours; smoke.tour.json is what `aft platform check` runs
+```
+
+A platform tour:
+
+```json
+{ "name": "clear-completed", "platform": "todomvc", "env": "demo", "role": "clerk", "fixtures": ["three-tasks"],
+  "story": { "id": "TODO-202", "acceptanceCriteria": ["…"] },
+  "scenes": [ { "title": "…", "narration": "…", "url": "#/", "criteria": [1],
+                "steps": [ { "use": "add-todo", "with": { "text": "{data.first}" } }, { "verify": { "text": "{data.first}" } } ] } ] }
+```
+
+`env`/`role` are defaults; `--target <env>` and `--role <name>` override them, and `--base-url` / `BASE_URL`
+override the environment's URL. A tour without `platform` (with its own `baseUrl`, `login`, …) still works for
+quick experiments and tests, but anything that will be kept belongs in a platform.
+
+**Fragments** are called from any step list (scenes, login, fixtures, other fragments) as
+`{ "use": "<name>", "with": { … } }`. A JSON fragment declares `params` (`{ "required": true }` or
+`{ "default": v }`; an unknown or missing parameter is a config error) and uses `"{args.<p>}"` in its steps; a string
+that is exactly `"{args.p}"` passes the value as is, so a target object can be a parameter. Extra keys on the call
+(`"optional"`, `"timeout"`) apply to each of its steps. Fragments are expanded when the tour loads: reports show the
+real steps, each with `"from": "<fragment>"`, and a failure says `(fragment <name>)`. Cycles are refused.
+
+**Code steps** are fragments too: `fragments/<name>.mjs`, called with `{ "use": "<name>", "with": {…} }` or
+`{ "code": "<name>.mjs", "with": {…} }`:
+
+```js
+// platforms/todomvc/fragments/todo-count.mjs
+export default async function ({ page, context, args, ctx }) {
+  const n = await page.getByTestId('todo-item').count();
+  ctx.check(n === Number(args.count), `expected ${args.count} tasks, found ${n}`);   // CRITERION (exit 4) if false
+}
+```
+
+`ctx`: `check(ok, msg)` (fails as CRITERION, for the step's `"criterion"` or the scene's criteria), `appError(msg)`
+(APP), `resolve(target)` (the same target rules as JSON steps), `tour` (paced `click`, `typeInto`, `moveTo`),
+`url(path)`, `baseUrl`, `timeouts`, `log`. Any other throw is a SCRIPT failure. Code steps must be deterministic (no
+LLM, nothing random on screen) and are never retried. Use them for what steps can't say; a `.tour.mjs` code tour
+(`export default { platform, name, script, async record(ctx) }`, with `ctx.platformDir`) remains the escape hatch for
+a whole tour, like `platforms/agenticfoia/tours/`.
+
+**Fixtures** hold the data a tour needs. `setup`/`teardown` hooks (`{ "run" }`, `{ "node" }`, `{ "http" }`; run from
+`fixtures/` with `BASE_URL` and `RUN_DIR`) run before the browser starts and after it closes; `steps` run in the
+signed-in browser off camera before the first scene. Their `data` is `"{data.<key>}"` in the tour's steps, so
+narration-visible values live in one place.
+
+### Lifecycle
+
+What happens when, and whether it can be skipped:
+
+| when | what | skippable? |
+|---|---|---|
+| once per machine | `install.cmd` / `install.ps1`, then `aft doctor` | mandatory (doctor is idempotent; re-run after changes) |
+| once per platform | `aft platform init <name>`, platform.json, environments.json, login.json, requirements.mjs, a smoke tour | mandatory |
+| per environment | `aft platform check <name> --target <env>` | mandatory before the first real tour there; re-run when the app or environment changes |
+| per env + role, until it expires | sign-in → `auth/<platform>/<env>/<role>.json` (`aft login`, or automatically on the first run) | skipped while the saved state works; renewed automatically on expiry when login steps and credentials exist; `--fresh-login` forces it |
+| per session (one command) | launch or attach to the app; browser start | attach is skipped if the app is up; launch never restarts a running service |
+| per run | fixture setup hooks → browser → session check → fixture steps (off camera) → scenes → fixture teardown | fixtures only if the tour lists them; teardown runs whenever setup ran |
+| per step | the action, settle (`ready`), the app's error UI and `appErrors` policy, rule-based retry (actions only) | `"optional": true` steps may fail without failing the run; checks never |
+
+### Onboarding a platform
+
+```
+aft platform init myapp --base-url http://localhost:3000/   # scaffold platforms/myapp/ (never overwrites)
+aft doctor --platform myapp                                 # machine + requirements.mjs
+#  edit environments.json (baseUrl, launch or attach) and login.json (roles, {env:…} credentials in .env)
+aft login --platform myapp [--target local] [--role user]   # or --manual for SSO/MFA
+aft platform discover myapp                                 # screens, names and fields as that role sees them → discovery.json
+#  write fragments/ for repeated flows (sign-in, open a record, search); fixtures/ for the data tours need
+#  set ready / errors / ignore in platform.json from what discovery and the smoke run show
+aft platform check myapp [--target qa]                      # doctor → settings → reachable → smoke tour (signs in, every step)
+```
+
+`aft platform check` passing in an environment means the platform is ready there. It stops at the first failing
+stage; a failing smoke tour exits with its own class (LOGIN 6, UNREACHABLE 3, SCRIPT 2…).
 
 ## Story to video (for agents)
 
 1. Save the story as a file (id like `RMS-6142`, title, description, `Acceptance criteria:` list); see
    `examples/stories/`.
-2. `aft generate --story story.md --base-url <url> --llm claude [--style verification|demo|training]`. Without
+2. `aft generate --story story.md --platform <name> [--target <env>] --llm claude [--style verification|demo|training]`
+   (the tour it writes names the platform). Without
    `--llm` you get a per-criterion draft to fill in by hand. The style is a generation hint only.
 3. Review and edit the run folder's `tour.json`:
    - one scene per acceptance criterion (`"criteria": [n]`), narration saying which criterion it shows;
@@ -147,14 +226,15 @@ Start from `examples/todomvc/tour.json`; most apps need nothing more than a `tou
 5. `aft run <run>/tour.json` (records into a new run folder). On failure, read `triage/report.md`: SCRIPT means fix
    the step (match a name from `triage/page/aria.yml`); CRITERION or APP means the app, so report it, don't edit the
    check away.
-6. Example: [examples/stories/RMS-6142.tour.json](examples/stories/RMS-6142.tour.json) (generated, then corrected by hand).
+6. Example: [platforms/rms/tours/RMS-6142.tour.json](platforms/rms/tours/RMS-6142.tour.json) (generated, then corrected by hand).
+7. Flows you write twice become fragments; data the story needs becomes a fixture (see Platforms).
 
 ## Rules
 
 - **Synthetic or test data only.** Local or dedicated QA/test environments are fine; never production or real
   records. `validate` performs the steps for real, so it changes data like a run does.
 - **The engine is app-agnostic.** Nothing in `src/` may know about a particular app; app specifics live only in
-  `targets/<app>/` (or the tour file).
+  `platforms/<name>/`. Tours hold no URLs, credentials, launch commands or app-wide selectors.
 - **Never overwrite a previous run.** Use `newRunDir`; no fixed output paths, no shared temp files, free ports.
 - **Rendering never depends on an LLM.** LLMs may write scripts; scripts are files a person can review.
 - `--llm claude` sends the discovery inventory and story text to Claude; only use it where that's allowed.
@@ -170,8 +250,10 @@ Start from `examples/todomvc/tour.json`; most apps need nothing more than a `tou
 | `CRITERION … not met` (exit 4) | the page didn't show what the check expects; if it's just slow, raise `timeouts.verify`; else report it |
 | `APP error` (exit 5) | the report's "first cause" names the failing request or error during that step; report it as a blocker |
 | `saved login expired; signed in again` | normal: an expired session is renewed automatically, off camera, when the tour has login steps and its credentials are set. `--fresh-login` forces it; `login.maxAgeMinutes` renews old sessions early |
-| `LOGIN: … can't sign in by itself` (exit 6) | set the credentials it names, or (SSO/MFA, no login steps) run `aft login <tour.json> --manual` |
-| exit 3, `didn't come up` | app not running at `baseUrl`, or `launch.healthUrl` wrong; see `app.log` |
+| `LOGIN: … can't sign in by itself` (exit 6) | set the credentials it names, or (SSO/MFA, no login steps) run `aft login --platform <name> --manual` |
+| exit 3, `didn't come up` / `attach-only` | app not running at the environment's `baseUrl`, or `launch.healthUrl` wrong; see `<service>.log` |
+| `"baseUrl" belongs in the platform` | move it (and login, launch, ready, errors…) to `platforms/<name>/`; the tour keeps `platform`, `env`, `role`, `fixtures`, scenes |
+| `Fragment "x" needs "with"` / `no parameter` | match the fragment's `params` |
 | scene overruns its narration | a step waited for its timeout; mark it `"optional": true` (3 s limit) or fix the target |
 
 Reading a trace: `npx playwright show-trace out/<name>/<run>/trace-failed.zip` shows every action with DOM
@@ -179,7 +261,8 @@ snapshots, the console and network; find the last red action.
 
 ## Code map
 
-`src/cli.mjs` commands and run folders · `steps.mjs` step runner, locators, suggestions · `declarative.mjs` tour.json
-(environments, login, hooks, mask) · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
+`src/cli.mjs` commands and run folders · `steps.mjs` step runner, locators, suggestions, code steps · `declarative.mjs`
+tour.json → a run (platform composition, launch/attach, login, hooks, fixtures) · `platform.mjs` platforms, fragments,
+fixtures, init · `platform-cli.mjs` `aft platform` · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
 `plan.mjs` heuristic and Claude planners, stories · `render.mjs` ffmpeg · `tts.mjs` speech · `auth.mjs` saved logins ·
 `doctor.mjs` checks. Tests: `npm test`.

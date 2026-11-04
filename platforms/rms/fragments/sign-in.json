@@ -1,0 +1,12 @@
+{
+  "description": "The RMS sign-in form (as the e2e LoginPage): username, password (set through the DOM, never typed), CJIS acknowledgment, Sign In.",
+  "params": { "username": { "required": true }, "password": { "required": true } },
+  "steps": [
+    { "goto": "#/home" },
+    { "fill": "#Username", "text": "{args.username}", "timeout": 60000 },
+    { "fill": "#passwordField", "text": "{args.password}", "secret": true },
+    { "click": "#cjisAcknowledgment", "optional": true },
+    { "click": { "role": "button", "name": "Sign In" } },
+    { "waitFor": "css=forge-app-bar-profile-button", "timeout": 90000 }
+  ]
+}

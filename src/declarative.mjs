@@ -43,15 +43,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { authFile, saveLogin } from './auth.mjs';
+import { checkTour, expandSteps, loadFixtures, loadPlatform, PlatformError, platformAuthFile, platformConfig } from './platform.mjs';
 import { probe, startProcess, stopProcess, waitForHttp } from './recorder.mjs';
 import { Failure } from './failures.mjs';
 import { runSteps, settle } from './steps.mjs';
 import { freePort, run } from './util.mjs';
 
 /** Runs setup/teardown hooks: a shell command, an HTTP call, or a Node script. */
-async function runHooks(hooks = [], { dir, outDir, baseUrl, log }) {
+export async function runHooks(hooks = [], { dir: tourDir, outDir, baseUrl, log }) {
   const env = { ...process.env, BASE_URL: baseUrl, RUN_DIR: outDir };
   for (const h of hooks) {
+    const dir = h.dir ?? tourDir; // fixture hooks run from the fixture's folder
     if (h.run) { log(`hook: ${h.run}`); await run(h.run, [], { cwd: path.resolve(dir, h.cwd ?? '.'), env, shell: true }); }
     else if (h.node) { log(`hook: node ${h.node}`); await run(process.execPath, [path.resolve(dir, h.node), ...(h.args ?? [])], { cwd: dir, env }); }
     else if (h.http) {
@@ -79,7 +81,7 @@ function fill(value, vars) {
 
 export function validate(cfg, file) {
   const problems = [];
-  if (!cfg.baseUrl) problems.push('no target: add "baseUrl" or "environments" to the tour, or pass --base-url <url> / set BASE_URL / --target <environment>');
+  if (!cfg.baseUrl) problems.push('no target: name a "platform" (its environments.json has the baseUrl), or pass --base-url <url> / set BASE_URL');
   if (!Array.isArray(cfg.scenes) || !cfg.scenes.length) problems.push('scenes must be a non-empty array');
   (cfg.scenes ?? []).forEach((s, i) => {
     if (!s.title) problems.push(`scenes[${i}].title is required`);
@@ -104,21 +106,68 @@ export function resolveConfig(raw, { env, baseUrl } = {}) {
 
 export const authTarget = (cfg, env) => `${cfg.target ?? cfg.name}${env ? `-${env}` : ''}`;
 
-/** Loads tour.json as a tour definition the CLI can run, like a .tour.mjs module. */
-export function loadTourJson(file, { env, baseUrl } = {}) {
+/**
+ * A tour as the run needs it. With "platform": the platform's settings, environment, login role and fixtures,
+ * fragments expanded, BASE_URL / --base-url on top. Without: the tour's own settings (a stand-alone tour, for quick
+ * experiments and tests). Returns { cfg, env, platform, authFile(role) }.
+ */
+export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
+  const dir = path.dirname(path.resolve(file));
+  const wrap = fn => { try { return fn(); } catch (e) { throw e instanceof PlatformError ? new ConfigError(e.message) : e; } };
+  if (!raw.platform) {
+    const cfg = resolveConfig(raw, { env, baseUrl });
+    const dirs = [path.join(dir, 'fragments'), dir];
+    wrap(() => {
+      cfg.scenes = (cfg.scenes ?? []).map(s => ({ ...s, steps: expandSteps(s.steps, { dirs }) }));
+      if (cfg.login?.steps) cfg.login = { ...cfg.login, steps: expandSteps(cfg.login.steps, { dirs }) };
+    });
+    return { cfg, env, platform: null, authFile: r => authFile(toolRoot, authTarget(cfg, env), r ?? cfg.login?.role) };
+  }
+  return wrap(() => {
+    checkTour(raw, file);
+    const p = loadPlatform(toolRoot, raw.platform, { from: dir });
+    const { cfg: base, env: envName } = platformConfig(p, { env: env ?? raw.env, role: role ?? raw.role });
+    const fx = loadFixtures(p, raw.fixtures);
+    const dirs = [path.join(p.dir, 'fragments'), dir];
+    const cfg = {
+      ...base, ...raw,
+      timeouts: { ...base.timeouts, ...raw.timeouts },
+      pronounce: { ...base.pronounce, ...raw.pronounce },
+      hooks: { setup: [...fx.setup, ...(raw.hooks?.setup ?? [])], teardown: [...(raw.hooks?.teardown ?? []), ...fx.teardown] },
+      fixtureSteps: expandSteps(fx.steps, { dirs, data: fx.data }),
+      data: fx.data,
+      scenes: (raw.scenes ?? []).map(s => ({ ...s, steps: expandSteps(s.steps, { dirs, data: fx.data }) })),
+      ...(base.login ? { login: { ...base.login, steps: expandSteps(base.login.steps, { dirs }) } } : {}),
+    };
+    if (process.env.BASE_URL) cfg.baseUrl = process.env.BASE_URL;
+    if (baseUrl) cfg.baseUrl = baseUrl;
+    return { cfg, env: envName, platform: p, authFile: r => platformAuthFile(toolRoot, p.name, envName, r ?? cfg.login?.role) };
+  });
+}
+
+export function readTourJson(file) {
   let raw;
   try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw new ConfigError(`${file}: not valid JSON (${e.message})`); }
   raw.name ??= path.basename(file).replace(/\.tour\.json$|\.json$/, '');
-  const cfg0 = resolveConfig(raw, { env, baseUrl });
+  return raw;
+}
+
+/** Loads tour.json as a tour definition the CLI can run, like a .tour.mjs module. */
+export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
+  const raw = readTourJson(file);
+  const composed = composeTour(raw, { file, toolRoot, env, baseUrl, role });
+  const cfg0 = composed.cfg;
   validate(cfg0, file);
   const dir = path.dirname(path.resolve(file));
   return {
     name: raw.name,
+    platform: composed.platform?.name,
+    env: composed.env,
     story: raw.story,
     raw: cfg0,
-    voice: raw.voice,
-    pronounce: raw.pronounce,
-    viewport: raw.viewport,
+    voice: cfg0.voice,
+    pronounce: cfg0.pronounce,
+    viewport: cfg0.viewport,
     mask: cfg0.mask,
     scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration })),
     async record(ctx) {
@@ -132,6 +181,12 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
       let setupDone = false;
       const hookCtx = { dir, outDir: ctx.outDir, baseUrl: vars.baseUrl, log: ctx.log };
       try {
+        // attach: an environment a run never starts; if it isn't answering, the run can't happen (UNREACHABLE).
+        for (const a of [cfg.attach ?? []].flat()) {
+          const health = a.healthUrl ?? vars.baseUrl;
+          if (!(await probe(health, { any: a.anyStatus }))) throw new Failure('unreachable', `${a.name ?? 'app'} isn't running at ${health}; this environment is attach-only, so start it yourself`);
+          ctx.log(`${a.name ?? 'app'}: running at ${health}`);
+        }
         for (const [n, l] of [cfg.launch ?? []].flat().entries()) {
           const health = l.healthUrl ?? vars.baseUrl;
           const label = l.name ?? (n ? `service ${n + 1}` : 'app');
@@ -146,11 +201,11 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
         }
         await runHooks(cfg.hooks?.setup, hookCtx);
         setupDone = true;
-        const state = cfg.login ? authFile(ctx.toolRoot, authTarget(cfg, ctx.options.env), ctx.options.role ?? cfg.login.role) : null;
+        const state = cfg.login ? composed.authFile(cfg.login.role) : null;
         // Credentials the login steps need ({env:NAME} references that are empty mean we can't sign in by ourselves).
         const missingCreds = [...JSON.stringify(cfg0.login?.steps ?? []).matchAll(/\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g)].map(m => m[1]).filter(k => !process.env[k]);
         const canLogin = !!cfg.login?.steps?.length && !missingCreds.length;
-        const cannot = () => (!cfg.login?.steps?.length ? `the tour has no login steps: run aft login <tour.json> --manual${ctx.options.env ? ` --target ${ctx.options.env}` : ''}`
+        const cannot = () => (!cfg.login?.steps?.length ? `there are no login steps: run aft login --platform <name> --manual (or aft login <tour.json> --manual)${ctx.options.env ? ` --target ${ctx.options.env}` : ''}`
           : `credentials missing: set ${missingCreds.join(', ')} (environment or .env)`);
         const signIn = async why => {
           if (!canLogin) throw new Failure('login', `${why}, and the tour can't sign in by itself: ${cannot()}`);
@@ -188,6 +243,8 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
           if (!(await signedIn())) throw new Failure('login', `signed in again, but ${cfg.login.signedIn} isn't on ${t.page.url()}: check login.signedIn / login.checkPath`);
           ctx.log('saved login expired; signed in again');
         }
+        // Fixture steps: data the tour needs, put in place through the browser, off camera.
+        if (cfg.fixtureSteps?.length) await runSteps(t, cfg.fixtureSteps, { ...opts, unpaced: true, scene: 'fixtures' });
         for (const [i, s] of cfg.scenes.entries()) {
           const id = ctx.scenes[i].id;
           if (s.url) await runSteps(t, [{ goto: s.url }], { ...opts, unpaced: true, scene: `${id} (url)` });

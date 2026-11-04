@@ -2,7 +2,7 @@
 // AutoFeatureTour CLI: story → script (editable tour.json) → validate → run (record) → post-process (narration,
 // captions, video). Non-interactive unless you ask for it (login --manual, --headed).
 //
-//   aft generate --story <file|text> [--base-url <url>] [--llm claude] [--style verification|demo|training] [--prompt ...]
+//   aft generate --story <file|text> [--platform <name> | --base-url <url>] [--llm claude] [--style verification|demo|training] [--prompt ...]
 //   aft validate <tour.json> | --script <tour.json>   dry run: checks every step resolves, nothing recorded
 //   aft run      <tour.json|tour.mjs>                 record the video (render --record)
 //   aft all      --story <file|text> --base-url <url> [--llm claude]   generate → validate → run, one run folder
@@ -10,11 +10,13 @@
 //   aft discover <url>   [--max-pages 12]             crawl screens (used by generate/auto)
 //   aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm claude]
 //   aft auto     <url> [--prompt ...]                 discover → plan → run, no story needed
-//   aft login    <tour.json> [--role <name>] [--manual]   save auth/<target>/<role>.json
-//   aft doctor   [--target <app>]                     check this machine (+ targets' requirements.mjs); exit 1 if missing
+//   aft login    --platform <name> | <tour.json> [--target <env>] [--role <name>] [--manual]   save auth/<platform>/<env>/<role>.json
+//   aft platform list | init <name> [--base-url <url>] | discover <name> | check <name>   onboard an app (AGENTS.md, Platforms)
+//   aft doctor   [--platform <name>]                  check this machine (+ platforms' requirements.mjs); exit 1 if missing
 //   aft --list-voices | --help | --version
 //
-// Target selection: --target <environment in tour.json> (alias --env), --base-url <url> or BASE_URL. Other flags:
+// Target selection: a tour names its platform (platforms/<name>/); --target <environment> (alias --env) and --role pick
+// among the platform's; --base-url <url> or BASE_URL override the URL. --platform <name> for generate/discover/login. Other flags:
 // --out <folder>, --name <run name>, --headed, --speech sapi|silent, --voice, --rate, --tail, --no-captions,
 // --on-error fail|skip, --allow-draft (record a script that still has unresolved/empty scenes).
 // Hand triage: --headed --pause (stop at the failure with the Playwright inspector), --until-step N / --from-step N
@@ -34,8 +36,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { authFile, saveLogin } from './auth.mjs';
-import { authTarget, ConfigError, loadTourJson, resolveConfig } from './declarative.mjs';
+import { saveLogin } from './auth.mjs';
+import { composeTour, ConfigError, loadTourJson, readTourJson } from './declarative.mjs';
+import { platformCommand } from './platform-cli.mjs';
+import { loadPlatform } from './platform.mjs';
 import { discover } from './discover.mjs';
 import { doctor } from './doctor.mjs';
 import { plan, readStory } from './plan.mjs';
@@ -51,7 +55,7 @@ import { log, newRunDir, num, parseArgs, run, sleep } from './util.mjs';
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'zip', 'pause', 'fromStep', 'untilStep']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 class UsageError extends Error {}
@@ -143,9 +147,18 @@ async function loadTour(file, args) {
   if (!file) throw new UsageError('Give a tour file (tour.json or .tour.mjs), or --script <file>');
   const abs = path.resolve(file);
   if (!fs.existsSync(abs)) throw new UsageError(`No such tour file: ${abs}`);
-  if (abs.endsWith('.json')) return { def: loadTourJson(abs, { env: envOf(args), baseUrl: args.baseUrl }), dir: path.dirname(abs) };
+  if (abs.endsWith('.json')) return { def: loadTourJson(abs, { env: envOf(args), baseUrl: args.baseUrl, role: args.role, toolRoot }), dir: path.dirname(abs) };
+  // A code tour (the whole-tour escape hatch). With "platform", ctx.platformDir is that platform's folder, and its
+  // platform.json supplies pronounce/voice/viewport/mask defaults.
   const def = (await import(pathToFileURL(abs).href)).default;
   def.name ??= path.basename(abs).replace(/\.tour\.mjs$|\.mjs$/, '');
+  if (def.platform) {
+    let p;
+    try { p = loadPlatform(toolRoot, def.platform, { from: path.dirname(abs) }); } catch (e) { throw new ConfigError(e.message); }
+    def.platformDir = p.dir;
+    def.pronounce = { ...p.platform.pronounce, ...def.pronounce };
+    for (const k of ['voice', 'viewport', 'mask']) def[k] ??= p.platform[k];
+  }
   return { def, dir: path.dirname(abs) };
 }
 
@@ -172,7 +185,7 @@ async function recordWith(def, tourDir, outDir, scenes, args, { dryRun = false }
   if (envOf(args)) options.env = envOf(args);
   const range = args.fromStep || args.untilStep ? { n: 0, from: Number(args.fromStep ?? 0), until: Number(args.untilStep ?? 0) } : null;
   const secrets = [];
-  const ctx = { tour, scenes, outDir, options, toolRoot, targetDir: tourDir, log, run, dryRun, report: [], range, secrets };
+  const ctx = { tour, scenes, outDir, options, toolRoot, targetDir: tourDir, platformDir: def.platformDir ?? tourDir, log, run, dryRun, report: [], range, secrets };
   ctx.progress = () => { if (!dryRun) progress(outDir, def, ctx.report, secrets); };
   const started = Date.now();
   const done = async (error, extra = {}) => (dryRun ? null : finalize({ outDir, def, steps: ctx.report, tour, error, ms: Date.now() - started, zip: !!args.zip, secrets, ...extra }));
@@ -309,21 +322,35 @@ async function render(def, tourDir, outDir, args) {
 
 // ---- Generate (story/prompt → editable tour.json + script.md) ----------------------------------------------------
 
-/** The app URL for generate/all: --base-url, BASE_URL, or the --tour target file (its environment or baseUrl). */
+/**
+ * The app's settings without a tour to run: --platform <name> (its environment and role), or --tour <tour.json>
+ * (a platform tour or a stand-alone one). null when neither is given.
+ */
+function appSettings(args) {
+  if (!args.platform && !args.tour) return null;
+  const file = args.tour ? path.resolve(args.tour) : path.join(toolRoot, '_platform.tour.json');
+  const raw = args.tour ? readTourJson(file) : { name: args.platform, platform: args.platform, scenes: [] };
+  if (args.platform && args.tour && raw.platform && raw.platform !== args.platform) throw new UsageError(`${args.tour} is a tour of ${raw.platform}, not ${args.platform}`);
+  if (args.platform) raw.platform = args.platform;
+  const c = composeTour(raw, { file, toolRoot, env: envOf(args), baseUrl: args.baseUrl, role: args.role });
+  return { ...c, name: raw.platform ?? raw.name };
+}
+
+/** The app URL for generate/all: --base-url, BASE_URL, or the platform / --tour (its environment or baseUrl). */
 function targetUrl(args) {
-  if (args.baseUrl || process.env.BASE_URL || !args.tour) return args.baseUrl ?? process.env.BASE_URL;
-  const raw = resolveConfig(JSON.parse(fs.readFileSync(args.tour, 'utf8')), { env: envOf(args) });
-  return raw.baseUrl ? new URL(raw.startPath ?? '', raw.baseUrl.replace(/\/?$/, '/')).href : undefined;
+  if (args.baseUrl || process.env.BASE_URL) return args.baseUrl ?? process.env.BASE_URL;
+  const app = appSettings(args);
+  return app?.cfg.baseUrl ? new URL(app.cfg.startPath ?? '', app.cfg.baseUrl.replace(/\/?$/, '/')).href : undefined;
 }
 
 function loginStepsFor(args) {
-  if (!args.tour) return {};
-  const raw = resolveConfig(JSON.parse(fs.readFileSync(args.tour, 'utf8')), { env: envOf(args), baseUrl: args.baseUrl });
-  raw.name ??= path.basename(args.tour).replace(/\.tour\.json$|\.json$/, '');
-  if (!raw.login) return { ready: raw.ready, ignoreHTTPSErrors: raw.ignoreHTTPSErrors, paths: raw.discover?.paths ?? [], errors: raw.errors };
-  const state = authFile(toolRoot, authTarget(raw, envOf(args)), args.role ?? raw.login.role);
-  const common = { ready: raw.ready, ignoreHTTPSErrors: raw.ignoreHTTPSErrors, paths: raw.discover?.paths ?? [], errors: raw.errors };
-  return fs.existsSync(state) ? { ...common, storageState: state } : { ...common, loginSteps: raw.login.steps };
+  const app = appSettings(args);
+  if (!app) return {};
+  const { cfg } = app;
+  const common = { ready: cfg.ready, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, paths: cfg.discover?.paths ?? [], errors: cfg.errors };
+  if (!cfg.login) return common;
+  const state = app.authFile(cfg.login.role);
+  return fs.existsSync(state) ? { ...common, storageState: state } : { ...common, loginSteps: cfg.login.steps };
 }
 
 /** Discovers (when there's a URL), plans into out, and merges login/environments/hooks/mask from --tour. */
@@ -334,7 +361,16 @@ async function generateInto(out, args, { url, story, name }) {
   const tour = await plan({ discovery, outDir: out, name: safeName(name), prompt: args.prompt, story, style: args.style, llm: args.llm, model: args.model,
     maxScenes: Number(args.maxScenes ?? 6), baseUrl: url ? undefined : args.baseUrl });
   const tourFile = path.join(out, 'tour.json');
-  if (args.tour) { // the app's own settings from a hand-written tour.json: login, environments, hooks, mask, timeouts
+  const app = appSettings(args);
+  if (app?.platform) { // a platform tour names its platform and holds no app settings
+    for (const k of ['baseUrl', 'environments', 'launch', 'login', 'ready', 'errors', 'mask', 'startPath', 'target']) delete tour[k];
+    tour.platform = app.platform.name;
+    if (envOf(args)) tour.env = envOf(args);
+    if (args.role) tour.role = args.role;
+    tour.needs = tour.needs?.filter(n => !n.startsWith('a target'));
+    if (tour.needs && !tour.needs.length) { delete tour.needs; delete tour.draft; }
+    fs.writeFileSync(tourFile, JSON.stringify(tour, null, 2));
+  } else if (args.tour) { // a stand-alone tour.json's own settings: login, environments, hooks, mask, timeouts
     const base = JSON.parse(fs.readFileSync(args.tour, 'utf8'));
     for (const k of ['login', 'environments', 'hooks', 'mask', 'timeouts', 'launch', 'viewport', 'voice', 'pronounce', 'ready', 'ignoreHTTPSErrors', 'startPath', 'baseUrl', 'errors'])
       if (base[k] !== undefined) tour[k] = base[k];
@@ -354,7 +390,7 @@ const storyName = (story, url) => story?.id ? `${story.id}${url ? `-${new URL(ur
 
 const commands = {
   async doctor(args) {
-    if (!(await doctor({ toolRoot, target: args.target }))) process.exitCode = 1;
+    if (!(await doctor({ toolRoot, platform: args.platform ?? args.target }))) process.exitCode = 1;
   },
 
   async generate(args) {
@@ -395,7 +431,7 @@ const commands = {
     await withRun(name, args, 'all', async out => {
       const { tour, tourFile } = await generateInto(out, args, { url, story, name });
       if (tour.draft) throw new StepError(`the generated script is a draft and wasn't recorded: edit ${tourFile}, then aft validate / aft run it`);
-      const def = loadTourJson(tourFile, { env: envOf(args), baseUrl: args.baseUrl });
+      const def = loadTourJson(tourFile, { env: envOf(args), baseUrl: args.baseUrl, role: args.role, toolRoot });
       const v = await validate(def, out, out, args);
       blocking = v.blocking;
       if (blocking) return { tour: tourFile, validation: v.report, blocking };
@@ -436,20 +472,25 @@ const commands = {
     await withRun(name, args, 'auto', async out => {
       const { tour, tourFile } = await generateInto(out, args, { url, story, name });
       if (tour.draft) throw new StepError(`the generated script is a draft and wasn't recorded: edit ${tourFile}, then aft validate / aft run it`);
-      const def = loadTourJson(tourFile, { env: envOf(args), baseUrl: args.baseUrl });
+      const def = loadTourJson(tourFile, { env: envOf(args), baseUrl: args.baseUrl, role: args.role, toolRoot });
       return { tour: tourFile, ...(await render(def, out, out, { ...args, record: !args.noRecord })) };
     });
   },
 
   async login(args) {
     const file = args.script ?? args._[1];
-    if (!file) throw new UsageError('Usage: aft login <tour.json> [--target <env>] [--role <name>] [--manual]');
-    const raw = resolveConfig(JSON.parse(fs.readFileSync(file, 'utf8')), { env: envOf(args), baseUrl: args.baseUrl });
-    raw.name ??= path.basename(file).replace(/\.tour\.json$|\.json$/, '');
-    const state = authFile(toolRoot, authTarget(raw, envOf(args)), args.role ?? raw.login?.role);
-    await saveLogin({ baseUrl: raw.baseUrl, steps: raw.login?.steps, file: state, manual: !!args.manual, viewport: raw.viewport, timeouts: raw.timeouts,
-      ready: raw.ready, ignoreHTTPSErrors: raw.ignoreHTTPSErrors });
+    if (!file && !args.platform) throw new UsageError('Usage: aft login --platform <name> [--target <env>] [--role <name>] [--manual]  (or aft login <tour.json>)');
+    const app = appSettings({ ...args, tour: file });
+    const { cfg } = app;
+    if (!cfg.baseUrl) throw new UsageError(`${app.name}: no baseUrl for environment ${app.env ?? '(none)'}`);
+    await saveLogin({ baseUrl: cfg.baseUrl, steps: cfg.login?.steps, file: app.authFile(cfg.login?.role), manual: !!args.manual, viewport: cfg.viewport,
+      timeouts: cfg.timeouts, ready: cfg.ready, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, signedIn: cfg.login?.signedIn });
   },
+
+  async platform(args) {
+    return platformCommand(args, { toolRoot, commands, appSettings, loginStepsFor, withRun, UsageError, envOf });
+  },
+
 };
 
 /** The comment block at the top of this file is the help text, so the two can't drift apart. */

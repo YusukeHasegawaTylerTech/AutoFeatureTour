@@ -1,16 +1,17 @@
 // `aft doctor`: checks what this machine has, says how to fix what's missing, and exits non-zero if anything the
-// engine needs is missing. Targets add their own checks with an optional targets/<app>/requirements.mjs:
+// engine needs is missing. Platforms add their own checks with an optional platforms/<name>/requirements.mjs:
 //
 //   export default async function requirements({ add, which, run, version, toolRoot }) {
 //     add('My app: Java 21', ok, detail, 'how to fix', /* required for this target */ true);
 //   }
 //
-// Target checks are advisory unless --target <app> names that target (then its required items count).
+// Platform checks are advisory unless --platform <name> names that platform (then its required items count).
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
+import { listPlatforms, platformsDir } from './platform.mjs';
 import { listVoices } from './tts.mjs';
 import { run, which } from './util.mjs';
 
@@ -20,7 +21,7 @@ async function version(cmd, args = ['--version']) {
   try { return (await run(cmd, args, { capture: true })).split(/\r?\n/)[0].trim(); } catch { return null; }
 }
 
-export async function doctor({ toolRoot, target } = {}) {
+export async function doctor({ toolRoot, platform: target, quiet = false } = {}) {
   const checks = [];
   const add = (name, ok, detail, fix, required = true, group = 'engine') => checks.push({ name, ok: !!ok, detail, fix, required, group });
 
@@ -45,8 +46,9 @@ export async function doctor({ toolRoot, target } = {}) {
   const claude = which('claude') && await version('claude');
   add('claude CLI (generate/plan --llm claude)', claude, claude ?? 'not on PATH', 'install Claude Code: https://claude.com/claude-code', false);
 
-  const targetsDir = path.join(toolRoot, 'targets');
-  for (const app of fs.existsSync(targetsDir) ? fs.readdirSync(targetsDir) : []) {
+  const targetsDir = platformsDir(toolRoot, process.cwd());
+  if (target && !listPlatforms(targetsDir).includes(target)) add(`platform ${target}`, false, `not in ${targetsDir}`, `aft platform init ${target}`, true, target);
+  for (const app of listPlatforms(targetsDir)) {
     const file = path.join(targetsDir, app, 'requirements.mjs');
     if (!fs.existsSync(file) || (target && target !== app)) continue;
     const strict = target === app;
@@ -54,9 +56,9 @@ export async function doctor({ toolRoot, target } = {}) {
     await hook({ add: (n, ok, d, fix, required = true) => add(`${app}: ${n}`, ok, d, fix, strict && required, app), which, run, version, toolRoot });
   }
 
-  for (const c of checks)
+  for (const c of quiet ? checks.filter(c => !c.ok && c.required) : checks)
     console.log(`${c.ok ? ' ok ' : c.required ? 'MISS' : 'warn'}  ${c.name.padEnd(46)} ${c.detail ?? ''}${!c.ok && c.fix ? `\n      fix: ${c.fix}` : ''}`);
   const missing = checks.filter(c => c.required && !c.ok);
-  console.log(missing.length ? `\n${missing.length} required item(s) missing.` : '\nAll required items present.');
+  if (!quiet) console.log(missing.length ? `\n${missing.length} required item(s) missing.` : '\nAll required items present.');
   return missing.length === 0;
 }

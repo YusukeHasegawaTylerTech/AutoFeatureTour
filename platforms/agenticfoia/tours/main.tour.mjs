@@ -1,15 +1,15 @@
 // AgenticFOIA main tour (scripts/main.md): upload a request, review a text report, redact a body-camera video,
 // export a PDF and show the redaction log. Uploads test-corpus files plus synthetic media from make-media.ps1.
 //
-//   node src/cli.mjs targets/agenticfoia/main.tour.mjs --record [--engine Placeholder] [--skip-build]
+//   node src/cli.mjs platforms/agenticfoia/tours/main.tour.mjs --record [--engine Placeholder] [--skip-build]
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { sleep } from '../../src/util.mjs';
+import { sleep } from '../../../src/util.mjs';
 import {
   APPROVE, addManual, build, client, createProjectAndUpload, denyItem, findTesseract, freshData, isText, launch, manifest, pending,
   pickReview, pronounce, reviewerInit, settings,
-} from './app.mjs';
+} from '../app.mjs';
 
 const PROJECT = 'Records request R-26-0147';
 const CORPUS_FILES = ['008-incident-report.txt', '006-incident-report.pdf', '009-sexual-assault-report.docx', '022-internal-email.eml', '074-cad-call-log.csv'];
@@ -18,8 +18,9 @@ const REVIEW_FILE = '008-incident-report.txt';
 const EXPORT_FILE = '006-incident-report.pdf';
 
 export default {
+  platform: 'agenticfoia',
   name: 'agenticfoia-main',
-  script: 'scripts/main.md',
+  script: '../scripts/main.md',
   pronounce,
   async record(ctx) {
     const s = await settings(ctx);
@@ -29,7 +30,7 @@ export default {
     const bins = await build(ctx, s);
     const dataRoot = freshData(ctx, s);
     const mediaDir = path.join(ctx.outDir, 'media');
-    await ctx.run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(ctx.targetDir, 'make-media.ps1'), '-OutDir', mediaDir]);
+    await ctx.run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(ctx.platformDir, 'make-media.ps1'), '-OutDir', mediaDir]);
     const media = JSON.parse(fs.readFileSync(path.join(mediaDir, 'media.json'), 'utf8'));
     const files = [...CORPUS_FILES.map(f => path.join(s.corpus, f)), ...MEDIA_FILES.map(f => path.join(mediaDir, f))];
     const truth = manifest(s).files.find(f => f.file === REVIEW_FILE);

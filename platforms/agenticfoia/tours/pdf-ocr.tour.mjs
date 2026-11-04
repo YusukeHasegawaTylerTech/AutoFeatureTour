@@ -1,22 +1,23 @@
 // AgenticFOIA scanned-PDF tour (scripts/pdf-ocr.md): OCR of an image-only PDF, review, the export pipeline, the
 // re-OCR leak check and the log. The scan is made by make-scan.cs from a synthetic test-corpus PDF.
 //
-//   node src/cli.mjs targets/agenticfoia/pdf-ocr.tour.mjs --record [--engine Placeholder] [--skip-build]
+//   node src/cli.mjs platforms/agenticfoia/tours/pdf-ocr.tour.mjs --record [--engine Placeholder] [--skip-build]
 
 import path from 'node:path';
-import { sleep } from '../../src/util.mjs';
+import { sleep } from '../../../src/util.mjs';
 import {
   APPROVE, addManual, build, client, createProjectAndUpload, denyItem, findTesseract, freshData, launch, manifest, pending,
   pickReview, pronounce, reviewerInit, settings,
-} from './app.mjs';
+} from '../app.mjs';
 
 const PROJECT = 'Records request R-26-0152 (scanned statement)';
 const SOURCE_FILE = '014-witness-statement.pdf';
 const PDF_DPI = 200;
 
 export default {
+  platform: 'agenticfoia',
   name: 'agenticfoia-pdf-ocr',
-  script: 'scripts/pdf-ocr.md',
+  script: '../scripts/pdf-ocr.md',
   pronounce,
   async record(ctx) {
     const s = await settings(ctx);
@@ -26,7 +27,7 @@ export default {
     const dataRoot = freshData(ctx, s);
     // A synthetic scan of a corpus PDF (rendered, tilted, image only), so its ground truth is in manifest.json.
     const scanFile = path.join(ctx.outDir, SOURCE_FILE.replace('.pdf', '-scanned.pdf'));
-    await ctx.run('dotnet', ['run', path.join(ctx.targetDir, 'make-scan.cs'), '--', path.join(s.corpus, SOURCE_FILE), scanFile]);
+    await ctx.run('dotnet', ['run', path.join(ctx.platformDir, 'make-scan.cs'), '--', path.join(s.corpus, SOURCE_FILE), scanFile]);
     const scanName = path.basename(scanFile);
     const truth = manifest(s).files.find(f => f.file === SOURCE_FILE) ?? { redact: [], keep: [] };
     const c = client(s);

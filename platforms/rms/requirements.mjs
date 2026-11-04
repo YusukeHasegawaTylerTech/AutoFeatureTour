@@ -13,7 +13,7 @@ export default async function requirements({ add, which, run }) {
     'start Docker Desktop and the dev-docker containers');
   add('credentials AFT_RMS_USERNAME / AFT_RMS_PASSWORD', process.env.AFT_RMS_USERNAME && process.env.AFT_RMS_PASSWORD,
     process.env.AFT_RMS_USERNAME ? `user ${process.env.AFT_RMS_USERNAME}` : 'not set',
-    'set them in your environment or a .env file (local dev default: dev / 1), or run aft login targets/rms/rms.tour.json --manual', false);
+    'set them in your environment or a .env file (local dev default: dev / 1), or run aft login --platform rms --manual', false);
   add('RMS API (https://localhost:6600)', await probe('https://localhost:6600/', { any: true }), 'running?',
     'not required: the tour starts it (StartRmsApi.local.ps1, in its own window) if needed', false);
   add('RMS Web UI (http://localhost:4200)', await probe('http://localhost:4200/'), 'running?',

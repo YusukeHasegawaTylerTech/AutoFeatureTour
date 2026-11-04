@@ -1,6 +1,6 @@
-# Target: AgenticFOIA
+# Platform: AgenticFOIA
 
-Two code tours of [AgenticFOIA](../../../AgenticFOIA) (AI-assisted redaction for public-records requests):
+Platform: two code tours (`tours/`) of [AgenticFOIA](../../../AgenticFOIA) (AI-assisted redaction for public-records requests):
 
 | Tour | Script | Shows |
 |---|---|---|
@@ -8,9 +8,9 @@ Two code tours of [AgenticFOIA](../../../AgenticFOIA) (AI-assisted redaction for
 | `pdf-ocr.tour.mjs` | `scripts/pdf-ocr.md` | OCR of an image-only scan, review, the export pipeline, the re-OCR leak check |
 
 ```
-aft run targets/agenticfoia/main.tour.mjs
-aft run targets/agenticfoia/pdf-ocr.tour.mjs --engine Placeholder --skip-build
-aft doctor --target agenticfoia
+aft run platforms/agenticfoia/tours/main.tour.mjs
+aft run platforms/agenticfoia/tours/pdf-ocr.tour.mjs --engine Placeholder --skip-build
+aft doctor --platform agenticfoia
 ```
 
 ## Requirements

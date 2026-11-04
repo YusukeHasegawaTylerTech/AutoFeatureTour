@@ -104,7 +104,7 @@ if ($Link) {
   }
 }
 
-# --- Verify (engine + each target's targets/<app>/requirements.mjs, advisory) -------------
+# --- Verify (engine + each platform's platforms/<name>/requirements.mjs, advisory) -------
 # aft doctor covers voices, Chromium, ffmpeg and per-target extras; the tool itself knows nothing about any app.
 Step 'Checking with aft doctor'
 node (Join-Path $PSScriptRoot 'src\cli.mjs') doctor

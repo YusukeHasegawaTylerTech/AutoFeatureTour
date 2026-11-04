@@ -84,7 +84,7 @@ export async function launch(ctx, s, { apiExe, webDist, dataRoot, routes = [] })
     routes: [
       ...routes,
       { prefix: '/tour/pdfjs/', dir: path.join(ctx.toolRoot, 'node_modules', 'pdfjs-dist', 'build') },
-      { prefix: '/tour/', dir: path.join(ctx.targetDir, 'pages') },
+      { prefix: '/tour/', dir: path.join(ctx.platformDir, 'pages') },
     ],
   });
   const stop = () => { server.close(); apiProc.kill(); };

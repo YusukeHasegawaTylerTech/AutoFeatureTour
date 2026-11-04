@@ -1,0 +1,6 @@
+{
+  "comment": "TodoMVC (https://todomvc.com), the reference platform: no login, data in the browser's localStorage.",
+  "timeouts": { "action": 8000, "verify": 10000 },
+  "appErrors": { "network": "warn", "console": "warn", "pageErrors": "fail" },
+  "pronounce": { "TodoMVC": "todo M V C" }
+}

@@ -3,5 +3,6 @@ out/
 auth/
 .env
 .env.*
-targets/*/clips/
+platforms/*/clips/
+platforms/*/tours/clips/
 *.webm
