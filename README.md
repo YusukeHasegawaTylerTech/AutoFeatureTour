@@ -43,7 +43,7 @@ aft discover <url> [--max-pages 12] [--include <regex>] [--exclude <regex>]
 aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm claude]
 aft render   <tour> [--record]  narration over title cards or hand-made clips (no browser), or a recording
 aft login    --platform <name> [--target <env>] [--role <name>] [--manual]   (or aft login <tour.json>)
-aft platform list | init <name> | discover <name> | check <name> [--target <env>]
+aft platform list | init <name> [--base-url <url>] [--no-login] | discover <name> | check <name> [--target <env>]
 aft schema [tour|platform|environments|login|fragment|fixture]    print a definition file's JSON Schema
 aft session start|status|stop [--platform <name>]    a warm, signed-in browser for the three below
 aft snapshot [--url <path>]  ·  aft locate "<target>"  ·  aft try-step '<step json>'
@@ -116,7 +116,7 @@ and holds only what to show:
 Every definition file has a JSON Schema in [schemas/](schemas/) (the authority on the format; `aft schema <type>` prints
 one, and files carry `"$schema"` so editors validate them). Steps: `goto`, `click`, `dblclick`, `rightClick`, `hover`,
 `point`, `fill`, `type`, `clear`, `focus`, `press`, `check`, `uncheck`, `select`, `upload`, `drag`, `scroll`, `waitFor`,
-`verify` (visible, text, value, count, state, URL, title), `dialog`, `switchTo`, `download`, `waitForResponse`, `mock`
+`verify` (visible, text, value, count, state, URL, title), `capture` (a value for later steps, as `{vars.x}`), `dialog`, `switchTo`, `download`, `waitForResponse`, `mock`
 (opt-in), `wait`, `at` (a fraction of the narration), `use` (a fragment) and `code` (a code step); the table is in
 [AGENTS.md](AGENTS.md#steps). Any step can be
 `"optional": true` or have a `"timeout"`. Actions spread across the narration automatically unless a scene uses `at`.

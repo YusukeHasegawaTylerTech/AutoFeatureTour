@@ -215,6 +215,9 @@
           "$ref": "#/$defs/action_verify"
         },
         {
+          "$ref": "#/$defs/action_capture"
+        },
+        {
           "$ref": "#/$defs/action_wait"
         },
         {
@@ -1959,6 +1962,113 @@
       },
       "required": [
         "verify"
+      ],
+      "additionalProperties": false
+    },
+    "action_capture": {
+      "type": "object",
+      "description": "Remember a value from the page for later steps, as \"{vars.<as>}\" (an id, a generated code, a link): an element's attribute, else a field's value, else its text; or the page URL. A later step that uses a value never captured is a SCRIPT failure.",
+      "properties": {
+        "capture": {
+          "description": "The element to read, or { \"url\": true } for the page URL.",
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/locator"
+            },
+            {
+              "type": "object",
+              "description": "The page URL.",
+              "properties": {
+                "url": {
+                  "const": true
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "url"
+              ]
+            }
+          ]
+        },
+        "as": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "The name: later steps use \"{vars.<as>}\"."
+        },
+        "attribute": {
+          "type": "string",
+          "description": "Read this attribute (e.g. \"href\") instead of the text or value."
+        },
+        "pattern": {
+          "type": "string",
+          "description": "A regex (with or without /…/flags): keep its first group, or the whole match. No match is a SCRIPT failure."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "capture",
+        "as"
       ],
       "additionalProperties": false
     },

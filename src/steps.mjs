@@ -9,12 +9,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Failure } from './failures.mjs';
+import { substitute } from './platform.mjs';
 import { log, sleep } from './util.mjs';
 
 const ROLES = ['button', 'link', 'tab', 'menuitem', 'checkbox', 'radio', 'option', 'switch', 'combobox', 'textbox'];
 // Order matters only for waitForResponse, which is also an option on other steps: any other action key wins.
 const ACTIONS = ['goto', 'click', 'dblclick', 'rightClick', 'hover', 'point', 'fill', 'type', 'clear', 'focus', 'press', 'check', 'uncheck', 'select', 'upload',
-  'drag', 'scroll', 'waitFor', 'verify', 'wait', 'at', 'dialog', 'switchTo', 'download', 'mock', 'code', 'waitForResponse'];
+  'drag', 'scroll', 'waitFor', 'verify', 'capture', 'wait', 'at', 'dialog', 'switchTo', 'download', 'mock', 'code', 'waitForResponse'];
 
 export function actionOf(step) {
   const a = ACTIONS.find(k => k in step);
@@ -173,7 +174,7 @@ async function runCode(t, step, { baseUrl, timeouts, warnings }) {
   if (typeof fn !== 'function') throw new Error(`${path.basename(step.code)} has no default export function`);
   const page = t.page;
   const ctx = {
-    baseUrl, timeouts, log, warnings, tour: t, args: step.with ?? {},
+    baseUrl, timeouts, log, warnings, tour: t, args: step.with ?? {}, vars: (t.vars ??= {}),
     url: p => absolute(baseUrl, p),
     resolve: (target, o = {}) => resolve(page, target, { timeout: o.timeout ?? timeouts.action ?? 10000, warnings }),
     check: (ok, message = 'check failed') => { if (!ok) throw Object.assign(new Error(`Verification failed: ${message}`), { failure: 'criterion' }); },
@@ -215,6 +216,20 @@ async function visibleCount(page, target) {
   return 0;
 }
 
+/**
+ * A text condition on an element. It passes on the rendered text (innerText) or the source text (textContent): CSS
+ * text-transform changes the first but not the second, so "Paused" matches a label shown as "PAUSED". When it fails
+ * only on case, "seen" says so, so the fix (the page's case, or /…/i) is obvious.
+ */
+async function textCheck(el, test, want) {
+  const norm = v => String(v ?? '').replace(/\s+/g, ' ').trim();
+  const [shown, source] = (await el.evaluate(e => [e.innerText, e.textContent])).map(norm);
+  if (test(shown) || test(source)) return { ok: true };
+  const lower = want.toLowerCase();
+  const caseOnly = !/^\/.+\/[a-z]*$/.test(want) && [shown, source].some(s => s.toLowerCase().includes(lower));
+  return { ok: false, seen: `text "${shown.slice(0, 120)}"${caseOnly ? ' (it matches if case is ignored: use the case on the page, or /…/i)' : ''}` };
+}
+
 const failCheck = message => { throw Object.assign(new Error(`Verification failed: ${message}`), { failure: 'criterion' }); };
 
 /** verify: visible (default), or a condition on the element or the page. */
@@ -241,8 +256,8 @@ async function verify(t, step, { timeout, warnings }) {
   }
   const el = await resolve(page, v, { timeout, warnings }).catch(() => failCheck(`${show} is not on the page (${page.url()})`));
   const conditions = [
-    ['text', async () => { const s = (await el.innerText()).replace(/\s+/g, ' ').trim(); return { ok: matches(step.text, s), seen: `text "${s.slice(0, 120)}"` }; }, `text containing "${step.text}"`],
-    ['exactText', async () => { const s = (await el.innerText()).replace(/\s+/g, ' ').trim(); return { ok: s === String(step.exactText).replace(/\s+/g, ' ').trim(), seen: `text "${s.slice(0, 120)}"` }; }, `text "${step.exactText}"`],
+    ['text', async () => textCheck(el, s => matches(step.text, s), String(step.text)), `text containing "${step.text}"`],
+    ['exactText', async () => { const want = String(step.exactText).replace(/\s+/g, ' ').trim(); return textCheck(el, s => s === want, want); }, `text "${step.exactText}"`],
     ['value', async () => { const s = await el.inputValue(); return { ok: s === String(step.value), seen: `value "${s.slice(0, 120)}"` }; }, `value "${step.value}"`],
   ].filter(([k]) => k in step);
   const STATES = {
@@ -262,6 +277,43 @@ async function verify(t, step, { timeout, warnings }) {
   await t.moveTo(el, { steps: 30 });
 }
 
+/**
+ * capture: remembers a value from the page as {vars.<as>} for later steps (a record's id, a generated code, a link).
+ * From an element: its "attribute", else a field's value, else its text; or the page URL ({ "url": true }). An optional
+ * "pattern" (a regex, with or without /…/flags) keeps its first group, or the whole match without one.
+ */
+async function capture(t, step, { timeout, warnings }) {
+  const c = step.capture;
+  let raw;
+  if (c && typeof c === 'object' && 'url' in c && Object.keys(c).length === 1) raw = t.page.url();
+  else {
+    const el = await resolve(t.page, c, { timeout, warnings });
+    raw = step.attribute ? await el.getAttribute(step.attribute)
+      : await el.evaluate(e => ('value' in e && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.tagName) ? e.value : e.innerText));
+    if (raw === null) throw new Error(`${JSON.stringify(c)} has no attribute "${step.attribute}"`);
+    await t.moveTo(el, { steps: 20 });
+  }
+  let value = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (step.pattern !== undefined) {
+    const m0 = String(step.pattern).match(/^\/(.+)\/([dgimsuy]*)$/);
+    const m = value.match(m0 ? new RegExp(m0[1], m0[2].replace('g', '')) : new RegExp(step.pattern));
+    if (!m) throw new Error(`capture: "${value.slice(0, 120)}" doesn't match ${step.pattern}`);
+    value = m[1] ?? m[0];
+  }
+  if (!value) throw new Error(`capture: ${JSON.stringify(c)} is empty`);
+  (t.vars ??= {})[step.as] = value;
+  log(`captured ${step.as} = "${value.slice(0, 80)}"`);
+}
+
+/** {vars.x} in a step: the values captured so far. One that hasn't been captured is a SCRIPT failure. */
+function withVars(t, step) {
+  if (!JSON.stringify(step).includes('{vars.')) return step;
+  const out = substitute(step, { vars: t.vars ?? {} }, ['vars']);
+  const missing = JSON.stringify(out).match(/\{vars\.([A-Za-z0-9_.-]+)\}/);
+  if (missing) throw new Error(`no captured value "${missing[1]}": capture it first with { "capture": <target>, "as": "${missing[1]}" }`);
+  return out;
+}
+
 /** The page a popup / new tab opened by fn; t.page switches to it (the main page is kept as t.mainPage). */
 async function inPopup(t, fn, timeout) {
   const [popup] = await Promise.all([t.page.context().waitForEvent('page', { timeout }), fn()]);
@@ -272,7 +324,8 @@ async function inPopup(t, fn, timeout) {
 }
 
 /** Runs one step on the tour. Pacing ("at") is the caller's business unless the step is an explicit "at". */
-export async function runStep(t, step, { baseUrl, timeouts = {}, ready: readyCfg, errors, warnings = [], allowMocks = false, outDir }) {
+export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCfg, errors, warnings = [], allowMocks = false, outDir }) {
+  const step = withVars(t, step0);
   const page = t.page;
   const ready = readyCfg ? { ...readyCfg, warnings } : readyCfg;
   // Per-target defaults (tour.json "timeouts"), per-step override; slow screens such as reports need more.
@@ -383,6 +436,7 @@ export async function runStep(t, step, { baseUrl, timeouts = {}, ready: readyCfg
       break;
     }
     case 'verify': await verify(t, step, { timeout: step.timeout ?? timeouts.verify ?? 15000, warnings }); break;
+    case 'capture': await capture(t, step, { timeout, warnings }); break;
     case 'wait': await sleep(Number(step.wait) * 1000); break;
     case 'at': await t.at(Number(step.at)); break;
     case 'dialog': t.dialogPlan = { action: step.dialog, text: step.text, expect: step.expect }; break;

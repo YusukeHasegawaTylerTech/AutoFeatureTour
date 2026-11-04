@@ -25,12 +25,12 @@ function aft(args) {
 }
 
 /** Validates a stand-alone tour of /vocab; returns the per-step report. */
-async function vocab(steps, extra = {}) {
+async function vocab(steps, { url = '/vocab', ...extra } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aft-vocab-'));
   const file = path.join(dir, 'vocab.tour.json');
   fs.copyFileSync(path.join(root, 'test', 'fixture', 'attachment.txt'), path.join(dir, 'attachment.txt'));
   fs.writeFileSync(file, JSON.stringify({ name: 'vocab', baseUrl: app.url, timeouts: { action: 3000, verify: 2000, waitFor: 2000 }, retries: 0, ...extra,
-    scenes: [{ title: 'Vocabulary', narration: 'Every step.', url: '/vocab', steps }] }));
+    scenes: [{ title: 'Vocabulary', narration: 'Every step.', url, steps }] }));
   const r = await aft(['validate', file]);
   const vj = r.doc?.runDir && path.join(r.doc.runDir, 'validation.json');
   const report = vj && fs.existsSync(vj) ? JSON.parse(fs.readFileSync(vj, 'utf8')).report : [];
@@ -108,4 +108,44 @@ describe('step vocabulary', { concurrency: 3, timeout: 600000 }, () => {
     assert.match(err, /scenes\[0\]\.steps\[1\]: unknown key "txet"/);
     assert.match(err, /scenes\[0\]\.steps\[2\]\.state: expected one of/);
   });
+});
+
+// After the block above, not alongside it: more browsers at once would squeeze its tight waitFor timeouts.
+describe('captured values, pinned bars, text case', { concurrency: 2, timeout: 600000 }, () => {
+  test('capture and {vars.x}; clicks under a fixed footer; text checks against CSS capitals', async () => {
+    const r = await vocab([
+      { capture: '#code', as: 'code' },
+      { capture: { css: '#link' }, attribute: 'href', pattern: '/item/(\\d+)/', as: 'item' },
+      { fill: 'Code to enter', text: '{vars.code}' },
+      { verify: 'Code to enter', value: '{vars.code}' },
+      { verify: '#code', exactText: '{vars.code}' },
+      { goto: '/pinned?item={vars.item}' },
+      { capture: { url: true }, pattern: 'item=(\\d+)', as: 'again' },
+      { verify: { url: 'item={vars.again}' } },
+      { click: 'Low button' },                           // covered by the fixed toolbar until scrolled to the middle
+      { verify: '#clicked', text: 'low clicked' },
+      { verify: '#status', text: 'Paused' },              // shown as PAUSED
+      { verify: '#status', exactText: 'Paused' },
+    ], { url: '/pinned' });
+    assert.equal(r.code, 0, r.err);
+    assert.ok(r.report.every(s => s.ok), JSON.stringify(r.report.filter(s => !s.ok)));
+  });
+
+  test('capture failures and case-only text mismatches say what to fix', async () => {
+    const r = await vocab([
+      { fill: 'Code to enter', text: '{vars.never}' },                     // 1 not captured
+      { capture: '#code', pattern: '^X(\\d+)$', as: 'bad' },              // 2 no match
+      { verify: '#status', text: 'PAUSED d' },                            // 3 unrelated: no case hint
+      { verify: '#status', exactText: 'pAUSED' },                         // 4 case only
+    ], { url: '/pinned' });
+    const by = n => r.report.find(s => s.step === n);
+    assert.equal(by(1).failure, 'script');
+    assert.match(by(1).error, /no captured value "never"/);
+    assert.equal(by(2).failure, 'script');
+    assert.match(by(2).error, /doesn't match/);
+    assert.equal(by(3).failure, 'criterion');
+    assert.doesNotMatch(by(3).error, /case is ignored/);
+    assert.match(by(4).error, /matches if case is ignored/);
+  });
+
 });

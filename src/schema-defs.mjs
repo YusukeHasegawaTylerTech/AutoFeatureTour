@@ -134,6 +134,14 @@ export const ACTIONS = {
       count: num('Exactly this many visible elements match.', { minimum: 0 }),
       state: { enum: ['visible', 'hidden', 'enabled', 'disabled', 'checked', 'unchecked', 'editable', 'focused'], description: 'The element\'s state.' },
     }),
+  capture: action('capture', 'Remember a value from the page for later steps, as "{vars.<as>}" (an id, a generated code, a link): an element\'s attribute, else a field\'s value, else its text; or the page URL. A later step that uses a value never captured is a SCRIPT failure.',
+    { description: 'The element to read, or { "url": true } for the page URL.', anyOf: [ref('locator'),
+      obj('The page URL.', { url: { const: true } }, { required: ['url'] })] },
+    {
+      as: { type: 'string', pattern: '^[A-Za-z0-9_-]+$', description: 'The name: later steps use "{vars.<as>}".' },
+      attribute: str('Read this attribute (e.g. "href") instead of the text or value.'),
+      pattern: str('A regex (with or without /…/flags): keep its first group, or the whole match. No match is a SCRIPT failure.'),
+    }, ['as']),
   wait: action('wait', 'Pause for a number of seconds (prefer "at" or waitFor).', num('Seconds.', { minimum: 0 })),
   at: action('at', 'Wait until this fraction of the scene\'s narration has played (0–1); places the next actions in time.', num('Fraction of the narration, 0 to 1.', { minimum: 0, maximum: 1 })),
   dialog: action('dialog', 'How to answer the next alert/confirm/prompt (default: accept). Put it before the step that opens the dialog.', { enum: ['accept', 'dismiss'], description: 'accept or dismiss.' }, {

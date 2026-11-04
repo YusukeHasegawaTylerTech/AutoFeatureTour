@@ -193,18 +193,21 @@ export class Tour {
 
   async click(target, opts = {}) {
     const { button, clickCount, modifiers = [], ...move } = opts;
-    const { x, y } = await this.moveTo(target, move);
+    let { x, y } = await this.moveTo(target, move);
     await sleep(250);
     // The click goes to a screen position (so the cursor is filmed), so check first that the element would get it:
     // not disabled, and not covered by an overlay, a dialog or a spinner.
     if (!(await target.isEnabled().catch(() => true))) throw new Error('action blocked: the element is disabled');
-    const cover = await target.evaluate((el, [px, py]) => {
-      const hit = document.elementFromPoint(px, py);
-      if (!hit || el === hit || el.contains(hit) || hit.contains(el) || (el.getRootNode?.() !== document && el.getRootNode().host?.contains(hit))) return null;
-      const d = n => `<${n.tagName.toLowerCase()}${n.id ? `#${n.id}` : ''}${n.className && typeof n.className === 'string' ? `.${n.className.trim().split(/\s+/).slice(0, 2).join('.')}` : ''}>`;
-      return d(hit);
-    }, [x, y]).catch(e => (/detached|not attached/i.test(e.message) ? '(element detached from the page)' : null));
-    if (cover) throw new Error(`action blocked: ${cover.startsWith('(') ? cover : `the element is covered by ${cover}`}`);
+    let cover = await coveredBy(target, x, y);
+    // Scrolling "into view" stops at the viewport's edge, where a fixed or sticky header/footer can sit on top of
+    // the element. Then bring it to the middle of the screen and look again; a real overlay still blocks.
+    if (cover?.pinned) {
+      await target.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest' })).catch(() => {});
+      await sleep(300);
+      ({ x, y } = await this.moveTo(target, move));
+      cover = await coveredBy(target, x, y);
+    }
+    if (cover) throw new Error(`action blocked: ${cover.detached ? '(element detached from the page)' : `the element is covered by ${cover.by}`}`);
     for (const m of modifiers) await this.page.keyboard.down(m);
     await this.page.mouse.click(x, y, { button, clickCount });
     for (const m of [...modifiers].reverse()) await this.page.keyboard.up(m);
@@ -328,6 +331,31 @@ export function startProcess(exe, args = [], { env, cwd, logFile, shell = false 
   return proc;
 }
 
+/**
+ * What would get a click at (x, y) instead of the element: null if the element would, else { by, pinned } (pinned: the
+ * covering element or one of its ancestors is position fixed/sticky, i.e. a header, footer or toolbar that scrolling can
+ * move the element out from under), or { detached } if the element left the page.
+ */
+async function coveredBy(target, x, y) {
+  return target.evaluate((el, [px, py]) => {
+    const hit = document.elementFromPoint(px, py);
+    if (!hit || el === hit || el.contains(hit) || hit.contains(el) || (el.getRootNode?.() !== document && el.getRootNode().host?.contains(hit))) return null;
+    const d = n => `<${n.tagName.toLowerCase()}${n.id ? `#${n.id}` : ''}${n.className && typeof n.className === 'string' ? `.${n.className.trim().split(/\s+/).slice(0, 2).join('.')}` : ''}>`;
+    let pinned = false;
+    for (let n = hit; n && n !== document.body; n = n.parentElement) if (/fixed|sticky/.test(getComputedStyle(n).position)) { pinned = true; break; }
+    // A modal backdrop is fixed too, but covers the whole screen: scrolling can't help, so it isn't "pinned".
+    if (pinned) { const r = hit.getBoundingClientRect(); if (r.width * r.height > 0.6 * innerWidth * innerHeight) pinned = false; }
+    return { by: d(hit), pinned };
+  }, [x, y]).catch(e => (/detached|not attached/i.test(e.message) ? { detached: true } : null));
+}
+
+/** The last lines of a log, indented for an error message ('' if there's no log). */
+export function logTail(file, lines = 12) {
+  if (!file || !fs.existsSync(file)) return '';
+  const tail = fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(l => l.trim()).slice(-lines);
+  return tail.length ? `\n  last lines of the log:\n${tail.map(l => `    ${l.slice(0, 300)}`).join('\n')}` : '';
+}
+
 /** Stops a process and its children (a shell's dev server, say). */
 export function stopProcess(proc) {
   if (!proc || proc.exitCode !== null) return;
@@ -353,10 +381,19 @@ export function probe(url, { any = false, timeout = 3000 } = {}) {
   });
 }
 
-export async function waitForHttp(url, { ms = 60000, hint = '', any = false } = {}) {
+/**
+ * Waits until url answers. With proc (a launched process), stops waiting as soon as it exits
+ * with an error code, and quotes the last lines of its logFile, instead of waiting out the timeout for a server that already crashed.
+ */
+export async function waitForHttp(url, { ms = 60000, hint = '', any = false, proc, logFile, label = 'launch command' } = {}) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
     if (await probe(url, { any })) return;
+    // Exit code 0 can be a launcher that started the server in the background (docker compose up -d): keep waiting.
+    if (proc && proc.exitCode !== null && proc.exitCode !== 0) {
+      await sleep(300); // let the log stream flush
+      throw new Error(`${url} didn't come up: ${label} exited with code ${proc.exitCode} before it answered${logFile ? `; see ${logFile}` : ''}${logTail(logFile)}`);
+    }
     await sleep(1000);
   }
   throw new Error(`${url} didn't come up${hint ? `; ${hint}` : ''}`);

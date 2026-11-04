@@ -2,6 +2,7 @@
 //   /ok         heading, a "Name" field, a Save button that shows "Saved"
 //   /dup        two Save buttons (ambiguous target)
 //   /overlay    a Save button under a full-page overlay (blocked action)
+//   /pinned     a long page with a fixed footer over its last button, a CSS-uppercased "Paused", a random #code
 //   /disabled   a disabled Save button
 //   /xhr500     Save calls /api/fail (HTTP 500) and shows an error toast
 //   /pageerror  Save throws an uncaught exception
@@ -26,6 +27,12 @@ const PAGES = {
     `save.onclick = () => { out.textContent = 'Saved ' + document.getElementById('name').value; };`),
   '/dup': page('Dup', `<h1>Two buttons</h1><button>Save</button> <button>Save</button>`),
   '/overlay': page('Overlay', `<h1>Covered</h1><button>Save</button><div class="overlay"></div>`),
+  // A fixed footer over the bottom of a long page, a label shown in capitals by CSS, and a code made up per load.
+  '/pinned': page('Pinned', `<h1>Pinned footer</h1><p id="status" style="text-transform:uppercase">Paused</p>
+<p>Code <strong id="code"></strong></p><a id="link" href="/item/42">Item</a> <label>Code to enter <input id="entry"></label><p id="clicked"></p>
+<div style="height:calc(100vh - 330px)"></div><button id="low">Low button</button><div style="height:1200px"></div>
+<div class="bar" style="position:fixed;left:0;right:0;bottom:0;height:140px;background:#ddd">Toolbar</div>`,
+    `code.textContent = 'C' + Math.random().toString(36).slice(2, 8).toUpperCase(); low.onclick = () => { clicked.textContent = 'low clicked'; };`),
   '/disabled': page('Disabled', `<h1>Disabled</h1><button disabled>Save</button>`),
   '/xhr500': page('XHR', `<h1>Server error</h1><button id="save">Save</button><div id="toast"></div>`,
     `save.onclick = async () => { const r = await fetch('/api/fail?access_token=abc123secret'); if (!r.ok) { toast.className = 'toast'; toast.textContent = 'Error: something went wrong'; console.error('save failed with ' + r.status); } };`),

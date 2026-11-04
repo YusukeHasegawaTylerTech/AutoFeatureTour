@@ -197,8 +197,30 @@ export function loadFixtures(p, names = []) {
 
 // ---- aft platform init -------------------------------------------------------------------------------------------
 
-/** Scaffolds platforms/<name>/ with every file, mostly empty, and a smoke tour. Never overwrites. */
-export function initPlatform(root, name, { baseUrl = 'http://localhost:3000/' } = {}) {
+/** The smoke tour's checks: the start page's heading and title when known, else any visible heading. */
+function smokeSteps(home) {
+  const steps = [];
+  if (home?.heading) steps.push({ verify: { role: 'heading', name: home.heading } });
+  if (home?.title) steps.push({ verify: { title: home.title } });
+  return steps.length ? steps : [{ verify: { role: 'heading', nth: 0 }, comment: 'any heading: name the one the start page shows, e.g. { "role": "heading", "name": "Welcome" }' }];
+}
+
+/** What a start page's HTML shows: its <title> and first <h1> (text only), or null if nothing answers. */
+export async function homeOf(url, { timeout = 5000 } = {}) {
+  const html = await fetch(url, { signal: AbortSignal.timeout(timeout), redirect: 'follow' }).then(r => (r.ok ? r.text() : null), () => null);
+  if (!html) return null;
+  const clean = s => s?.replace(/<[^>]*>/g, ' ').replace(/&amp;/g, '&').replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&[a-z]+;|&#\d+;/g, ' ').replace(/\s+/g, ' ').trim() || null;
+  const title = clean(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]);
+  const heading = clean(html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]);
+  return title || heading ? { title, heading } : null;
+}
+
+/**
+ * Scaffolds platforms/<name>/ with every file, mostly empty, and a smoke tour. Never overwrites. login: false leaves out
+ * login.json (an app without sign-in). home: what the app's start page showed ({ title, heading }, see homeOf), so the
+ * smoke tour checks something real; without it, the smoke tour checks that some heading is visible.
+ */
+export function initPlatform(root, name, { baseUrl = 'http://localhost:3000/', login = true, home = null } = {}) {
   if (!SAFE.test(name)) throw new PlatformError(`Platform names must match ${SAFE} (got "${name}")`);
   const dir = path.join(root, name);
   if (fs.existsSync(dir)) throw new PlatformError(`${dir} already exists; edit it instead`);
@@ -211,8 +233,9 @@ export function initPlatform(root, name, { baseUrl = 'http://localhost:3000/' } 
       default: 'user', checkPath: '/', roles: { user: { steps: [
       { goto: '/login' }, { fill: 'Username', text: `{env:AFT_${name.toUpperCase().replace(/-/g, '_')}_USERNAME}` },
       { fill: 'Password', text: `{env:AFT_${name.toUpperCase().replace(/-/g, '_')}_PASSWORD}`, secret: true }, { click: { role: 'button', name: 'Sign in' } }] } } },
-    'tours/smoke.tour.json': { name: `${name}-smoke`, platform: name, scenes: [{ title: 'Home', url: '/', narration: `The ${name} home page.`, steps: [] }] },
+    'tours/smoke.tour.json': { name: `${name}-smoke`, platform: name, scenes: [{ title: 'Home', url: '/', narration: `The ${name} home page.`, steps: smokeSteps(home) }] },
   };
+  if (!login) delete files['login.json'];
   const TYPE = { 'platform.json': 'platform', 'environments.json': 'environments', 'login.json': 'login', 'tours/smoke.tour.json': 'tour' };
   for (const [f, v] of Object.entries(files)) {
     const file = path.join(dir, f);

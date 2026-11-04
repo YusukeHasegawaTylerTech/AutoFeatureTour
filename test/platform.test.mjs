@@ -8,7 +8,7 @@ import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { composeTour, ConfigError } from '../src/declarative.mjs';
-import { expandSteps, initPlatform, loadPlatform } from '../src/platform.mjs';
+import { expandSteps, homeOf, initPlatform, loadPlatform } from '../src/platform.mjs';
 import { startFixture } from './fixture/server.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -180,6 +180,34 @@ describe('code steps and fragments in a run', { concurrency: 3, timeout: 600000 
     assert.equal(r.code, 2, r.log);
     assert.equal(r.report.failing.from, 'save-name');
     assert.match(r.log, /fragment save-name/);
+  });
+
+  test('a launched app that exits with an error: UNREACHABLE at once, with the end of its log', async () => {
+    const { dir } = makePlatform('http://127.0.0.1:9/');
+    fs.rmSync(path.join(dir, 'app', 'login.json'));
+    write(path.join(dir, 'app', 'environments.json'), { default: 'local', local: { baseUrl: 'http://127.0.0.1:9/',
+      launch: [{ name: 'crashy', command: 'node -e "console.error(\'There is already an object named Lines\'); process.exit(3)"', timeoutSeconds: 120 }] } });
+    const file = tourFile(dir, { scenes: scene([]) });
+    const started = Date.now();
+    const r = await runCli(['run', file, '--speech', 'silent', '--out', path.join(tmp(), 'run')]);
+    assert.equal(r.code, 3, r.out);
+    assert.ok(Date.now() - started < 60000, 'did not wait out the 120 s timeout');
+    assert.match(r.out, /crashy exited with code 3/);
+    assert.match(r.out, /already an object named Lines/);
+  });
+
+  test('platform init --no-login and a smoke tour from the start page', async () => {
+    const home = await homeOf(`${app.url}/ok`);
+    assert.deepEqual(home, { title: 'OK', heading: 'Fixture' });
+    assert.equal(await homeOf('http://127.0.0.1:9/'), null);
+    const dir = tmp();
+    const p = initPlatform(dir, 'nologin', { baseUrl: `${app.url}/ok`, login: false, home });
+    assert.ok(!fs.existsSync(path.join(p, 'login.json')));
+    const smoke = JSON.parse(fs.readFileSync(path.join(p, 'tours', 'smoke.tour.json'), 'utf8'));
+    assert.deepEqual(smoke.scenes[0].steps, [{ verify: { role: 'heading', name: 'Fixture' } }, { verify: { title: 'OK' } }]);
+    const q = initPlatform(dir, 'unknown', {});
+    assert.ok(fs.existsSync(path.join(q, 'login.json')));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(q, 'tours', 'smoke.tour.json'), 'utf8')).scenes[0].steps[0].verify, { role: 'heading', nth: 0 });
   });
 
   test('attach-only environment that is down: UNREACHABLE, exit 3', async () => {

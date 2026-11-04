@@ -1,7 +1,7 @@
 // `aft platform <list|init|discover|check> [name]`: onboarding a platform (see AGENTS.md, "Platforms").
 //
 //   aft platform list                              the platforms and their environments
-//   aft platform init <name> [--base-url <url>]    scaffold platforms/<name>/ (never overwrites)
+//   aft platform init <name> [--base-url <url>] [--no-login]   scaffold platforms/<name>/ (never overwrites; --no-login: no sign-in)
 //   aft platform discover <name> [--target <env>]  crawl the app as the platform's role sees it → discovery.json
 //   aft platform check <name> [--target <env>]     doctor + settings + reachability + login + smoke tour, in that
 //                                                  order; passing in an environment means the platform is ready there
@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { doctor } from './doctor.mjs';
-import { envNames, initPlatform, listPlatforms, loadPlatform, platformsDir } from './platform.mjs';
+import { envNames, homeOf, initPlatform, listPlatforms, loadPlatform, platformsDir } from './platform.mjs';
 import { probe } from './recorder.mjs';
 import { log } from './util.mjs';
 
@@ -39,9 +39,12 @@ export async function platformCommand(args, { toolRoot, commands, appSettings, U
     }
     case 'init': {
       need();
-      const dir = initPlatform(root, name, { baseUrl: args.baseUrl });
-      log(`created ${dir}`);
-      log(`next: edit environments.json (baseUrl) and login.json, then  aft platform check ${name}`);
+      // If the app already answers, the smoke tour checks what its start page really shows.
+      const home = args.baseUrl ? await homeOf(args.baseUrl) : null;
+      const login = !args.noLogin;
+      const dir = initPlatform(root, name, { baseUrl: args.baseUrl, login, home });
+      log(`created ${dir}${home ? ` (smoke tour checks the start page: ${[home.heading && `heading "${home.heading}"`, home.title && `title "${home.title}"`].filter(Boolean).join(', ')})` : ''}`);
+      log(`next: edit environments.json (baseUrl, launch)${login ? ' and login.json (or re-run with --no-login for an app without sign-in)' : ''}, then  aft platform check ${name}`);
       return { dir };
     }
     case 'discover': {

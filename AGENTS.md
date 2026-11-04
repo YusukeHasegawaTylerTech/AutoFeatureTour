@@ -164,8 +164,9 @@ One action key per step (the schema's `$defs/action_<name>` has every option, wi
 | `{ "drag": L, "to": L }` | drag and drop with a visible cursor path | |
 | `{ "scroll": 400 }` / `{ "scroll": L }` | wheel by pixels / bring an element into view | |
 | `{ "waitFor": L }` | wait off pace | `state`: visible, hidden, attached, detached |
-| `{ "verify": L }` | a check (CRITERION on failure); without a condition: visible. `text` / `exactText` compare the element's rendered text (innerText, whitespace collapsed, child elements included: `<strong>2</strong> items left` is "2 items left") | `text` (contains or /regex/), `exactText`, `value`, `count` (visible matches), `state` (visible, hidden, enabled, disabled, checked, unchecked, editable, focused) |
+| `{ "verify": L }` | a check (CRITERION on failure); without a condition: visible. `text` / `exactText` compare the element's rendered text (innerText, whitespace collapsed, child elements included: `<strong>2</strong> items left` is "2 items left") or its source text, so a label CSS shows in capitals still matches as written ("Paused" for "PAUSED"); a check that fails only on case says so | `text` (contains or /regex/), `exactText`, `value`, `count` (visible matches), `state` (visible, hidden, enabled, disabled, checked, unchecked, editable, focused) |
 | `{ "verify": { "url": "…" } }` / `{ "verify": { "title": "…" } }` | the page's URL / title contains (or /regex/) | |
+| `{ "capture": L, "as": "code" }` / `{ "capture": { "url": true }, "as": "u" }` | remember a value from the page (a generated id or code, a link) for later steps as `"{vars.code}"`: an element's attribute, else a field's value, else its text; or the page URL. Using a value that was never captured is a SCRIPT failure | `attribute` (e.g. `href`), `pattern` (regex: keeps its first group, or the whole match) |
 | `{ "dialog": "accept" \| "dismiss" }` | how to answer the next alert/confirm/prompt (default accept) | `text` (prompt answer), `expect` (message; CRITERION if different) |
 | `{ "switchTo": "main" \| "popup" \| "last" }` | continue on another tab (see `opensPopup`); only the main tab is filmed | |
 | `{ "download": L }` | click and save the download to `<run>/downloads/` | `saveAs`, `expect` (file name; CRITERION if different) |
@@ -177,7 +178,17 @@ One action key per step (the schema's `$defs/action_<name>` has every option, wi
 On any step: `optional`, `timeout`, `retries`, `criterion`, `comment`, and `waitForResponse` + `status` + `method`
 (listen before acting, so the response can't be missed). Steps that may already have had their effect (code, mock,
 download, dialog, a waited-for response, a popup) are never retried. URL and text patterns are substrings, or
-`/regex/flags`.
+`/regex/flags`. A click whose target sits under a fixed or sticky header, footer or toolbar is scrolled to the middle
+of the screen and tried again before it counts as blocked; a modal or full-page overlay still blocks it.
+
+Values that change every run (a new record's id, a share code) go through `capture`; `{vars.<name>}` works in any
+string of a later step, across scenes, and in code steps as `ctx.vars`:
+
+```json
+{ "capture": { "role": "strong", "within": { "label": "Line panel" } }, "as": "code" }
+{ "fill": "Line code", "text": "{vars.code}" }
+{ "capture": { "url": true }, "pattern": "/orders/(\\d+)", "as": "order" }
+```
 
 **Locators** (`L`): a string (tried as button/link/tab/… by exact name, label, placeholder, the same roles by partial
 name, text, a `name=` attribute, a custom-element tag; `#`, `.`, `[` or `css=` mean CSS), or an object with exactly
@@ -208,7 +219,8 @@ platforms/<name>/
                       appErrors, ignore (noisy requests/messages, regex), mask, pronounce, viewport, voice,
                       ignoreHTTPSErrors, startPath, discover.paths, timeouts, retries, trace
   environments.json   where it runs: { "default": "local", "local": { "baseUrl", "launch" | "attach", "timeouts" }, "qa": {...} }
-                      launch: start it if nothing answers (attaches if it's already up; "stop": false leaves it running)
+                      launch: start it if nothing answers (attaches if it's already up; "stop": false leaves it running);
+                      if the command exits with an error before it answers, the run stops then (UNREACHABLE) and quotes its log
                       attach: [{ "name", "healthUrl" }]: never start anything; down = UNREACHABLE (exit 3)
   login.json          { "default": "<role>", "signedIn": "<css>", "checkPath", "maxAgeMinutes", "roles": { "<role>": { "steps": [...] } } }
                       credentials only as "{env:NAME}"; saved state: auth/<platform>/<env>/<role>.json (git-ignored)
@@ -278,7 +290,8 @@ What happens when, and whether it can be skipped:
 ### Onboarding a platform
 
 ```
-aft platform init myapp --base-url http://localhost:3000/   # scaffold platforms/myapp/ (never overwrites)
+aft platform init myapp --base-url http://localhost:3000/   # scaffold platforms/myapp/ (never overwrites); --no-login: no login.json
+#  if the app answers at --base-url, the smoke tour checks its start page's heading and title; else any heading
 aft doctor --platform myapp                                 # machine + requirements.mjs
 #  edit environments.json (baseUrl, launch or attach) and login.json (roles, {env:…} credentials in .env)
 aft login --platform myapp [--target local] [--role user]   # or --manual for SSO/MFA
@@ -386,6 +399,8 @@ aft session stop
 | `saved login expired; signed in again` | normal: an expired session is renewed automatically, off camera, when the tour has login steps and its credentials are set. `--fresh-login` forces it; `login.maxAgeMinutes` renews old sessions early |
 | `LOGIN: … can't sign in by itself` (exit 6) | set the credentials it names, or (SSO/MFA, no login steps) run `aft login --platform <name> --manual` |
 | exit 3, `didn't come up` / `attach-only` | app not running at the environment's `baseUrl`, or `launch.healthUrl` wrong; see `<service>.log` |
+| exit 3, `<service> exited with code N before it answered` | the launch command crashed (the error quotes the end of its log): fix the app's startup (config, database), or the command |
+| `action blocked: the element is covered by <…>` | a dialog, overlay or spinner is over it: close or wait for it first (a fixed header/footer is handled by itself) |
 | `"baseUrl" belongs in the platform` | move it (and login, launch, ready, errors…) to `platforms/<name>/`; the tour keeps `platform`, `env`, `role`, `fixtures`, scenes |
 | `Fragment "x" needs "with"` / `no parameter` | match the fragment's `params` |
 | scene overruns its narration | a step waited for its timeout; mark it `"optional": true` (3 s limit) or fix the target |

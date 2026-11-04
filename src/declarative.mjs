@@ -272,7 +272,7 @@ export async function startServices(cfg, vars, { outDir, log, dir }) {
     log(`${label}: starting (${l.command}); log: ${logFile}`);
     const proc = startProcess(l.command, [], { shell: true, cwd: path.resolve(dir, l.cwd ?? '.'), env: l.env, logFile });
     if (l.stop !== false) procs.push(proc);
-    await waitForHttp(health, { ms: (l.timeoutSeconds ?? 120) * 1000, any: l.anyStatus, hint: `see ${logFile}` });
+    await waitForHttp(health, { ms: (l.timeoutSeconds ?? 120) * 1000, any: l.anyStatus, hint: `see ${logFile}`, proc, logFile, label });
     log(`${label}: up at ${health}${l.stop === false ? ' (left running afterwards)' : ''}`);
     services.push({ name: label, health, started: true, pid: proc.pid, stops: l.stop !== false, log: logFile });
   }

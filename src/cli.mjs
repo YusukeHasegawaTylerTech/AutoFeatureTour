@@ -11,7 +11,7 @@
 //   aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm claude]
 //   aft auto     <url> [--prompt ...]                 discover → plan → run, no story needed
 //   aft login    --platform <name> | <tour.json> [--target <env>] [--role <name>] [--manual]   save auth/<platform>/<env>/<role>.json
-//   aft platform list | init <name> [--base-url <url>] | discover <name> | check <name>   onboard an app (AGENTS.md, Platforms)
+//   aft platform list | init <name> [--base-url <url>] [--no-login] | discover <name> | check <name>   onboard an app (AGENTS.md, Platforms)
 //   aft schema   [tour|platform|environments|login|fragment|fixture]   print a definition file's JSON Schema (no type: the list)
 //   aft validate <platform.json|environments.json|login.json|fragment|fixture|tour> --schema-only   check a file against its schema
 //   aft doctor   [--platform <name>]                  check this machine (+ platforms' requirements.mjs); exit 1 if missing
