@@ -71,7 +71,7 @@ function fill(value, vars) {
 
 export function validate(cfg, file) {
   const problems = [];
-  if (!cfg.baseUrl) problems.push('baseUrl is required (or pass --base-url / set BASE_URL / choose an --env)');
+  if (!cfg.baseUrl) problems.push('no target: add "baseUrl" or "environments" to the tour, or pass --base-url <url> / set BASE_URL / --target <environment>');
   if (!Array.isArray(cfg.scenes) || !cfg.scenes.length) problems.push('scenes must be a non-empty array');
   (cfg.scenes ?? []).forEach((s, i) => {
     if (!s.title) problems.push(`scenes[${i}].title is required`);

@@ -16,7 +16,7 @@
 //
 // Target selection: --target <environment in tour.json> (alias --env), --base-url <url> or BASE_URL. Other flags:
 // --out <folder>, --name <run name>, --headed, --speech sapi|silent, --voice, --rate, --tail, --no-captions,
-// --on-error fail|skip. Credentials: env vars or a .env file (never committed).
+// --on-error fail|skip, --allow-draft (record a script that still has unresolved/empty scenes). Credentials: env vars or a .env file (never committed).
 //
 // Every command writes into its own run folder, out/<name>/<YYYYMMDD-HHMMSS>-<id>/ (story id in the name when there
 // is one), never reused; out/<name>/latest.json and runs.jsonl are pointers only.
@@ -42,7 +42,7 @@ import { log, newRunDir, num, parseArgs, run } from './util.mjs';
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 class UsageError extends Error {}
@@ -107,7 +107,7 @@ async function loadTour(file, args) {
   return { def, dir: path.dirname(abs) };
 }
 
-const runName = (def, args) => args.name ?? (def.story?.id ? `${def.story.id}-${def.name}` : def.name);
+const runName = (def, args) => args.name ?? (def.story?.id && !def.name.startsWith(def.story.id) ? `${def.story.id}-${def.name}` : def.name);
 
 function scenesOf(def, tourDir) {
   return def.scenes
@@ -131,30 +131,49 @@ async function recordWith(def, tourDir, outDir, scenes, args, { dryRun = false }
   } catch (e) {
     if (tour.page && !tour.page.isClosed()) await tour.screenshot('failure');
     await tour.saveTrace('trace-failed.zip');
-    if (/didn't come up|net::ERR_(CONNECTION|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE|TIMED_OUT)/.test(e.message)) throw new UnreachableError(e.message);
+    const net = e.message.match(/net::(ERR_[A-Z_]+) at (\S+)/);
+    if (net && /CONNECTION|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE|TIMED_OUT|UNSAFE_PORT/.test(net[1]))
+      throw new UnreachableError(`Can't reach ${net[2]} (${net[1]}). Is the app running there? Set the target with --base-url, BASE_URL or --target <environment>.`);
+    if (/didn't come up/.test(e.message)) throw new UnreachableError(e.message.split('\n')[0]);
     throw e;
   } finally {
     await tour.close();
     // A failed run leaves Playwright's partial video under a random name; give it a predictable one.
-    for (const f of fs.readdirSync(outDir).filter(f => /^page@.*\.webm$/.test(f)))
-      fs.renameSync(path.join(outDir, f), path.join(outDir, 'recording-failed.webm'));
+    for (const f of fs.readdirSync(outDir).filter(f => /^page@.*\.webm$/.test(f))) {
+      try { fs.renameSync(path.join(outDir, f), path.join(outDir, 'recording-failed.webm')); } catch { /* still being written; keep its name */ }
+    }
   }
   return ctx.report;
 }
 
 // ---- Validate (dry run) ------------------------------------------------------------------------------------------
 
+/** Problems visible in the script itself, reported as blocking validation items. */
+function scriptIssues(raw) {
+  const out = [];
+  raw.scenes.forEach((s, i) => {
+    const scene = `scene-${String(i + 1).padStart(2, '0')}`;
+    for (const u of s.unresolved ?? []) out.push({ scene, step: '-', action: 'script', ok: false, error: `unresolved: ${u}` });
+    if (s.todo) out.push({ scene, step: '-', action: 'script', ok: false, error: `to do: ${s.todo}` });
+    if (!s.steps?.length && s.criteria?.length) out.push({ scene, step: '-', action: 'script', ok: false, error: `no steps, but it should demonstrate criteria ${s.criteria.join(', ')}` });
+  });
+  return out;
+}
+
 async function validate(def, tourDir, outDir, args) {
   if (def.scenes && !def.record) throw new UsageError('Nothing to validate');
   if (!def.raw) log('note: a .tour.mjs is code; validate runs it without recording but only reports errors it throws');
   const scenes = scenesOf(def, tourDir);
-  const report = await recordWith(def, tourDir, outDir, scenes, args, { dryRun: true });
+  // Script problems first: they need no app (scenes with nothing to do, steps the generator couldn't ground).
+  const issues = def.raw ? scriptIssues(def.raw) : [];
+  for (const i of issues) log(`script: ${i.scene}: ${i.error}`);
+  const report = [...issues, ...(await recordWith(def, tourDir, outDir, scenes, args, { dryRun: true }))];
   const failed = report.filter(r => !r.ok);
   const blocking = failed.filter(r => !r.optional);
   const lines = [`# Validation: ${def.name}`, '', `${report.length} steps checked: ${report.length - failed.length} resolved, ${failed.length} failed` +
     ` (${blocking.length} blocking, ${failed.length - blocking.length} optional).`, '', '| | scene | step | action | target | result |', '|---|---|---|---|---|---|'];
   for (const r of report) {
-    const target = JSON.stringify(r.spec[r.action]).slice(0, 60);
+    const target = r.spec ? JSON.stringify(r.spec[r.action]).slice(0, 60) : '';
     const result = r.ok ? 'ok' : `${r.error}${r.suggestions?.length ? `. Closest: ${r.suggestions.map(s => `"${s}"`).join(', ')}` : ''}`;
     lines.push(`| ${r.ok ? '✔' : r.optional ? '⚠' : '✘'} | ${r.scene} | ${r.step} | ${r.action} | \`${target.replace(/\|/g, '\\|')}\` | ${result.replace(/\|/g, '\\|')} |`);
   }
@@ -184,6 +203,9 @@ async function render(def, tourDir, outDir, args) {
 
   const clipsDir = path.resolve(args.clips ?? (args.record ? path.join(outDir, 'clips') : path.join(tourDir, 'clips', def.name)));
   if (args.record) {
+    const issues = def.raw && !args.allowDraft ? scriptIssues(def.raw) : [];
+    if (issues.length)
+      throw new StepError(`the script isn't ready to record (${issues.length} issue(s)):\n  ${issues.map(i => `${i.scene}: ${i.error}`).join('\n  ')}\nFix tour.json (aft validate shows them too), or pass --allow-draft to record anyway.`);
     await recordWith(def, tourDir, outDir, scenes, args);
     const timings = JSON.parse(fs.readFileSync(path.join(outDir, 'timings.json'), 'utf8')).scenes;
     await cutClips(path.join(outDir, 'recording.webm'), timings, clipsDir);
@@ -229,6 +251,7 @@ async function generateInto(out, args, { url, story, name }) {
     fs.writeFileSync(tourFile, JSON.stringify(tour, null, 2));
   }
   log(`script: ${tour.scenes.length} scenes → ${tourFile} (narration for review: ${path.join(out, 'script.md')})`);
+  if (tour.draft) log(`draft — before it can be recorded it needs:\n  - ${tour.needs?.join('\n  - ') ?? 'steps'}`);
   return { tour, tourFile, discovery };
 }
 
@@ -273,12 +296,12 @@ const commands = {
   async all(args) {
     const story = readStory(args.story);
     const url = args.baseUrl ?? process.env.BASE_URL;
-    if (!url) throw new UsageError('Usage: aft all --story <file|text> --base-url <url> [--llm claude]');
+    if (!url) throw new UsageError('aft all needs the app: --base-url <url> (or BASE_URL). Example: aft all --story story.md --base-url https://qa.example.com/ --llm claude [--tour app.tour.json for login/hooks]');
     const name = args.name ?? storyName(story, url);
     let blocking = 0;
     await withRun(name, args, 'all', async out => {
       const { tour, tourFile } = await generateInto(out, args, { url, story, name });
-      if (tour.draft) { log('the script is a draft (scenes without steps): edit tour.json, then aft validate / aft run it'); return { tour: tourFile, draft: true }; }
+      if (tour.draft) throw new StepError(`the generated script is a draft and wasn't recorded: edit ${tourFile}, then aft validate / aft run it`);
       const def = loadTourJson(tourFile, { env: envOf(args), baseUrl: args.baseUrl });
       const v = await validate(def, out, out, args);
       blocking = v.blocking;
@@ -319,7 +342,7 @@ const commands = {
     const name = args.name ?? storyName(story, url);
     await withRun(name, args, 'auto', async out => {
       const { tour, tourFile } = await generateInto(out, args, { url, story, name });
-      if (tour.draft) { log('the script is a draft: edit tour.json, then render it'); return { tour: tourFile, draft: true }; }
+      if (tour.draft) throw new StepError(`the generated script is a draft and wasn't recorded: edit ${tourFile}, then aft validate / aft run it`);
       const def = loadTourJson(tourFile, { env: envOf(args), baseUrl: args.baseUrl });
       return { tour: tourFile, ...(await render(def, out, out, { ...args, record: !args.noRecord })) };
     });

@@ -91,7 +91,7 @@ function heuristicPlan(discovery, { name, prompt, maxScenes = 6 }) {
 function storyDraft(story, discovery, { name }) {
   const criteria = story.acceptanceCriteria.length ? story.acceptanceCriteria : ['Show the feature working'];
   return {
-    name, story: { id: story.id, title: story.title }, baseUrl: discovery?.origin ?? 'http://localhost', onError: 'fail',
+    name, story: { id: story.id, title: story.title }, ...(discovery ? { baseUrl: discovery.origin } : {}), onError: 'fail',
     generatedBy: 'heuristic-story-draft', draft: true,
     scenes: [
       { title: story.title, narration: `This video walks through ${story.id ? `${story.id}: ` : ''}${story.title}. It shows each acceptance criterion in the running application.`, url: '/', steps: [] },
@@ -219,7 +219,7 @@ async function claudePlan(discovery, { name, prompt, story, style, outDir, model
   return {
     name,
     ...(out.story || story ? { story: { ...(story ? { id: story.id, title: story.title } : {}), ...(out.story ?? {}) } } : {}),
-    baseUrl: discovery?.origin ?? 'http://localhost',
+    ...(discovery ? { baseUrl: discovery.origin } : {}),
     onError: 'skip',
     generatedBy: 'claude',
     scenes: out.scenes.map(s => ({
@@ -241,6 +241,14 @@ export async function plan({ discovery, outDir, name, prompt, story, style, llm,
   else tour = heuristicPlan(discovery, { name, prompt, maxScenes });
   if (style) tour.style = style; // a hint for generation only; the engine runs whatever the script says
   if (baseUrl) tour.baseUrl = baseUrl;
+  // A script with scenes that can't run yet is a draft: generate says so, and all/auto stop before recording.
+  const empty = tour.scenes.filter(sc => sc.criteria?.length && !sc.steps?.length).length;
+  const unresolved = tour.scenes.flatMap(sc => sc.unresolved ?? []).length;
+  if (empty || unresolved || !tour.baseUrl) Object.assign(tour, { draft: true, needs: [
+    ...(tour.baseUrl ? [] : ['a target: --base-url <url> so the app can be discovered (or environments in a --tour file)']),
+    ...(empty ? [`steps for ${empty} scene(s) that should demonstrate acceptance criteria`] : []),
+    ...(unresolved ? [`${unresolved} unresolved item(s), listed in script.md`] : []),
+  ] });
   // Point back at the run that produced it (discovery screenshots live there).
   tour.plannedAt = new Date().toISOString();
   fs.writeFileSync(path.join(outDir, 'tour.json'), JSON.stringify(tour, null, 2));
