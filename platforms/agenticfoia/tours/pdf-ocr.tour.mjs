@@ -7,7 +7,7 @@
 
 import { sleep } from '../../../src/util.mjs';
 import {
-  APPROVE, SCAN_NAME, addManual, build, findTesseract, freshData, isText, launch, loadScanTruth, makeScan, pending,
+  APPROVE, DENY, SCAN_NAME, addManual, build, findTesseract, freshData, isText, launch, loadScanTruth, makeScan, pending,
   placeRecords, pronounce, requireDetection, reviewClient, reviewerInit, sceneStartReview, seedRequests, settings,
 } from '../app.mjs';
 
@@ -104,7 +104,7 @@ export default {
           await t.at(0.68);
           await t.click(page.locator(`#item-${deny.id}`));
           await t.typeInto(page.locator(`#item-${deny.id} .item-actions input`), 'Officer name, public record');
-          await t.click(page.locator(`#item-${deny.id} forge-button`, { hasText: 'Deny' }));
+          await t.click(page.locator(`#item-${deny.id} forge-button`, { hasText: DENY }));
         }
         if (manual) { await t.at(0.8); await addManual(t, manual); }
       });

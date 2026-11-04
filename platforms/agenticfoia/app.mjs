@@ -285,6 +285,8 @@ export function client(s, reviewer = REVIEWER) {
 
 /** The item's own "✔ Approve" button, not the "approve all" hint that can appear beside it. */
 export const APPROVE = /^\W*Approve\s*$/;
+/** The item's own "✖ Deny" button, not the "deny all" link beside it. */
+export const DENY = /^\W*Deny\s*$/;
 
 export const pending = v => v.items.filter(i => !i.decision);
 export const isText = i => (i.finding.kind ?? 'Text') === 'Text';
@@ -417,7 +419,7 @@ export async function sceneReview(t, { approve, deny, manual }, cues) {
     await t.click(page.locator(`#item-${deny.item.id}`));
     await t.typeInto(page.locator(`#item-${deny.item.id} .item-actions input`), deny.note);
     if (cues.denyClick) await t.at(cues.denyClick);
-    await t.click(page.locator(`#item-${deny.item.id} forge-button`, { hasText: 'Deny' }));
+    await t.click(page.locator(`#item-${deny.item.id} forge-button`, { hasText: DENY }));
   }
   if (manual) { await t.at(cues.manual); await addManual(t, manual); }
   // "Move a rule up to the whole review."

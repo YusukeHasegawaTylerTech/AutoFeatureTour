@@ -1,0 +1,15 @@
+{
+  "$schema": "../../schemas/platform.schema.json",
+  "comment": "Fill in ready (busy indicators), errors (the app's error UI) and ignore (noisy requests) once discovery and the smoke tour show them.",
+  "appErrors": {
+    "network": "warn",
+    "console": "warn",
+    "pageErrors": "warn"
+  },
+  "ignore": [],
+  "mask": {
+    "selectors": [],
+    "patterns": []
+  },
+  "pronounce": {}
+}

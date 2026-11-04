@@ -1,0 +1,9 @@
+{
+  "$schema": "../../../schemas/tour.schema.json",
+  "name": "smoke",
+  "platform": "hopinline",
+  "scenes": [
+    { "title": "Home", "url": "/", "narration": "This is Hop In Line.",
+      "steps": [ { "verify": { "role": "heading", "name": "Hop In Line" } }, { "verify": { "role": "button", "name": "Start a line" } } ] }
+  ]
+}

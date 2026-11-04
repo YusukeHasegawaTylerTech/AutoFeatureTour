@@ -1,0 +1,19 @@
+{
+  "$schema": "../../schemas/environments.schema.json",
+  "default": "local",
+  "local": {
+    "comment": "Runs ../../../HopInLine with dotnet run on port 5187 (SQL Server from the project's user secrets; migrates on startup). Attaches if already up.",
+    "baseUrl": "http://localhost:5187/",
+    "launch": [
+      {
+        "name": "hopinline",
+        "healthUrl": "http://localhost:5187/healthz",
+        "command": "dotnet run --project ../../../HopInLine/HopInLine --no-launch-profile --urls http://localhost:5187",
+        "env": { "ASPNETCORE_ENVIRONMENT": "Development" },
+        "timeoutSeconds": 240,
+        "stop": false
+      }
+    ],
+    "timeouts": { "navigation": 30000 }
+  }
+}
