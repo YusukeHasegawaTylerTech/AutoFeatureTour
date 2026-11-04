@@ -1,4 +1,5 @@
 {
+  "$schema": "../../../schemas/tour.schema.json",
   "name": "rms-smoke",
   "platform": "rms",
   "scenes": [

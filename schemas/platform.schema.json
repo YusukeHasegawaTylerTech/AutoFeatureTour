@@ -1,0 +1,281 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofeaturetour.local/schemas/v1/platform.schema.json",
+  "title": "AutoFeatureTour platform (platforms/<name>/platform.json)",
+  "description": "How the app behaves wherever it runs.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "This file's schema, for editors: a relative path to schemas/<type>.schema.json."
+    },
+    "comment": {
+      "type": "string",
+      "description": "A note for people."
+    },
+    "ready": {
+      "type": "object",
+      "description": "When a page counts as ready after an action, for apps that never go network-idle.",
+      "properties": {
+        "busy": {
+          "type": "string",
+          "description": "CSS of busy indicators (spinners, skeletons); wait until none is visible."
+        },
+        "stableMs": {
+          "description": "Then the page must not change for this long (default 1500).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "timeout": {
+          "description": "Max wait for busy indicators to go (default 60000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "stableTimeout": {
+          "description": "Max wait for a stable page (default 15000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "strict": {
+          "type": "boolean",
+          "description": "A page that never settles is an APP failure (default: a warning)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "errors": {
+      "type": "object",
+      "description": "The app's own error UI: a step that leaves it visible fails as APP.",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "CSS of the error element (dialog, toast)."
+        },
+        "text": {
+          "type": "string",
+          "description": "Only when its text matches this regex."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "selector"
+      ]
+    },
+    "appErrors": {
+      "type": "object",
+      "description": "What browser-side errors during a step do: \"fail\" (APP failure) or \"warn\" (listed in the report).",
+      "properties": {
+        "network": {
+          "enum": [
+            "fail",
+            "warn"
+          ],
+          "description": "HTTP 5xx responses (default warn)."
+        },
+        "network4xx": {
+          "enum": [
+            "fail",
+            "warn"
+          ],
+          "description": "Also fail on 4xx."
+        },
+        "console": {
+          "enum": [
+            "fail",
+            "warn"
+          ],
+          "description": "console.error messages (default warn)."
+        },
+        "pageErrors": {
+          "enum": [
+            "fail",
+            "warn"
+          ],
+          "description": "Uncaught exceptions (default warn)."
+        },
+        "ignore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Regexes of known noisy requests/messages: kept in network.json/console.json, marked ignored, never a cause."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ignore": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Regexes of known noisy requests/messages: kept in network.json/console.json, marked ignored, never a cause."
+    },
+    "mask": {
+      "type": "object",
+      "description": "Blurred in the page before anything is recorded (video, screenshots, trace).",
+      "properties": {
+        "selectors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "CSS of elements to blur."
+        },
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Regexes of text to blur."
+        }
+      },
+      "additionalProperties": false
+    },
+    "pronounce": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Narration substitutions: written form → how to say it (\"RMS\": \"R M S\")."
+    },
+    "viewport": {
+      "type": "object",
+      "description": "Browser size in CSS pixels (default 1440×810).",
+      "properties": {
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "width",
+        "height"
+      ]
+    },
+    "voice": {
+      "type": "string",
+      "description": "SAPI voice."
+    },
+    "ignoreHTTPSErrors": {
+      "type": "boolean",
+      "description": "Accept self-signed certificates."
+    },
+    "startPath": {
+      "type": "string",
+      "description": "Where sessions and discovery start (default /)."
+    },
+    "discover": {
+      "type": "object",
+      "description": "Discovery hints.",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Extra paths to crawl."
+        }
+      },
+      "additionalProperties": false
+    },
+    "timeouts": {
+      "type": "object",
+      "description": "Milliseconds per kind of step.",
+      "properties": {
+        "action": {
+          "description": "Actions: finding and acting on an element (default 10000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "verify": {
+          "description": "Checks (default 15000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "waitFor": {
+          "description": "waitFor steps (default 30000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "navigation": {
+          "description": "Page loads (default 30000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "optional": {
+          "description": "Optional steps (default 3000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "retries": {
+      "description": "Retries for actions that time out (default 1).",
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "$ref": "common.schema.json#/$defs/placeholder"
+        }
+      ]
+    },
+    "trace": {
+      "type": "boolean",
+      "description": "false: no trace.zip."
+    }
+  }
+}

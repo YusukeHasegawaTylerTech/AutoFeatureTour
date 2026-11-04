@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofeaturetour.local/schemas/v1/login.schema.json",
+  "title": "AutoFeatureTour login (platforms/<name>/login.json)",
+  "description": "How to sign in, per role. Credentials only as \"{env:NAME}\" (environment or .env). Saved state: auth/<platform>/<env>/<role>.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "roles"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "This file's schema, for editors: a relative path to schemas/<type>.schema.json."
+    },
+    "comment": {
+      "type": "string",
+      "description": "A note for people."
+    },
+    "default": {
+      "type": "string",
+      "description": "Role used when none is given."
+    },
+    "signedIn": {
+      "type": "string",
+      "description": "CSS of an element only a signed-in page shows; how an expired session is noticed."
+    },
+    "checkPath": {
+      "type": "string",
+      "description": "Path opened to check the session (default startPath)."
+    },
+    "maxAgeMinutes": {
+      "description": "Sign in again when the saved state is older than this.",
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "$ref": "common.schema.json#/$defs/placeholder"
+        }
+      ]
+    },
+    "roles": {
+      "type": "object",
+      "description": "Role name → its sign-in steps.",
+      "additionalProperties": {
+        "type": "object",
+        "description": "A role.",
+        "properties": {
+          "steps": {
+            "$ref": "common.schema.json#/$defs/steps"
+          },
+          "comment": {
+            "type": "string",
+            "description": "A note."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "steps"
+        ]
+      }
+    }
+  }
+}

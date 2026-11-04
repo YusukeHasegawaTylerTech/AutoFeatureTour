@@ -26,6 +26,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { assertValid, schemaRef } from './schema.mjs';
 
 const SAFE = /^[A-Za-z0-9_-]+$/;
 
@@ -52,9 +53,13 @@ export function listPlatforms(dir) {
   return fs.existsSync(dir) ? fs.readdirSync(dir).filter(n => SAFE.test(n) && fs.statSync(path.join(dir, n)).isDirectory()) : [];
 }
 
-function readJson(file, fallback) {
+/** Reads a JSON definition file and, with a type, checks it against schemas/<type>.schema.json. */
+function readJson(file, fallback, type) {
   if (!fs.existsSync(file)) return fallback;
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw new PlatformError(`${file}: not valid JSON (${e.message})`); }
+  let doc;
+  try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw new PlatformError(`${file}: not valid JSON (${e.message})`); }
+  if (type) assertValid(type, doc, file, PlatformError);
+  return doc;
 }
 
 /** Reads platforms/<name>/ into one object. */
@@ -63,13 +68,13 @@ export function loadPlatform(toolRoot, name, { from } = {}) {
   const root = platformsDir(toolRoot, from);
   const dir = path.join(root, name);
   if (!fs.existsSync(dir)) throw new PlatformError(`No platform "${name}" in ${root} (has: ${listPlatforms(root).join(', ') || 'none'}); create one with aft platform init ${name}`);
-  const environments = readJson(path.join(dir, 'environments.json'), {});
+  const { $schema: _e, ...environments } = readJson(path.join(dir, 'environments.json'), {}, 'environments');
   return {
     name, dir,
-    platform: readJson(path.join(dir, 'platform.json'), {}),
+    platform: (({ $schema, ...p }) => p)(readJson(path.join(dir, 'platform.json'), {}, 'platform')),
     environments,
     defaultEnv: environments.default ?? Object.keys(environments).find(k => k !== 'default'),
-    login: readJson(path.join(dir, 'login.json'), null),
+    login: (l => (l ? (({ $schema, ...x }) => x)(l) : null))(readJson(path.join(dir, 'login.json'), null, 'login')),
   };
 }
 
@@ -93,7 +98,7 @@ export function platformConfig(p, { env, role } = {}) {
     const roleName = role ?? p.login.default ?? Object.keys(p.login.roles ?? {})[0];
     const r = p.login.roles?.[roleName];
     if (!r) throw new PlatformError(`Platform ${p.name} has no login role "${roleName}" (has: ${Object.keys(p.login.roles ?? {}).join(', ') || 'none'})`);
-    const { roles, default: _, ...common } = p.login;
+    const { roles, default: _, comment: _c, ...common } = p.login;
     cfg.login = { ...common, ...r, role: roleName };
   }
   return { cfg, env: envName };
@@ -153,7 +158,7 @@ export function expandSteps(steps = [], { dirs, data = {}, stack = [] } = {}) {
       const file = fragmentFile(dirs, step.use);
       if (stack.includes(file)) throw new PlatformError(`Fragment cycle: ${[...stack, file].map(f => path.basename(f)).join(' → ')}`);
       if (file.endsWith('.mjs')) { out.push({ ...omit(step, ['use']), code: file, with: substitute(step.with ?? {}, { data }), from: step.use }); continue; }
-      const frag = readJson(file);
+      const frag = readJson(file, undefined, 'fragment');
       const args = { ...step.with };
       for (const [k, spec] of Object.entries(frag.params ?? {})) {
         if (!(k in args) && spec && 'default' in spec) args[k] = spec.default;
@@ -180,7 +185,7 @@ export function loadFixtures(p, names = []) {
     if (!SAFE.test(n)) throw new PlatformError(`Fixture names must match ${SAFE} (got "${n}")`);
     const file = path.join(p.dir, 'fixtures', `${n}.json`);
     if (!fs.existsSync(file)) throw new PlatformError(`Platform ${p.name} has no fixture "${n}" (${file})`);
-    const f = readJson(file);
+    const f = readJson(file, undefined, 'fixture');
     Object.assign(data, f.data);
     const dir = path.join(p.dir, 'fixtures');
     setup.push(...(f.setup ?? []).map(h => ({ ...h, dir })));
@@ -197,17 +202,23 @@ export function initPlatform(root, name, { baseUrl = 'http://localhost:3000/' } 
   if (!SAFE.test(name)) throw new PlatformError(`Platform names must match ${SAFE} (got "${name}")`);
   const dir = path.join(root, name);
   if (fs.existsSync(dir)) throw new PlatformError(`${dir} already exists; edit it instead`);
+  const ENV = name.toUpperCase().replace(/-/g, '_');
   const files = {
-    'platform.json': { ready: null, errors: null, appErrors: { network: 'warn', console: 'warn', pageErrors: 'warn' }, ignore: [], mask: { selectors: [], patterns: [] }, pronounce: {} },
+    'platform.json': { comment: 'Fill in ready (busy indicators), errors (the app\'s error UI) and ignore (noisy requests) once discovery and the smoke tour show them.',
+      appErrors: { network: 'warn', console: 'warn', pageErrors: 'warn' }, ignore: [], mask: { selectors: [], patterns: [] }, pronounce: {} },
     'environments.json': { default: 'local', local: { baseUrl, timeouts: {} } },
-    'login.json': { default: 'user', signedIn: null, checkPath: '/', roles: { user: { steps: [
+    'login.json': { comment: `Set signedIn to a CSS selector only signed-in pages show. Credentials: AFT_${ENV}_USERNAME / AFT_${ENV}_PASSWORD in .env.`,
+      default: 'user', checkPath: '/', roles: { user: { steps: [
       { goto: '/login' }, { fill: 'Username', text: `{env:AFT_${name.toUpperCase().replace(/-/g, '_')}_USERNAME}` },
       { fill: 'Password', text: `{env:AFT_${name.toUpperCase().replace(/-/g, '_')}_PASSWORD}`, secret: true }, { click: { role: 'button', name: 'Sign in' } }] } } },
     'tours/smoke.tour.json': { name: `${name}-smoke`, platform: name, scenes: [{ title: 'Home', url: '/', narration: `The ${name} home page.`, steps: [] }] },
   };
+  const TYPE = { 'platform.json': 'platform', 'environments.json': 'environments', 'login.json': 'login', 'tours/smoke.tour.json': 'tour' };
   for (const [f, v] of Object.entries(files)) {
-    fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
-    fs.writeFileSync(path.join(dir, f), JSON.stringify(v, null, 2) + '\n');
+    const file = path.join(dir, f);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // "$schema" first, so editors validate and autocomplete the file with no setup.
+    fs.writeFileSync(file, JSON.stringify({ $schema: schemaRef(path.dirname(file), TYPE[f]), ...v }, null, 2) + '\n');
   }
   for (const d of ['fragments', 'fixtures']) { fs.mkdirSync(path.join(dir, d), { recursive: true }); fs.writeFileSync(path.join(dir, d, '.gitkeep'), ''); }
   fs.writeFileSync(path.join(dir, 'requirements.mjs'),

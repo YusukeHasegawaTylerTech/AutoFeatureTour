@@ -76,7 +76,8 @@ export class Session {
 
   stepOpts(report) {
     const c = this.cfg;
-    return { baseUrl: this.vars.baseUrl + '/', timeouts: c.timeouts, report, ready: c.ready, errors: c.errors, retries: 0, unpaced: true, onError: 'fail', scene: 'try-step' };
+    return { baseUrl: this.vars.baseUrl + '/', timeouts: c.timeouts, report, ready: c.ready, errors: c.errors, retries: 0, unpaced: true, onError: 'fail', scene: 'try-step',
+      allowMocks: !!c.allowMocks || !!this.options.allowMocks, outDir: this.outDir };
   }
 
   async goto(url) {

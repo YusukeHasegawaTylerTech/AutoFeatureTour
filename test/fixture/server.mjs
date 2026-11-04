@@ -10,6 +10,10 @@
 //   /login      form: #user, #pass, "Sign in"; password "hunter2-fixture" sets a session cookie and goes to /secure
 //   /secure     "Welcome" + #signed-in when the cookie is set, else redirects to /login
 //   /api/fail   500 with a JSON body that includes a token (to test redaction)
+//   /vocab      one control per step type: rows (scoping), a checkbox, a select, a frame, a popup link, a download,
+//               confirm/prompt dialogs, a file input, a drag source and target, a key counter, a toggled panel,
+//               buttons that call /api/echo (200) and /api/fail (500); /frame is the iframe's page
+//   /api/echo   200 {"ok": true}       /file.txt   a download (Content-Disposition: attachment; report-2026.txt)
 
 import http from 'node:http';
 
@@ -28,6 +32,32 @@ const PAGES = {
   '/pageerror': page('Throws', `<h1>Throws</h1><button id="save">Save</button>`,
     `save.onclick = () => { setTimeout(() => { throw new Error('fixture exploded'); }); };`),
   '/busy': page('Busy', `<h1>Loading forever</h1><div class="spinner"></div>`),
+  '/vocab': page('Vocab', `<h1>Vocabulary</h1>
+    <table><tr><td>Alpha</td><td><button>Edit</button></td></tr><tr class="row"><td>Beta</td><td><button>Edit</button></td></tr></table>
+    <section aria-label="Panel A"><button>Open</button></section><section aria-label="Panel B"><button>Open</button></section>
+    <p id="which"></p>
+    <label><input type="checkbox" id="agree"> I agree</label>
+    <label>Color <select id="color"><option>Red</option><option>Green</option></select></label>
+    <label>Notes <input id="notes" value="prefilled"></label>
+    <label>Keys <input id="keys"></label><span id="keycount">0</span>
+    <button id="ask" onclick="document.getElementById('asked').textContent = confirm('Delete it?') ? 'confirmed' : 'cancelled'">Delete</button><span id="asked"></span>
+    <button id="prompt" onclick="document.getElementById('answer').textContent = prompt('Your name?') ?? 'none'">Ask name</button><span id="answer"></span>
+    <label>Attachment <input type="file" id="file"></label><span id="filename"></span>
+    <a href="/ok" target="_blank">Open in new tab</a> <a href="/file.txt" download>Download report</a>
+    <div id="src" style="width:60px;height:30px;background:#9cf">Card</div><div id="dst" style="width:120px;height:60px;border:2px dashed #999;margin-top:10px">Drop here</div><span id="dropped"></span>
+    <button id="toggle" onclick="document.getElementById('panel').hidden = !document.getElementById('panel').hidden">Toggle</button><div id="panel">Details panel</div>
+    <button id="good" onclick="fetch('/api/echo').then(r => document.getElementById('net').textContent = 'echo ' + r.status)">Load</button>
+    <button id="bad" onclick="fetch('/api/fail').then(r => document.getElementById('net').textContent = 'fail ' + r.status)">Break</button><span id="net"></span>
+    <button disabled>Locked</button>
+    <iframe src="/frame" title="embedded" style="height:60px"></iframe>`,
+    `document.querySelectorAll('section button').forEach(b => b.onclick = () => { which.textContent = 'opened ' + b.parentElement.getAttribute('aria-label'); });
+    keys.addEventListener('keydown', () => { keycount.textContent = String(+keycount.textContent + 1); });
+    file.onchange = () => { filename.textContent = file.files[0]?.name ?? ''; };
+    let dragging = false;
+    src.addEventListener('mousedown', () => { dragging = true; });
+    document.addEventListener('mouseup', e => { if (!dragging) return; dragging = false; const r = dst.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) dropped.textContent = 'dropped Card'; });`),
+  '/frame': page('Frame', `<button onclick="this.textContent = 'Clicked inside'">Inside</button>`),
   '/login': page('Login', `<h1>Sign in</h1><form method="post" action="/login"><label>User <input id="user" name="user"></label>
     <label>Password <input id="pass" name="pass" type="password"></label><button>Sign in</button></form><p id="error">__ERROR__</p>`),
 };
@@ -40,6 +70,11 @@ export function startFixture() {
     if (url.pathname === '/api/fail') {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'boom', token: 'tok-should-not-leak' }));
+    }
+    if (url.pathname === '/api/echo') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end('{"ok":true}'); }
+    if (url.pathname === '/file.txt') {
+      res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Disposition': 'attachment; filename="report-2026.txt"' });
+      return res.end('synthetic report');
     }
     if (url.pathname === '/login' && req.method === 'POST') {
       let body = '';

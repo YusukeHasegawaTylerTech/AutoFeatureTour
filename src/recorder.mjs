@@ -113,7 +113,9 @@ export class Tour {
     if (cursor) await this.context.addInitScript(cursorScript);
     if (this.mask?.selectors?.length || this.mask?.patterns?.length) await this.context.addInitScript(maskScript, this.mask);
     this.page = await this.context.newPage();
-    this.page.on('dialog', d => d.accept());
+    // Dialogs: accepted unless a "dialog" step planned otherwise (popups' dialogs too).
+    this.page.on('dialog', d => this.handleDialog(d));
+    this.context.on('page', p => { if (p !== this.page) p.on('dialog', d => this.handleDialog(d)); });
     // Browser-side evidence for the triage bundle (bounded, so a chatty app can't grow it without limit).
     this.consoleErrors = [];
     this.networkFailures = [];
@@ -177,8 +179,21 @@ export class Tour {
     return { x, y };
   }
 
-  async click(target, opts) {
-    const { x, y } = await this.moveTo(target, opts);
+  /** Answers a dialog as the last "dialog" step said (default accept); a message that doesn't match "expect" fails the step. */
+  async handleDialog(d) {
+    const plan = this.dialogPlan;
+    this.dialogPlan = null;
+    if (plan?.expect !== undefined) {
+      const re = String(plan.expect).match(/^\/(.+)\/([dgimsuy]*)$/);
+      const ok = re ? new RegExp(re[1], re[2]).test(d.message()) : d.message().includes(plan.expect);
+      if (!ok) this.dialogFailure = `the ${d.type()} said "${d.message().slice(0, 200)}", expected "${plan.expect}"`;
+    }
+    await (plan?.action === 'dismiss' ? d.dismiss() : d.accept(plan?.text)).catch(() => {});
+  }
+
+  async click(target, opts = {}) {
+    const { button, clickCount, modifiers = [], ...move } = opts;
+    const { x, y } = await this.moveTo(target, move);
     await sleep(250);
     // The click goes to a screen position (so the cursor is filmed), so check first that the element would get it:
     // not disabled, and not covered by an overlay, a dialog or a spinner.
@@ -190,7 +205,9 @@ export class Tour {
       return d(hit);
     }, [x, y]).catch(e => (/detached|not attached/i.test(e.message) ? '(element detached from the page)' : null));
     if (cover) throw new Error(`action blocked: ${cover.startsWith('(') ? cover : `the element is covered by ${cover}`}`);
-    await this.page.mouse.click(x, y);
+    for (const m of modifiers) await this.page.keyboard.down(m);
+    await this.page.mouse.click(x, y, { button, clickCount });
+    for (const m of [...modifiers].reverse()) await this.page.keyboard.up(m);
     await sleep(300);
   }
 

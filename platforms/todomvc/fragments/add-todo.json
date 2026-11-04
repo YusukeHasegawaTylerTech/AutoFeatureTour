@@ -1,4 +1,5 @@
 {
+  "$schema": "../../../schemas/fragment.schema.json",
   "description": "Types a task into the new-todo box and presses Enter.",
   "params": { "text": { "required": true } },
   "steps": [

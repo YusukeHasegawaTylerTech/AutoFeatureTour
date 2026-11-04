@@ -1,4 +1,5 @@
 {
+  "$schema": "../../../schemas/tour.schema.json",
   "name": "RMS-6142",
   "platform": "rms",
   "story": {

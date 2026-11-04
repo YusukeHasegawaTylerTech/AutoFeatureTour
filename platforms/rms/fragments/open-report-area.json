@@ -1,4 +1,5 @@
 {
+  "$schema": "../../../schemas/fragment.schema.json",
   "description": "Opens a reporting screen by its route and checks its heading.",
   "params": { "path": { "required": true }, "heading": { "required": true } },
   "steps": [

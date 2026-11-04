@@ -1,0 +1,41 @@
+{
+  "json.schemas": [
+    {
+      "fileMatch": [
+        "**/*.tour.json",
+        "out/**/tour.json"
+      ],
+      "url": "./schemas/tour.schema.json"
+    },
+    {
+      "fileMatch": [
+        "platforms/*/platform.json"
+      ],
+      "url": "./schemas/platform.schema.json"
+    },
+    {
+      "fileMatch": [
+        "platforms/*/environments.json"
+      ],
+      "url": "./schemas/environments.schema.json"
+    },
+    {
+      "fileMatch": [
+        "platforms/*/login.json"
+      ],
+      "url": "./schemas/login.schema.json"
+    },
+    {
+      "fileMatch": [
+        "platforms/*/fragments/*.json"
+      ],
+      "url": "./schemas/fragment.schema.json"
+    },
+    {
+      "fileMatch": [
+        "platforms/*/fixtures/*.json"
+      ],
+      "url": "./schemas/fixture.schema.json"
+    }
+  ]
+}

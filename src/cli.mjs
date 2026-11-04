@@ -12,6 +12,8 @@
 //   aft auto     <url> [--prompt ...]                 discover → plan → run, no story needed
 //   aft login    --platform <name> | <tour.json> [--target <env>] [--role <name>] [--manual]   save auth/<platform>/<env>/<role>.json
 //   aft platform list | init <name> [--base-url <url>] | discover <name> | check <name>   onboard an app (AGENTS.md, Platforms)
+//   aft schema   [tour|platform|environments|login|fragment|fixture]   print a definition file's JSON Schema (no type: the list)
+//   aft validate <platform.json|environments.json|login.json|fragment|fixture|tour> --schema-only   check a file against its schema
 //   aft doctor   [--platform <name>]                  check this machine (+ platforms' requirements.mjs); exit 1 if missing
 //   aft session  start|status|stop [--platform <name>] [--target <env>] [--role <r>] [--session <name>] [--headed]
 //                                                    a warm, signed-in browser for the commands below (stop: only what it started)
@@ -46,6 +48,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { saveLogin } from './auth.mjs';
 import { ConfigError, loadTourJson } from './declarative.mjs';
+import { check as checkSchema, schemaFor, schemasDir, schemaTypes } from './schema.mjs';
 import { appSettingsFor } from './cli-app.mjs';
 import { platformCommand } from './platform-cli.mjs';
 import { call, parseArg, readSessions, Session, sessionName, sessionsDir, startDaemon } from './session.mjs';
@@ -395,6 +398,16 @@ async function generateInto(out, args, { url, story, name }) {
 
 const storyName = (story, url) => story?.id ? `${story.id}${url ? `-${new URL(url).hostname}` : ''}` : url ? new URL(url).hostname : 'story';
 
+/** The definition type a file name implies (tour, platform, environments, login, fragment, fixture), or null. */
+function definitionType(file) {
+  const b = path.basename(file), d = path.basename(path.dirname(path.resolve(file)));
+  if (/\.tour\.json$/.test(b)) return 'tour';
+  if (['platform.json', 'environments.json', 'login.json'].includes(b)) return b.replace('.json', '');
+  if (d === 'fragments' && b.endsWith('.json')) return 'fragment';
+  if (d === 'fixtures' && b.endsWith('.json')) return 'fixture';
+  return b.endsWith('.json') ? 'tour' : null;
+}
+
 // ---- Sessions ----------------------------------------------------------------------------------------------------
 
 /** The running session to use: --session <name>, else the only ready one (for --platform/--target if given). */
@@ -445,7 +458,19 @@ const commands = {
   },
 
   async validate(args) {
-    const { def, dir } = await loadTour(args.script ?? args._[1], args);
+    const file = args.script ?? args._[1];
+    const type = file && definitionType(file);
+    // Any definition file, schema only (no app): a tour with --schema-only, or a platform/environments/login/fragment/fixture file.
+    if (type && (type !== 'tour' || args.schemaOnly)) {
+      let doc;
+      try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw new ConfigError(`${file}: not valid JSON (${e.message})`); }
+      const problems = checkSchema(type, doc);
+      for (const p of problems) console.log(`✘ ${p}`);
+      if (problems.length) { lastData = { file, type, problems }; throw new ConfigError(`${file} doesn't match the ${type} schema (${problems.length} problem(s))`); }
+      console.log(`✔ ${file} matches schemas/${type}.schema.json`);
+      return { file, type, problems: [] };
+    }
+    const { def, dir } = await loadTour(file, args);
     const r = await withRun(runName(def, args), args, 'validate', out => validate(def, dir, out, args));
     if (r.blocking) { lastData = r; throw new StepError(`${r.blocking} step(s) can't be resolved; see validation.md in the run folder`); }
     return r;
@@ -527,6 +552,21 @@ const commands = {
 
   async platform(args) {
     return platformCommand(args, { toolRoot, commands, appSettings, loginStepsFor, withRun, UsageError, envOf });
+  },
+
+  async schema(args) {
+    const type = args._[1];
+    if (!type) {
+      const list = schemaTypes().map(t => ({ type: t, file: `${schemasDir}/${t}.schema.json`.replace(/\\/g, '/'), id: schemaFor(t).$id, title: schemaFor(t).title }));
+      if (!args.json) for (const l of list) console.log(`${l.type.padEnd(13)} ${l.title}\n              ${l.file}`);
+      return { schemas: list, common: schemaFor('common').$id };
+    }
+    let s;
+    try { s = schemaFor(type); } catch (e) { throw new UsageError(e.message); }
+    // The schema itself, plus the shared definitions it refers to, so one call gives the whole format.
+    const out = { ...s, $defs: { ...(s.$defs ?? {}) }, 'x-common': schemaFor('common') };
+    if (!args.json) console.log(JSON.stringify(out, null, 2));
+    return out;
   },
 
   async session(args) {
@@ -633,13 +673,16 @@ main().catch(e => {
   const cls = e instanceof UsageError || e instanceof ConfigError ? 'error' : e.failure ?? (e instanceof StepError ? 'script' : e instanceof UnreachableError ? 'unreachable' : classify(e));
   const code = CLASSES[cls]?.exit ?? 1;
   if (cls === 'error' && !(e instanceof UsageError) && !(e instanceof ConfigError)) console.error(e.stack ?? e);
+  // Config errors (schema problems) list every problem, one per line; the rest are one line.
+  else if (e instanceof ConfigError) console.error(`error: ${e.message}`);
   else console.error(`error: ${summaryLine(Object.assign(e, { failure: e.failure ?? cls }))}`);
   if (json) {
     const args = parseArgs(process.argv.slice(2));
     const report = lastRunDir && fs.existsSync(path.join(lastRunDir, 'report.json')) ? path.join(lastRunDir, 'report.json') : undefined;
     const sub = ['platform', 'session'].includes(args._[0]) ? ` ${args._[1] ?? ''}` : '';
     emit({ command: args._[0] ? `${args._[0]}${sub}`.trim() : null, ok: false, exitCode: code, class: cls, ...(lastRunDir ? { runDir: lastRunDir } : {}), ...(report ? { report } : {}),
-      error: { message: e.message.split('\n')[0], ...(e.entry ? { step: e.entry } : {}) }, data: e.data ?? lastData ?? null });
+      error: { message: e.message.split('\n')[0], ...(e.message.includes('\n') ? { details: e.message.split('\n').slice(1).map(l => l.trim()).filter(Boolean) } : {}),
+        ...(e.entry ? { step: e.entry } : {}) }, data: e.data ?? lastData ?? null });
   }
   process.exit(code);
 });

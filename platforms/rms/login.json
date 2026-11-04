@@ -1,4 +1,5 @@
 {
+  "$schema": "../../schemas/login.schema.json",
   "default": "dev",
   "signedIn": "forge-app-bar-profile-button",
   "checkPath": "#/home",

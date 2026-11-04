@@ -1,4 +1,5 @@
 {
+  "$schema": "../../schemas/platform.schema.json",
   "comment": "NWPS RMS web app (Angular + .NET services). Keeps long-lived connections open, so readiness is busy indicators + a stable page, never network idle.",
   "startPath": "#/home",
   "ignoreHTTPSErrors": true,

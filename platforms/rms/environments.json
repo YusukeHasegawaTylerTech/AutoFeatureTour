@@ -1,4 +1,5 @@
 {
+  "$schema": "../../schemas/environments.schema.json",
   "default": "local",
   "local": {
     "comment": "Your dev machine. Attaches to running services; starts a missing one with the dev scripts (never -Force) and leaves it running.",

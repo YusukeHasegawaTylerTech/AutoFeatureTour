@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofeaturetour.local/schemas/v1/fragment.schema.json",
+  "title": "AutoFeatureTour fragment (platforms/<name>/fragments/<fragment>.json)",
+  "description": "Reusable steps, called as { \"use\": \"<fragment>\", \"with\": { … } }; parameters are {args.<name>} in its steps.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "steps"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "This file's schema, for editors: a relative path to schemas/<type>.schema.json."
+    },
+    "description": {
+      "type": "string",
+      "description": "What it does (shown to authors)."
+    },
+    "params": {
+      "type": "object",
+      "description": "Parameters: name → { required } or { default }. Unknown and missing required ones are refused.",
+      "additionalProperties": {
+        "type": "object",
+        "description": "A parameter.",
+        "properties": {
+          "required": {
+            "type": "boolean",
+            "description": "Must be given."
+          },
+          "default": {
+            "description": "Value when not given."
+          },
+          "description": {
+            "type": "string",
+            "description": "What it is."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "steps": {
+      "$ref": "common.schema.json#/$defs/steps"
+    }
+  }
+}

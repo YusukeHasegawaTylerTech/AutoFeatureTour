@@ -43,6 +43,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { authFile, saveLogin } from './auth.mjs';
+import { assertValid } from './schema.mjs';
 import { checkTour, expandSteps, loadFixtures, loadPlatform, PlatformError, platformAuthFile, platformConfig } from './platform.mjs';
 import { probe, startProcess, stopProcess, waitForHttp } from './recorder.mjs';
 import { Failure } from './failures.mjs';
@@ -121,6 +122,7 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
       cfg.scenes = (cfg.scenes ?? []).map(s => ({ ...s, steps: expandSteps(s.steps, { dirs }) }));
       if (cfg.login?.steps) cfg.login = { ...cfg.login, steps: expandSteps(cfg.login.steps, { dirs }) };
     });
+    wrap(() => finishSteps(cfg, file, [dir]));
     return { cfg, env, platform: null, authFile: r => authFile(toolRoot, authTarget(cfg, env), r ?? cfg.login?.role) };
   }
   return wrap(() => {
@@ -141,6 +143,7 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
     };
     if (process.env.BASE_URL) cfg.baseUrl = process.env.BASE_URL;
     if (baseUrl) cfg.baseUrl = baseUrl;
+    finishSteps(cfg, file, [dir, path.join(p.dir, 'fixtures')]);
     return { cfg, env: envName, platform: p, authFile: r => platformAuthFile(toolRoot, p.name, envName, r ?? cfg.login?.role) };
   });
 }
@@ -148,8 +151,28 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
 export function readTourJson(file) {
   let raw;
   try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw new ConfigError(`${file}: not valid JSON (${e.message})`); }
+  assertValid('tour', raw, file, ConfigError);
+  delete raw.$schema;
   raw.name ??= path.basename(file).replace(/\.tour\.json$|\.json$/, '');
   return raw;
+}
+
+/** Steps of every list in a composed tour (login, fixtures, scenes). */
+const allSteps = cfg => [...(cfg.login?.steps ?? []), ...(cfg.fixtureSteps ?? []), ...(cfg.scenes ?? []).flatMap(s => s.steps ?? [])];
+
+/** Checks that need the whole tour: mocks are opted into, upload files exist (made absolute). */
+function finishSteps(cfg, file, dirs) {
+  const mocks = allSteps(cfg).filter(s => 'mock' in s);
+  if (mocks.length && !cfg.allowMocks) throw new ConfigError(`${file}: ${mocks.length} "mock" step(s), but the tour doesn't set "allowMocks": true (mocked responses make the run not end to end; opt in deliberately)`);
+  for (const s of allSteps(cfg).filter(s => 'upload' in s)) {
+    s.files = [s.files].flat().map(f => {
+      if (path.isAbsolute(f) && fs.existsSync(f)) return f;
+      const hit = dirs.map(d => path.resolve(d, f)).find(x => fs.existsSync(x));
+      if (!hit) throw new ConfigError(`${file}: upload file "${f}" not found (looked in ${dirs.join(', ')})`);
+      return hit;
+    });
+  }
+  return cfg;
 }
 
 /** Loads tour.json as a tour definition the CLI can run, like a .tour.mjs module. */
@@ -188,6 +211,7 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
         const startOpts = { storageState: login.state ?? undefined, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, trace: cfg.trace !== false };
         await t.start(startOpts);
         const opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report, ready: cfg.ready, errors: cfg.errors, retries: cfg.retries ?? 1,
+          allowMocks: !!cfg.allowMocks, outDir: ctx.outDir,
           range: ctx.range,
           onError: ctx.dryRun ? 'collect' : ctx.options.onError ?? cfg.onError ?? 'fail' };
         // Check the session where the tour starts (off camera: before the first scene, so it's cut from the video).

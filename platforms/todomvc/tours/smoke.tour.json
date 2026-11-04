@@ -1,4 +1,5 @@
 {
+  "$schema": "../../../schemas/tour.schema.json",
   "name": "todomvc-smoke",
   "platform": "todomvc",
   "scenes": [

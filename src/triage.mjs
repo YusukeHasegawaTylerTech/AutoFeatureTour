@@ -176,6 +176,8 @@ export async function finalize({ outDir, def = {}, steps = [], tour = null, erro
     failing: entry, firstCause: causes.atStep[0] ?? (cls === 'app' ? causes.before[0] ?? null : null),
     criteria: criteriaOf(def, steps), steps, warnings: [...warnings, ...steps.flatMap(s => (s.warnings ?? []).map(w => `${s.scene} step ${s.step}: ${w}`))],
     appErrors: { atFailingStep: causes.atStep.length, other: causes.before.length },
+    // Responses the tour mocked: the run wasn't end to end there, and a video shown as evidence must say so.
+    mocks: tour?.mocks ?? [], downloads: tour?.downloads ?? [],
     bundle: cls === 'ok' ? null : path.join(outDir, 'triage'),
   };
   const sec = secretValues(secrets);

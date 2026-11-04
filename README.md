@@ -110,8 +110,12 @@ and holds only what to show:
 }
 ```
 
-Steps: `goto`, `click`, `fill` (+`text`), `press`, `hover`, `point`, `select` (+`option`), `scroll`, `verify`, `waitFor`,
-`wait`, `at` (a fraction of the narration), `use` (a fragment) and `code` (a code step). Any step can be
+Every definition file has a JSON Schema in [schemas/](schemas/) (the authority on the format; `aft schema <type>` prints
+one, and files carry `"$schema"` so editors validate them). Steps: `goto`, `click`, `dblclick`, `rightClick`, `hover`,
+`point`, `fill`, `type`, `clear`, `focus`, `press`, `check`, `uncheck`, `select`, `upload`, `drag`, `scroll`, `waitFor`,
+`verify` (visible, text, value, count, state, URL, title), `dialog`, `switchTo`, `download`, `waitForResponse`, `mock`
+(opt-in), `wait`, `at` (a fraction of the narration), `use` (a fragment) and `code` (a code step); the table is in
+[AGENTS.md](AGENTS.md#steps). Any step can be
 `"optional": true` or have a `"timeout"`. Actions spread across the narration automatically unless a scene uses `at`.
 Targets: a plain string tries role (button, link, tab…), label, placeholder, then text; or be explicit with
 `{ "role", "name" }`, `{ "label" }`, `{ "placeholder" }`, `{ "text" }`, `{ "testId" }`, and only as a last resort

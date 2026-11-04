@@ -1,0 +1,2645 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofeaturetour.local/schemas/v1/common.schema.json",
+  "title": "AutoFeatureTour shared definitions: locators and steps",
+  "$defs": {
+    "placeholder": {
+      "type": "string",
+      "pattern": "^\\{(args|data|env:)[A-Za-z0-9_.:-]*\\}$",
+      "description": "A placeholder filled in when the tour loads: {args.x} (fragment parameter), {data.x} (fixture data) or {env:NAME}."
+    },
+    "locator": {
+      "description": "What a step acts on. A string tries, in order: button/link/tab/menuitem/checkbox/radio/option/switch/combobox/textbox by exact name, label, placeholder, the same roles by partial name, exact then partial text, a name=\"…\" attribute, and a custom-element tag; a string starting with #, ., [ or css= is CSS. Or an object.",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "description": "An element by what users see. Exactly one of role, label, placeholder, text, testId, alt or css; optionally narrowed (has, hasText, nth) and scoped (within, frame).",
+          "properties": {
+            "role": {
+              "type": "string",
+              "description": "ARIA role: button, link, textbox, checkbox, tab, menuitem, combobox, heading, row, cell, dialog…"
+            },
+            "name": {
+              "type": "string",
+              "description": "Accessible name, with \"role\". Substring match unless \"exact\"."
+            },
+            "exact": {
+              "type": "boolean",
+              "description": "Match name/label/placeholder/text exactly (default false: substring, case-insensitive)."
+            },
+            "label": {
+              "type": "string",
+              "description": "A form field by its <label> or aria-label."
+            },
+            "placeholder": {
+              "type": "string",
+              "description": "A field by its placeholder text."
+            },
+            "text": {
+              "type": "string",
+              "description": "An element by its visible text."
+            },
+            "testId": {
+              "type": "string",
+              "description": "data-testid attribute."
+            },
+            "alt": {
+              "type": "string",
+              "description": "An image by its alt text."
+            },
+            "css": {
+              "type": "string",
+              "description": "A CSS selector. Last resort: it breaks when markup changes and means nothing to a viewer."
+            },
+            "nth": {
+              "description": "Pick the n-th match (0-based) instead of the first visible one; also silences the ambiguity warning.",
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
+            },
+            "has": {
+              "$ref": "#/$defs/locator",
+              "description": "Only elements that contain an element matching this locator."
+            },
+            "hasNot": {
+              "$ref": "#/$defs/locator",
+              "description": "Only elements that do not contain an element matching this locator."
+            },
+            "hasText": {
+              "type": "string",
+              "description": "Only elements whose text contains this (anywhere inside them)."
+            },
+            "hasNotText": {
+              "type": "string",
+              "description": "Only elements whose text does not contain this."
+            },
+            "within": {
+              "$ref": "#/$defs/locator",
+              "description": "Search inside the first visible element matching this locator (a dialog, a row, a panel). Nest for chains."
+            },
+            "frame": {
+              "description": "Search inside an iframe: its CSS selector, or a list of selectors for nested frames (outermost first).",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 1
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "required": [
+                "role"
+              ]
+            },
+            {
+              "required": [
+                "label"
+              ]
+            },
+            {
+              "required": [
+                "placeholder"
+              ]
+            },
+            {
+              "required": [
+                "text"
+              ]
+            },
+            {
+              "required": [
+                "testId"
+              ]
+            },
+            {
+              "required": [
+                "css"
+              ]
+            },
+            {
+              "required": [
+                "alt"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "steps": {
+      "type": "array",
+      "description": "Steps, run in order.",
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "step": {
+      "description": "One step: an object with exactly one action key.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/action_goto"
+        },
+        {
+          "$ref": "#/$defs/action_click"
+        },
+        {
+          "$ref": "#/$defs/action_dblclick"
+        },
+        {
+          "$ref": "#/$defs/action_rightClick"
+        },
+        {
+          "$ref": "#/$defs/action_hover"
+        },
+        {
+          "$ref": "#/$defs/action_point"
+        },
+        {
+          "$ref": "#/$defs/action_fill"
+        },
+        {
+          "$ref": "#/$defs/action_type"
+        },
+        {
+          "$ref": "#/$defs/action_clear"
+        },
+        {
+          "$ref": "#/$defs/action_focus"
+        },
+        {
+          "$ref": "#/$defs/action_press"
+        },
+        {
+          "$ref": "#/$defs/action_check"
+        },
+        {
+          "$ref": "#/$defs/action_uncheck"
+        },
+        {
+          "$ref": "#/$defs/action_select"
+        },
+        {
+          "$ref": "#/$defs/action_upload"
+        },
+        {
+          "$ref": "#/$defs/action_drag"
+        },
+        {
+          "$ref": "#/$defs/action_scroll"
+        },
+        {
+          "$ref": "#/$defs/action_waitFor"
+        },
+        {
+          "$ref": "#/$defs/action_waitForResponse"
+        },
+        {
+          "$ref": "#/$defs/action_verify"
+        },
+        {
+          "$ref": "#/$defs/action_wait"
+        },
+        {
+          "$ref": "#/$defs/action_at"
+        },
+        {
+          "$ref": "#/$defs/action_dialog"
+        },
+        {
+          "$ref": "#/$defs/action_switchTo"
+        },
+        {
+          "$ref": "#/$defs/action_download"
+        },
+        {
+          "$ref": "#/$defs/action_mock"
+        },
+        {
+          "$ref": "#/$defs/action_code"
+        },
+        {
+          "$ref": "#/$defs/action_use"
+        }
+      ]
+    },
+    "action_goto": {
+      "type": "object",
+      "description": "Navigate to a path relative to the environment's baseUrl (never an absolute URL in a platform tour).",
+      "properties": {
+        "goto": {
+          "type": "string",
+          "description": "Path, e.g. \"/orders\" or \"#/home\"."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "goto"
+      ],
+      "additionalProperties": false
+    },
+    "action_click": {
+      "type": "object",
+      "description": "Move the cursor to the element and click it.",
+      "properties": {
+        "click": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The element to click."
+        },
+        "button": {
+          "enum": [
+            "left",
+            "right",
+            "middle"
+          ],
+          "description": "Mouse button (default left)."
+        },
+        "modifiers": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "Alt",
+              "Control",
+              "Meta",
+              "Shift",
+              "ControlOrMeta"
+            ]
+          },
+          "description": "Keys held during the click."
+        },
+        "clickCount": {
+          "description": "Number of clicks (2 = double click).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "opensPopup": {
+          "type": "boolean",
+          "description": "The click opens a new tab or window: wait for it and continue there (switch back with { \"switchTo\": \"main\" }). Only the main page is filmed."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "click"
+      ],
+      "additionalProperties": false
+    },
+    "action_dblclick": {
+      "type": "object",
+      "description": "Double-click the element.",
+      "properties": {
+        "dblclick": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The element to double-click."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "dblclick"
+      ],
+      "additionalProperties": false
+    },
+    "action_rightClick": {
+      "type": "object",
+      "description": "Right-click the element (context menu).",
+      "properties": {
+        "rightClick": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The element to right-click."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "rightClick"
+      ],
+      "additionalProperties": false
+    },
+    "action_hover": {
+      "type": "object",
+      "description": "Move the cursor over the element (menus, tooltips).",
+      "properties": {
+        "hover": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The element to hover."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "hover"
+      ],
+      "additionalProperties": false
+    },
+    "action_point": {
+      "type": "object",
+      "description": "Move the cursor to the element to draw the viewer's eye; nothing is clicked.",
+      "properties": {
+        "point": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The element to point at."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "point"
+      ],
+      "additionalProperties": false
+    },
+    "action_fill": {
+      "type": "object",
+      "description": "Click the field, clear it and type the text.",
+      "properties": {
+        "fill": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The field."
+        },
+        "text": {
+          "type": "string",
+          "description": "The text to enter. Use \"{env:NAME}\" with \"secret\": true for credentials."
+        },
+        "secret": {
+          "type": "boolean",
+          "description": "The value is a credential: set without typing, never logged, scrubbed from reports."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "fill",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "action_type": {
+      "type": "object",
+      "description": "Type into the field key by key without clearing it (for fields that react to each key).",
+      "properties": {
+        "type": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The field."
+        },
+        "text": {
+          "type": "string",
+          "description": "The text to enter. Use \"{env:NAME}\" with \"secret\": true for credentials."
+        },
+        "secret": {
+          "type": "boolean",
+          "description": "The value is a credential: set without typing, never logged, scrubbed from reports."
+        },
+        "delay": {
+          "description": "Milliseconds between keys (default 45).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "action_clear": {
+      "type": "object",
+      "description": "Empty a field.",
+      "properties": {
+        "clear": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The field."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "clear"
+      ],
+      "additionalProperties": false
+    },
+    "action_focus": {
+      "type": "object",
+      "description": "Give the element keyboard focus.",
+      "properties": {
+        "focus": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The element."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "focus"
+      ],
+      "additionalProperties": false
+    },
+    "action_press": {
+      "type": "object",
+      "description": "Press a key, on the focused element or on \"on\".",
+      "properties": {
+        "press": {
+          "type": "string",
+          "description": "A key or chord: Enter, Escape, Tab, ArrowDown, Control+A, Shift+Tab…"
+        },
+        "on": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "Focus this element first."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "press"
+      ],
+      "additionalProperties": false
+    },
+    "action_check": {
+      "type": "object",
+      "description": "Tick a checkbox, radio button or switch (no-op if already on).",
+      "properties": {
+        "check": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The checkbox, radio or switch."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "check"
+      ],
+      "additionalProperties": false
+    },
+    "action_uncheck": {
+      "type": "object",
+      "description": "Untick a checkbox or switch (no-op if already off).",
+      "properties": {
+        "uncheck": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The checkbox or switch."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "uncheck"
+      ],
+      "additionalProperties": false
+    },
+    "action_select": {
+      "type": "object",
+      "description": "Choose an option in a <select>.",
+      "properties": {
+        "select": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The <select>."
+        },
+        "option": {
+          "description": "The option: its label or value, a list for multi-select, or { \"label\" | \"value\" | \"index\" }.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "object",
+              "description": "",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "index": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "select",
+        "option"
+      ],
+      "additionalProperties": false
+    },
+    "action_upload": {
+      "type": "object",
+      "description": "Set the files of a file input (or the input behind an upload button).",
+      "properties": {
+        "upload": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The file input, or the button that opens the file chooser."
+        },
+        "files": {
+          "description": "File path(s), relative to the tour file, then to the platform's fixtures/ folder. Synthetic files only.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "upload",
+        "files"
+      ],
+      "additionalProperties": false
+    },
+    "action_drag": {
+      "type": "object",
+      "description": "Drag the element and drop it on \"to\", with a visible cursor path.",
+      "properties": {
+        "drag": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "What to drag."
+        },
+        "to": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "Where to drop it."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "drag",
+        "to"
+      ],
+      "additionalProperties": false
+    },
+    "action_scroll": {
+      "type": "object",
+      "description": "Scroll: a number of pixels with the wheel (negative = up), or a locator to bring into view.",
+      "properties": {
+        "scroll": {
+          "description": "Pixels, or a locator.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/locator"
+            }
+          ]
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "scroll"
+      ],
+      "additionalProperties": false
+    },
+    "action_waitFor": {
+      "type": "object",
+      "description": "Wait (off pace) until the element reaches a state; default visible.",
+      "properties": {
+        "waitFor": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The element."
+        },
+        "state": {
+          "enum": [
+            "visible",
+            "hidden",
+            "attached",
+            "detached"
+          ],
+          "description": "The state to wait for (default visible)."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "waitFor"
+      ],
+      "additionalProperties": false
+    },
+    "action_waitForResponse": {
+      "type": "object",
+      "description": "Wait for a network response (when it was triggered by something other than a step; otherwise put \"waitForResponse\" on that step).",
+      "properties": {
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "type": "string",
+          "description": "URL substring, or /regex/."
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "waitForResponse"
+      ],
+      "additionalProperties": false
+    },
+    "action_verify": {
+      "type": "object",
+      "description": "A check: the element (or page) must be as described within timeouts.verify, else CRITERION failure. The cursor points at it. Without a condition: visible.",
+      "properties": {
+        "verify": {
+          "description": "The element to check, or { \"url\": … } / { \"title\": … } for the page.",
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/locator"
+            },
+            {
+              "type": "object",
+              "description": "The page's URL contains this (or matches /regex/).",
+              "properties": {
+                "url": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "url"
+              ]
+            },
+            {
+              "type": "object",
+              "description": "The page title contains this (or matches /regex/).",
+              "properties": {
+                "title": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "title"
+              ]
+            }
+          ]
+        },
+        "text": {
+          "type": "string",
+          "description": "The element's text contains this (or matches /regex/)."
+        },
+        "exactText": {
+          "type": "string",
+          "description": "The element's text is exactly this (whitespace collapsed)."
+        },
+        "value": {
+          "type": "string",
+          "description": "A field's value is exactly this."
+        },
+        "count": {
+          "description": "Exactly this many visible elements match.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "visible",
+            "hidden",
+            "enabled",
+            "disabled",
+            "checked",
+            "unchecked",
+            "editable",
+            "focused"
+          ],
+          "description": "The element's state."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "verify"
+      ],
+      "additionalProperties": false
+    },
+    "action_wait": {
+      "type": "object",
+      "description": "Pause for a number of seconds (prefer \"at\" or waitFor).",
+      "properties": {
+        "wait": {
+          "description": "Seconds.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "wait"
+      ],
+      "additionalProperties": false
+    },
+    "action_at": {
+      "type": "object",
+      "description": "Wait until this fraction of the scene's narration has played (0–1); places the next actions in time.",
+      "properties": {
+        "at": {
+          "description": "Fraction of the narration, 0 to 1.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "action_dialog": {
+      "type": "object",
+      "description": "How to answer the next alert/confirm/prompt (default: accept). Put it before the step that opens the dialog.",
+      "properties": {
+        "dialog": {
+          "enum": [
+            "accept",
+            "dismiss"
+          ],
+          "description": "accept or dismiss."
+        },
+        "text": {
+          "type": "string",
+          "description": "For a prompt(): the answer to type."
+        },
+        "expect": {
+          "type": "string",
+          "description": "The dialog's message must contain this (or match /regex/), else CRITERION failure when it appears."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "dialog"
+      ],
+      "additionalProperties": false
+    },
+    "action_switchTo": {
+      "type": "object",
+      "description": "Continue on another page: \"main\" (the first tab), \"popup\" / \"last\" (the newest tab).",
+      "properties": {
+        "switchTo": {
+          "enum": [
+            "main",
+            "popup",
+            "last"
+          ],
+          "description": "Which page."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "switchTo"
+      ],
+      "additionalProperties": false
+    },
+    "action_download": {
+      "type": "object",
+      "description": "Click the element and wait for the download it starts; the file is saved in the run folder under downloads/.",
+      "properties": {
+        "download": {
+          "$ref": "common.schema.json#/$defs/locator",
+          "description": "The element that starts the download."
+        },
+        "saveAs": {
+          "type": "string",
+          "description": "File name to save it as (default: the suggested name)."
+        },
+        "expect": {
+          "type": "string",
+          "description": "The suggested file name must contain this (or match /regex/), else CRITERION failure."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "download"
+      ],
+      "additionalProperties": false
+    },
+    "action_mock": {
+      "type": "object",
+      "description": "Answer matching requests with a canned response, for the rest of the run. Needs \"allowMocks\": true on the tour, and every mock is listed in the report: a video shown as evidence must say so.",
+      "properties": {
+        "mock": {
+          "type": "string",
+          "description": "URL substring, or /regex/."
+        },
+        "json": {
+          "description": "JSON body to return."
+        },
+        "body": {
+          "type": "string",
+          "description": "Text body to return."
+        },
+        "contentType": {
+          "type": "string",
+          "description": "Content-Type (default application/json for json, text/plain for body)."
+        },
+        "times": {
+          "description": "Only the first n matching requests.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 1
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "mock"
+      ],
+      "additionalProperties": false
+    },
+    "action_code": {
+      "type": "object",
+      "description": "A code step: a .mjs file (normally in the platform's fragments/) exporting  async ({ page, context, args, ctx }) => …  Must be deterministic.",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "File name, e.g. \"todo-count.mjs\"."
+        },
+        "with": {
+          "type": "object",
+          "description": "Arguments, as args in the function."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "additionalProperties": false
+    },
+    "action_use": {
+      "type": "object",
+      "description": "Run a fragment: platforms/<platform>/fragments/<name>.json (steps) or .mjs (a code step). Extra keys such as \"optional\" apply to each of its steps.",
+      "properties": {
+        "use": {
+          "type": "string",
+          "description": "Fragment name, without extension."
+        },
+        "with": {
+          "type": "object",
+          "description": "Fragment parameters, available to it as {args.<name>}."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "use"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

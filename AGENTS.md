@@ -113,6 +113,84 @@ To replay by hand: `aft run <tour> --headed --pause` (stops at the failure with 
 `--until-step N` (stop after step N, counted across the tour as in report.md; exit 0, no video), `--from-step N`
 (steps before N run fast, unpaced).
 
+## File types
+
+Every definition file is JSON with a published schema (JSON Schema 2020-12, `schemas/`, versioned `…/v1/…` in
+`$id`). **The schemas are authoritative**: the loader, `aft validate` and editors all check against the same files,
+and where this guide and a schema disagree, the schema wins. Each file starts with `"$schema": "<relative path>"`, so
+VS Code validates and autocompletes it with no setup (`.vscode/settings.json` also maps the file names).
+
+| file | purpose | schema |
+|---|---|---|
+| `*.tour.json` | a tour: scenes of narration and steps (official suffix) | `schemas/tour.schema.json` |
+| `platforms/<p>/platform.json` | how the app behaves everywhere | `schemas/platform.schema.json` |
+| `platforms/<p>/environments.json` | where it runs (baseUrl, launch / attach) | `schemas/environments.schema.json` |
+| `platforms/<p>/login.json` | sign-in steps per role | `schemas/login.schema.json` |
+| `platforms/<p>/fragments/<f>.json` | reusable steps with parameters | `schemas/fragment.schema.json` |
+| `platforms/<p>/fixtures/<f>.json` | test data, hooks, off-camera steps | `schemas/fixture.schema.json` |
+| (shared) | locators and steps, used by all of the above | `schemas/common.schema.json` |
+
+`aft schema [type] --json` prints a schema (with the shared definitions), so an agent can fetch the exact format.
+`aft validate <file>` checks any definition file against its schema (a tour also gets a dry run; add `--schema-only`
+to skip it). A file that doesn't match is a config error (exit 1) listing every problem by path:
+
+```
+error: my.tour.json doesn't match the tour schema (schemas/tour.schema.json):
+  scenes[2].steps[0].click: unknown key "nmae" (a locator has role, name, exact, label, …)
+  scenes[2].steps[1]: missing "text"
+  scenes[3].steps[4].state: expected one of "visible", "hidden", "enabled", …
+```
+
+The schemas are generated from `src/schema-defs.mjs` (`npm run schemas`; a test fails if they're stale). YAML isn't
+accepted yet; `.tour.json` is the format.
+
+## Steps
+
+One action key per step (the schema's `$defs/action_<name>` has every option, with descriptions).
+
+| step | does | options |
+|---|---|---|
+| `{ "goto": "/path" }` | open a path under the environment's baseUrl | |
+| `{ "click": L }` | move the cursor there and click | `button` (left/right/middle), `modifiers`, `clickCount`, `opensPopup` |
+| `{ "dblclick": L }` / `{ "rightClick": L }` | double / right click | |
+| `{ "hover": L }` / `{ "point": L }` | move the cursor (point: just to draw the eye) | |
+| `{ "fill": L, "text": "…" }` | clear and type | `secret` |
+| `{ "type": L, "text": "…" }` | type key by key, without clearing | `delay`, `secret` |
+| `{ "clear": L }` / `{ "focus": L }` | empty a field / focus it | |
+| `{ "press": "Enter" }` | a key or chord | `on`: an element to press it on |
+| `{ "check": L }` / `{ "uncheck": L }` | checkbox, radio, switch | |
+| `{ "select": L, "option": … }` | a `<select>` option: label/value, list, or `{ label \| value \| index }` | |
+| `{ "upload": L, "files": "a.pdf" }` | file input or upload button (relative to the tour, then the platform's fixtures/) | |
+| `{ "drag": L, "to": L }` | drag and drop with a visible cursor path | |
+| `{ "scroll": 400 }` / `{ "scroll": L }` | wheel by pixels / bring an element into view | |
+| `{ "waitFor": L }` | wait off pace | `state`: visible, hidden, attached, detached |
+| `{ "verify": L }` | a check (CRITERION on failure); without a condition: visible | `text` (contains or /regex/), `exactText`, `value`, `count` (visible matches), `state` (visible, hidden, enabled, disabled, checked, unchecked, editable, focused) |
+| `{ "verify": { "url": "…" } }` / `{ "verify": { "title": "…" } }` | the page's URL / title contains (or /regex/) | |
+| `{ "dialog": "accept" \| "dismiss" }` | how to answer the next alert/confirm/prompt (default accept) | `text` (prompt answer), `expect` (message; CRITERION if different) |
+| `{ "switchTo": "main" \| "popup" \| "last" }` | continue on another tab (see `opensPopup`); only the main tab is filmed | |
+| `{ "download": L }` | click and save the download to `<run>/downloads/` | `saveAs`, `expect` (file name; CRITERION if different) |
+| `{ "waitForResponse": "/api/x" }` | wait for a response; better as an option on the step that triggers it | `status` (else APP), `method` |
+| `{ "mock": "/api/x", "json": … }` | canned responses for the rest of the run; needs `"allowMocks": true` on the tour, and every mock is in report.json `mocks` and the warnings | `status`, `body`, `contentType`, `method`, `times` |
+| `{ "wait": 1.5 }` / `{ "at": 0.5 }` | pause seconds / wait until that fraction of the narration | |
+| `{ "use": "frag", "with": {…} }` / `{ "code": "x.mjs", "with": {…} }` | a fragment / a code step (see Platforms) | |
+
+On any step: `optional`, `timeout`, `retries`, `criterion`, `comment`, and `waitForResponse` + `status` + `method`
+(listen before acting, so the response can't be missed). Steps that may already have had their effect (code, mock,
+download, dialog, a waited-for response, a popup) are never retried. URL and text patterns are substrings, or
+`/regex/flags`.
+
+**Locators** (`L`): a string (tried as button/link/tab/… by exact name, label, placeholder, the same roles by partial
+name, text, a `name=` attribute, a custom-element tag; `#`, `.`, `[` or `css=` mean CSS), or an object with exactly
+one of `role` (+`name`), `label`, `placeholder`, `text`, `testId`, `alt`, `css` (+`exact`), narrowed by `has` /
+`hasNot` (a locator inside it), `hasText` / `hasNotText`, `nth`, and scoped by `within` (search inside the element
+another locator finds; nest them to chain) and `frame` (iframe selector, or a list for nested frames):
+
+```json
+{ "click": { "role": "button", "name": "Edit", "within": { "role": "row", "hasText": "Beta" } } }
+{ "verify": { "role": "row", "has": { "role": "button", "name": "Edit" } }, "count": 2 }
+{ "click": { "role": "button", "name": "Pay", "frame": "iframe[title=checkout]" } }
+```
+
 ## Platforms
 
 A **platform** is everything about one app that isn't a particular tour. Tours name a platform and only describe
@@ -313,7 +391,7 @@ snapshots, the console and network; find the last red action.
 
 ## Code map
 
-`src/cli.mjs` commands and run folders · `steps.mjs` step runner, locators, suggestions, code steps · `declarative.mjs`
+`src/cli.mjs` commands and run folders · `schema-defs.mjs` the schemas' source, `schema.mjs` validation and messages · `steps.mjs` step runner, locators, suggestions, code steps · `declarative.mjs`
 tour.json → a run (platform composition, launch/attach, login, hooks, fixtures) · `platform.mjs` platforms, fragments,
 fixtures, init · `platform-cli.mjs` `aft platform` · `session.mjs` / `session-daemon.mjs` sessions, snapshot, locate,
 try-step · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·

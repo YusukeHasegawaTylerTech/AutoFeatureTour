@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { schemaRef } from './schema.mjs';
 import { spawn } from 'node:child_process';
 
 // ---- Stories ---------------------------------------------------------------------------------------------------
@@ -253,6 +254,8 @@ export async function plan({ discovery, outDir, name, prompt, story, style, llm,
   ] });
   // Point back at the run that produced it (discovery screenshots live there).
   tour.plannedAt = new Date().toISOString();
+  // "$schema" first, so the generated file validates and autocompletes in an editor.
+  tour = { $schema: schemaRef(outDir, 'tour'), ...tour };
   fs.writeFileSync(path.join(outDir, 'tour.json'), JSON.stringify(tour, null, 2));
   fs.writeFileSync(path.join(outDir, 'script.md'), toScriptMarkdown(tour));
   return tour;

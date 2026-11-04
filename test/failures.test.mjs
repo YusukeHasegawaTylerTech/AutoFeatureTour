@@ -36,6 +36,7 @@ async function tour(steps, extra = {}, args = []) {
   const t = { name: 'fixture', baseUrl: app.url, timeouts: { action: 2500, verify: 2500, navigation: 4000, optional: 1000 }, retries: 0,
     scenes: [{ title: 'Fixture', narration: 'Testing.', url: extra.url ?? '/ok', steps }], ...extra };
   delete t.url;
+  delete t.env; // the CLI's environment variables, not a tour key
   fs.writeFileSync(file, JSON.stringify(t));
   const out = path.join(dir, 'run');
   const r = await runCli(['run', file, '--speech', 'silent', '--out', out, ...args], { env: extra.env });

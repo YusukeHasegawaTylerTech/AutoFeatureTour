@@ -1,4 +1,5 @@
 {
+  "$schema": "../../../schemas/fragment.schema.json",
   "description": "The RMS sign-in form (as the e2e LoginPage): username, password (set through the DOM, never typed), CJIS acknowledgment, Sign In.",
   "params": { "username": { "required": true }, "password": { "required": true } },
   "steps": [

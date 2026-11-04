@@ -1,37 +1,20 @@
-// Declarative tour steps, so a tour can be plain JSON instead of code (and can be generated).
-//
-// A step is an object with one action key:
-//   { "goto": "/path" }                       navigate (relative to baseUrl)
-//   { "click": <target> }                     move the cursor there and click
-//   { "fill": <target>, "text": "..." }       click, clear and type
-//   { "press": "Enter" }                      keyboard
-//   { "hover": <target> } / { "point": ... }  move the cursor there (point: alias, for "look at this")
-//   { "select": <target>, "option": "..." }   choose a <select> option
-//   { "scroll": 400 }                         wheel by pixels (negative = up)
-//   { "waitFor": <target> }                   wait (off-pace) until visible
-//   { "verify": <target> }                    assert it's visible (fails clearly if not) and point at it
-//   { "wait": 1.5 }                           pause, in seconds
-//   { "at": 0.5 }                             wait until 50% of the scene's narration has played
-//   { "code": "x.mjs", "with": { ... } }      run a code step (a platform fragment): see runCode below
-//   { "use": "name", "with": { ... } }        a fragment's steps (expanded when the tour loads; see platform.mjs)
-// Optional on any step: "optional": true (log and continue if it fails), "timeout": ms (defaults: tour.json
-// "timeouts": { "action": 10000, "verify": 15000, "waitFor": 30000, "navigation": 30000 }).
-//
-// A target is either a string or an object:
-//   "Save"                                    a button/link/tab/menu item named Save, else a label, placeholder or text
-//                                             (a custom-element tag name such as "forge-app-bar" is finally tried as CSS)
-//   "css=.toolbar button"  "#id"  ".class"    CSS (anything starting with # . [ or css=)
-//   { "role": "button", "name": "Save" }     ARIA role + accessible name
-//   { "label": "Email" } { "placeholder": "Search" } { "text": "Welcome" } { "testId": "save" } { "css": "..." }
-//   plus "nth": n to pick among several matches (default: the first visible one).
+// Declarative tour steps, so a tour can be plain JSON instead of code (and can be generated). The authoritative list
+// of steps, locators and their options is schemas/common.schema.json (source: src/schema-defs.mjs); AGENTS.md has
+// the table. A step is an object with one action key plus common options (optional, timeout, retries, criterion,
+// waitForResponse/status/method). A locator is a string (tried as role/label/placeholder/text…) or an object with one
+// of role, label, placeholder, text, testId, alt, css, narrowed by has/hasNot/hasText/hasNotText/nth and scoped by
+// within (another locator) and frame (iframe selectors).
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Failure } from './failures.mjs';
 import { log, sleep } from './util.mjs';
 
 const ROLES = ['button', 'link', 'tab', 'menuitem', 'checkbox', 'radio', 'option', 'switch', 'combobox', 'textbox'];
-const ACTIONS = ['goto', 'click', 'fill', 'press', 'hover', 'point', 'select', 'scroll', 'waitFor', 'verify', 'wait', 'at', 'code'];
+// Order matters only for waitForResponse, which is also an option on other steps: any other action key wins.
+const ACTIONS = ['goto', 'click', 'dblclick', 'rightClick', 'hover', 'point', 'fill', 'type', 'clear', 'focus', 'press', 'check', 'uncheck', 'select', 'upload',
+  'drag', 'scroll', 'waitFor', 'verify', 'wait', 'at', 'dialog', 'switchTo', 'download', 'mock', 'code', 'waitForResponse'];
 
 export function actionOf(step) {
   const a = ACTIONS.find(k => k in step);
@@ -41,7 +24,13 @@ export function actionOf(step) {
 
 /** Candidate locators for a target, most specific first; each carries "how" (the equivalent target, for aft locate). */
 export function candidates(page, target) {
-  const as = (loc, how) => Object.assign(loc, { how });
+  // has / hasNot / hasText / hasNotText narrow every candidate; within / frame are applied by scope() first.
+  const f = typeof target === 'object' && target ? target : {};
+  const inner = t => { const c = candidates(page, t); return c.slice(1).reduce((a, b) => a.or(b), c[0]); };
+  const filter = (f.has || f.hasNot || f.hasText || f.hasNotText)
+    ? { ...(f.has ? { has: inner(f.has) } : {}), ...(f.hasNot ? { hasNot: inner(f.hasNot) } : {}), ...(f.hasText ? { hasText: f.hasText } : {}), ...(f.hasNotText ? { hasNotText: f.hasNotText } : {}) }
+    : null;
+  const as = (loc, how) => Object.assign(filter ? loc.filter(filter) : loc, { how });
   if (typeof target === 'string') {
     if (target.startsWith('css=')) return [as(page.locator(target.slice(4)), { css: target.slice(4) })];
     if (/^[#.[]/.test(target)) return [as(page.locator(target), { css: target })];
@@ -56,22 +45,37 @@ export function candidates(page, target) {
       ...(/^[a-z][a-z0-9]*(-[a-z0-9]+)+$/.test(target) ? [as(page.locator(target), { css: target })] : [])];
   }
   const t = target;
-  const how = Object.fromEntries(Object.entries(t).filter(([k]) => k !== 'nth'));
+  const how = Object.fromEntries(Object.entries(t).filter(([k]) => !['nth', 'within', 'frame'].includes(k)));
   if (t.css) return [as(page.locator(t.css), how)];
   if (t.testId) return [as(page.getByTestId(t.testId), how)];
   if (t.role) return [as(page.getByRole(t.role, { name: t.name, exact: t.exact ?? false }), how)];
   if (t.label) return [as(page.getByLabel(t.label), how)];
   if (t.placeholder) return [as(page.getByPlaceholder(t.placeholder), how)];
   if (t.text) return [as(page.getByText(t.text, { exact: t.exact ?? false }), how)];
+  if (t.alt) return [as(page.getByAltText(t.alt, { exact: t.exact ?? false }), how)];
   throw new Error(`Unusable target ${JSON.stringify(target)}`);
 }
 
 /** Resolves a target to one visible element, retrying until timeout (pages render asynchronously). */
-export async function resolve(page, target, { timeout = 10000, warnings } = {}) {
+/**
+ * Where a locator searches: the page, inside its "frame" (iframe selectors, outermost first), inside the element its
+ * "within" resolves to. Returns the root and the target without those keys.
+ */
+export async function scope(page, target, opts = {}) {
+  if (!target || typeof target !== 'object') return { root: page, target };
+  let root = page;
+  for (const f of [target.frame ?? []].flat()) root = root.frameLocator(f);
+  if (target.within) root = await resolve(root, target.within, opts);
+  const { within, frame, ...rest } = target;
+  return { root, target: rest };
+}
+
+export async function resolve(page, target0, { timeout = 10000, warnings } = {}) {
   const until = Date.now() + timeout;
+  const { root, target } = await scope(page, target0, { timeout, warnings });
   const nth = typeof target === 'object' ? target.nth : undefined;
   for (;;) {
-    for (const loc of candidates(page, target)) {
+    for (const loc of candidates(root, target)) {
       const n = await loc.count().catch(() => 0);
       if (!n) continue;
       if (nth !== undefined) { if (n > nth && await loc.nth(nth).isVisible()) return loc.nth(nth); continue; }
@@ -79,11 +83,11 @@ export async function resolve(page, target, { timeout = 10000, warnings } = {}) 
       for (let i = 0; i < Math.min(n, 20) && visible.length < 2; i++) if (await loc.nth(i).isVisible().catch(() => false)) visible.push(i);
       if (visible.length) {
         // Several visible matches: use the first, but say so (add "nth" or a role to pick one deliberately).
-        if (visible.length > 1) warnings?.push(`ambiguous target ${JSON.stringify(target)}: ${n} matches, used the first visible one (add "nth" or a role)`);
+        if (visible.length > 1) warnings?.push(`ambiguous target ${JSON.stringify(target0)}: ${n} matches, used the first visible one (add "nth" or a role)`);
         return loc.nth(visible[0]);
       }
     }
-    if (Date.now() > until) throw new Error(`Target not found: ${JSON.stringify(target)}`);
+    if (Date.now() > until) throw new Error(`Target not found: ${JSON.stringify(target0)}`);
     await sleep(250);
   }
 }
@@ -92,7 +96,7 @@ export async function resolve(page, target, { timeout = 10000, warnings } = {}) 
 export function plainActor(page) {
   return {
     page,
-    click: el => el.click(),
+    click: (el, o = {}) => el.click({ button: o.button, clickCount: o.clickCount, modifiers: o.modifiers }),
     typeInto: (el, text) => el.fill(text),
     moveTo: el => el.hover().catch(() => {}),
     at: async () => {},
@@ -179,13 +183,107 @@ async function runCode(t, step, { baseUrl, timeouts, warnings }) {
 }
 
 /** Runs one step on the tour. Pacing ("at") is the caller's business unless the step is an explicit "at". */
-export async function runStep(t, step, { baseUrl, timeouts = {}, ready: readyCfg, errors, warnings = [] }) {
+/** A URL pattern from a step: "/regex/" or a substring. */
+const urlMatcher = pat => {
+  const m = String(pat).match(/^\/(.+)\/([dgimsuy]*)$/);
+  if (m) { const re = new RegExp(m[1], m[2]); return u => re.test(u); }
+  return u => u.includes(pat);
+};
+const matches = (pat, value) => urlMatcher(pat)(String(value ?? ''));
+
+/** Polls fn() until it returns true or the time is up; returns the last value fn reported. */
+async function until(fn, timeout) {
+  const end = Date.now() + timeout;
+  for (;;) {
+    const r = await fn().catch(e => ({ ok: false, seen: e.message.split('\n')[0] }));
+    if (r.ok || Date.now() > end) return r;
+    await sleep(200);
+  }
+}
+
+/** Number of visible elements a locator matches (the first candidate strategy that matches anything). */
+async function visibleCount(page, target) {
+  const { root, target: t } = await scope(page, target, { timeout: 1000 }).catch(() => ({ root: null }));
+  if (!root) return 0;
+  for (const loc of candidates(root, t)) {
+    const n = await loc.count().catch(() => 0);
+    if (!n) continue;
+    let v = 0;
+    for (let i = 0; i < Math.min(n, 200); i++) if (await loc.nth(i).isVisible().catch(() => false)) v++;
+    if (v) return v;
+  }
+  return 0;
+}
+
+const failCheck = message => { throw Object.assign(new Error(`Verification failed: ${message}`), { failure: 'criterion' }); };
+
+/** verify: visible (default), or a condition on the element or the page. */
+async function verify(t, step, { timeout, warnings }) {
+  const page = t.page;
+  const v = step.verify;
+  const show = JSON.stringify(v);
+  if (v && typeof v === 'object' && ('url' in v || 'title' in v) && Object.keys(v).length === 1) {
+    const what = 'url' in v ? 'URL' : 'title';
+    const r = await until(async () => { const seen = 'url' in v ? page.url() : await page.title(); return { ok: matches(v.url ?? v.title, seen), seen }; }, timeout);
+    if (!r.ok) failCheck(`page ${what} is "${r.seen}", expected ${String(v.url ?? v.title).startsWith('/') ? 'to match' : 'to contain'} "${v.url ?? v.title}"`);
+    return;
+  }
+  if ('count' in step) {
+    const want = Number(step.count);
+    const r = await until(async () => { const n = await visibleCount(page, v); return { ok: n === want, seen: n }; }, timeout);
+    if (!r.ok) failCheck(`${show}: ${r.seen} visible, expected ${want}`);
+    return;
+  }
+  if (step.state === 'hidden') {
+    const r = await until(async () => { const n = await visibleCount(page, v); return { ok: n === 0, seen: n }; }, timeout);
+    if (!r.ok) failCheck(`${show} is still visible (${r.seen} match(es)), expected hidden`);
+    return;
+  }
+  const el = await resolve(page, v, { timeout, warnings }).catch(() => failCheck(`${show} is not on the page (${page.url()})`));
+  const conditions = [
+    ['text', async () => { const s = (await el.innerText()).replace(/\s+/g, ' ').trim(); return { ok: matches(step.text, s), seen: `text "${s.slice(0, 120)}"` }; }, `text containing "${step.text}"`],
+    ['exactText', async () => { const s = (await el.innerText()).replace(/\s+/g, ' ').trim(); return { ok: s === String(step.exactText).replace(/\s+/g, ' ').trim(), seen: `text "${s.slice(0, 120)}"` }; }, `text "${step.exactText}"`],
+    ['value', async () => { const s = await el.inputValue(); return { ok: s === String(step.value), seen: `value "${s.slice(0, 120)}"` }; }, `value "${step.value}"`],
+  ].filter(([k]) => k in step);
+  const STATES = {
+    visible: async () => ({ ok: await el.isVisible(), seen: 'hidden' }),
+    enabled: async () => ({ ok: await el.isEnabled(), seen: 'disabled' }),
+    disabled: async () => ({ ok: await el.isDisabled(), seen: 'enabled' }),
+    checked: async () => ({ ok: await el.isChecked(), seen: 'unchecked' }),
+    unchecked: async () => ({ ok: !(await el.isChecked()), seen: 'checked' }),
+    editable: async () => ({ ok: await el.isEditable(), seen: 'not editable' }),
+    focused: async () => ({ ok: await el.evaluate(e => e === document.activeElement || e.contains(document.activeElement)), seen: 'not focused' }),
+  };
+  if (step.state) conditions.push(['state', STATES[step.state], step.state]);
+  for (const [, fn, want] of conditions) {
+    const r = await until(fn, timeout);
+    if (!r.ok) failCheck(`${show} has ${r.seen}, expected ${want}`);
+  }
+  await t.moveTo(el, { steps: 30 });
+}
+
+/** The page a popup / new tab opened by fn; t.page switches to it (the main page is kept as t.mainPage). */
+async function inPopup(t, fn, timeout) {
+  const [popup] = await Promise.all([t.page.context().waitForEvent('page', { timeout }), fn()]);
+  await popup.waitForLoadState('domcontentloaded').catch(() => {});
+  t.mainPage ??= t.page;
+  t.page = popup;
+  return popup;
+}
+
+/** Runs one step on the tour. Pacing ("at") is the caller's business unless the step is an explicit "at". */
+export async function runStep(t, step, { baseUrl, timeouts = {}, ready: readyCfg, errors, warnings = [], allowMocks = false, outDir }) {
   const page = t.page;
   const ready = readyCfg ? { ...readyCfg, warnings } : readyCfg;
   // Per-target defaults (tour.json "timeouts"), per-step override; slow screens such as reports need more.
   // An optional step gives up sooner, so a miss doesn't stall the scene.
   const timeout = step.timeout ?? (step.optional ? timeouts.optional ?? 3000 : timeouts.action ?? 10000);
-  switch (actionOf(step)) {
+  const el = target => resolve(page, target, { timeout, warnings });
+  const a = actionOf(step);
+  // waitForResponse on an action: listen before acting, so a fast response can't be missed.
+  const waiting = step.waitForResponse !== undefined && a !== 'waitForResponse' ? watchResponse(page, step, timeouts) : null;
+  waiting?.catch(() => {}); // awaited below; don't let an early failure go unhandled
+  switch (a) {
     case 'goto':
       // A page that doesn't load in time is the app's (or the network's) problem, not the script's.
       await page.goto(absolute(baseUrl, step.goto), { timeout: timeouts.navigation ?? 30000 }).catch(e => {
@@ -194,47 +292,148 @@ export async function runStep(t, step, { baseUrl, timeouts = {}, ready: readyCfg
       });
       await settle(page, ready);
       break;
-    case 'click': await t.click(await resolve(page, step.click, { timeout, warnings })); await settle(page, ready); break;
-    case 'fill': {
-      const el = await resolve(page, step.fill, { timeout, warnings });
-      if (step.secret) {
-        // Set through the DOM, not typed: the value never appears in Playwright's action log or a trace.
-        await t.moveTo(el);
-        await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); },
-          String(step.text ?? ''));
-      } else await t.typeInto(el, String(step.text ?? ''));
+    case 'click': {
+      const target = await el(step.click);
+      const opts = { button: step.button, clickCount: step.clickCount !== undefined ? Number(step.clickCount) : undefined, modifiers: step.modifiers };
+      if (step.opensPopup) await inPopup(t, () => t.click(target, opts), timeout);
+      else await t.click(target, opts);
+      await settle(t.page, ready);
       break;
     }
-    case 'press': await page.keyboard.press(step.press); await sleep(300); await settle(page, ready); break;
-    case 'hover': await t.moveTo(await resolve(page, step.hover, { timeout, warnings }), { steps: 35 }); break;
-    case 'point': await t.moveTo(await resolve(page, step.point, { timeout, warnings }), { steps: 35 }); break;
+    case 'dblclick': await t.click(await el(step.dblclick), { clickCount: 2 }); await settle(page, ready); break;
+    case 'rightClick': await t.click(await el(step.rightClick), { button: 'right' }); await settle(page, ready); break;
+    case 'fill': case 'type': {
+      const field = await el(step[a]);
+      const text = String(step.text ?? '');
+      if (step.secret) {
+        // Set through the DOM, not typed: the value never appears in Playwright's action log or a trace.
+        await t.moveTo(field);
+        await field.evaluate((e, [v, append]) => { e.value = append ? e.value + v : v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); },
+          [text, a === 'type']);
+      } else if (a === 'fill') await t.typeInto(field, text);
+      else { await t.click(field); await field.pressSequentially(text, { delay: step.delay !== undefined ? Number(step.delay) : 45 }); }
+      break;
+    }
+    case 'clear': { const f = await el(step.clear); await t.moveTo(f); await f.clear(); break; }
+    case 'focus': { const f = await el(step.focus); await t.moveTo(f); await f.focus(); break; }
+    case 'press':
+      if (step.on) { const f = await el(step.on); await t.moveTo(f); await f.press(step.press); }
+      else await page.keyboard.press(step.press);
+      await sleep(300); await settle(page, ready); break;
+    case 'check': case 'uncheck': {
+      const box = await el(step[a]);
+      await t.moveTo(box);
+      await (a === 'check' ? box.check({ timeout }) : box.uncheck({ timeout }));
+      await settle(page, ready);
+      break;
+    }
+    case 'hover': await t.moveTo(await el(step.hover), { steps: 35 }); break;
+    case 'point': await t.moveTo(await el(step.point), { steps: 35 }); break;
     case 'select': {
-      const el = await resolve(page, step.select, { timeout });
-      await t.moveTo(el);
-      await el.selectOption(step.option);
+      const sel = await el(step.select);
+      await t.moveTo(sel);
+      await sel.selectOption(step.option);
+      break;
+    }
+    case 'upload': {
+      const files = [step.files].flat();
+      const target = await el(step.upload);
+      await t.moveTo(target);
+      // A file input takes the files directly; anything else (an upload button) opens a file chooser.
+      if (await target.evaluate(e => e.tagName === 'INPUT' && e.type === 'file')) await target.setInputFiles(files);
+      else { const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout }), t.click(target)]); await chooser.setFiles(files); }
+      await settle(page, ready);
+      break;
+    }
+    case 'drag': {
+      const from = await el(step.drag);
+      const to = await el(step.to);
+      const a0 = await t.moveTo(from);
+      await page.mouse.down();
+      await to.scrollIntoViewIfNeeded();
+      const b = await to.boundingBox();
+      if (!b) throw new Error('drop target not visible');
+      await page.mouse.move(a0.x ?? b.x, a0.y ?? b.y, { steps: 5 });
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 30 });
+      await page.mouse.up();
+      await settle(page, ready);
       break;
     }
     case 'scroll': {
-      const vp = page.viewportSize();
-      await page.mouse.move(vp.width / 2, vp.height / 2, { steps: 20 });
-      await page.mouse.wheel(0, Number(step.scroll));
+      if (typeof step.scroll === 'number' || /^-?\d+(\.\d+)?$/.test(String(step.scroll))) {
+        const vp = page.viewportSize();
+        await page.mouse.move(vp.width / 2, vp.height / 2, { steps: 20 });
+        await page.mouse.wheel(0, Number(step.scroll));
+      } else await t.moveTo(await el(step.scroll), { steps: 30 }); // moveTo scrolls it into view
       await sleep(400);
       break;
     }
-    case 'waitFor': await resolve(page, step.waitFor, { timeout: step.timeout ?? timeouts.waitFor ?? 30000 }); break;
-    case 'verify': {
-      let el;
-      try { el = await resolve(page, step.verify, { timeout: step.timeout ?? timeouts.verify ?? 15000, warnings }); }
-      catch { throw new Error(`Verification failed: ${JSON.stringify(step.verify)} is not on the page (${page.url()})`); }
-      await t.moveTo(el, { steps: 30 });
+    case 'waitFor': {
+      const wait = step.timeout ?? timeouts.waitFor ?? 30000;
+      const state = step.state ?? 'visible';
+      if (state === 'visible') { await resolve(page, step.waitFor, { timeout: wait }); break; }
+      const r = await until(async () => {
+        const { root, target } = await scope(page, step.waitFor, { timeout: 1000 });
+        const counts = await Promise.all(candidates(root, target).map(c => c.count().catch(() => 0)));
+        const n = counts.reduce((x, y) => x + y, 0);
+        const v = state === 'hidden' ? await visibleCount(page, step.waitFor) : 0;
+        return { ok: state === 'attached' ? n > 0 : state === 'detached' ? n === 0 : v === 0, seen: n };
+      }, wait);
+      if (!r.ok) throw new Error(`Timeout: ${JSON.stringify(step.waitFor)} didn't become ${state} within ${wait / 1000}s`);
       break;
     }
+    case 'verify': await verify(t, step, { timeout: step.timeout ?? timeouts.verify ?? 15000, warnings }); break;
     case 'wait': await sleep(Number(step.wait) * 1000); break;
     case 'at': await t.at(Number(step.at)); break;
+    case 'dialog': t.dialogPlan = { action: step.dialog, text: step.text, expect: step.expect }; break;
+    case 'switchTo': {
+      const pages = page.context().pages().filter(p => !p.isClosed());
+      t.mainPage ??= pages[0];
+      t.page = step.switchTo === 'main' ? t.mainPage : pages[pages.length - 1];
+      await t.page.bringToFront().catch(() => {});
+      break;
+    }
+    case 'download': {
+      const target = await el(step.download);
+      const [dl] = await Promise.all([page.waitForEvent('download', { timeout }), t.click(target)]);
+      const name = dl.suggestedFilename();
+      const dir = path.join(outDir ?? t.outDir ?? process.cwd(), 'downloads');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, path.basename(step.saveAs ?? name));
+      await dl.saveAs(file);
+      (t.downloads ??= []).push(file);
+      if (step.expect !== undefined && !matches(step.expect, name)) failCheck(`downloaded "${name}", expected a file name ${String(step.expect).startsWith('/') ? 'matching' : 'containing'} "${step.expect}"`);
+      break;
+    }
+    case 'mock': {
+      if (!allowMocks) throw new Error('mock steps need "allowMocks": true on the tour (mocked responses are listed in the report)');
+      const match = urlMatcher(step.mock);
+      const body = step.json !== undefined ? JSON.stringify(step.json) : String(step.body ?? '');
+      const contentType = step.contentType ?? (step.json !== undefined ? 'application/json' : 'text/plain');
+      await page.context().route(u => match(u.href), route => (step.method && route.request().method() !== step.method ? route.fallback()
+        : route.fulfill({ status: Number(step.status ?? 200), contentType, body })), step.times ? { times: Number(step.times) } : undefined);
+      (t.mocks ??= []).push({ pattern: step.mock, status: Number(step.status ?? 200), method: step.method ?? null });
+      warnings.push(`mocked: ${step.method ?? 'any'} ${step.mock} → ${step.status ?? 200} (this part of the run is not end to end)`);
+      break;
+    }
+    case 'waitForResponse': await watchResponse(page, step, timeouts); break;
     case 'code': await runCode(t, step, { baseUrl, timeouts, warnings }); await settle(page, ready); break;
   }
-  const err = await appError(page, errors);
+  if (waiting) await waiting;
+  if (t.dialogFailure) { const m = t.dialogFailure; t.dialogFailure = null; failCheck(m); }
+  const err = await appError(t.page, errors);
   if (err) throw new Error(`the app showed an error: ${err}`);
+}
+
+/** Waits for a response matching step.waitForResponse (+ method); a wrong "status" is an APP failure. */
+async function watchResponse(page, step, timeouts) {
+  const match = urlMatcher(step.waitForResponse);
+  const wait = step.timeout ?? timeouts.waitFor ?? 30000;
+  const res = await page.waitForResponse(r => match(r.url()) && (!step.method || r.request().method() === step.method), { timeout: wait })
+    .catch(() => { throw new Error(`no response matching "${step.waitForResponse}" arrived within ${wait / 1000}s`); });
+  if (step.status !== undefined && res.status() !== Number(step.status))
+    throw new Error(`the app showed an error: ${res.request().method()} ${res.url().replace(/\?.*$/, '')} ${res.status()} (expected ${step.status})`);
+  return res;
 }
 
 /**
@@ -266,7 +465,7 @@ function appErrorPolicy(t, marks, entry) {
 /** Thrown at --until-step: the requested part of the run is done. */
 export class StopRun extends Error {}
 
-export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = false, timeouts, report, scene, ready, errors, criteria = [], retries = 1, range } = {}) {
+export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = false, timeouts, report, scene, ready, errors, criteria = [], retries = 1, range, allowMocks, outDir } = {}) {
   const paced = unpaced || steps.some(s => 'at' in s); // unpaced: off camera (login, setup), as fast as possible
   const actions = steps.filter(s => !['at', 'wait', 'waitFor'].includes(actionOf(s)));
   let i = 0;
@@ -299,11 +498,12 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
       // Rule-based retries for actions only (timeouts, elements not there yet). A failed check is never retried.
       for (let attempt = 0; ; attempt++) {
         try {
-          await runStep(t, step, { baseUrl, timeouts, ready, errors, warnings });
+          await runStep(t, step, { baseUrl, timeouts, ready, errors, warnings, allowMocks, outDir });
           appErrorPolicy(t, marks, entry);
           break;
         } catch (e) {
-          if (kind === 'check' || a === 'code' || e.failure || attempt >= (step.retries ?? retries) || !/Timeout|not found|not visible|detached/i.test(e.message)) throw e;
+          // Never retried: checks, code steps, and steps whose effect may already have happened.
+          if (kind === 'check' || ['code', 'mock', 'download', 'dialog'].includes(a) || step.waitForResponse !== undefined || step.opensPopup || e.failure || attempt >= (step.retries ?? retries) || !/Timeout|not found|not visible|detached/i.test(e.message)) throw e;
           log(`${scene ?? 'setup'} step ${index}: retrying (${e.message.split('\n')[0]})`);
           await settle(t.page, ready);
           entry.retried = attempt + 1;
@@ -335,8 +535,8 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
 /** A step that couldn't be done; the CLI maps it to exit code 2. */
 export class StepError extends Error {}
 
-const targetOf = step => step[actionOf(step)] && !['goto', 'code', 'press'].includes(actionOf(step)) && typeof step[actionOf(step)] !== 'number' ? step[actionOf(step)] : null;
-const targetText = t => (typeof t === 'string' ? t.replace(/^css=/, '') : t.name ?? t.label ?? t.placeholder ?? t.text ?? t.testId ?? t.css ?? '');
+const targetOf = step => step[actionOf(step)] && !['goto', 'code', 'press', 'dialog', 'switchTo', 'mock', 'waitForResponse', 'wait', 'at'].includes(actionOf(step)) && typeof step[actionOf(step)] !== 'number' ? step[actionOf(step)] : null;
+const targetText = t => (typeof t === 'string' ? t.replace(/^css=/, '') : t.name ?? t.label ?? t.placeholder ?? t.text ?? t.alt ?? t.testId ?? t.css ?? '');
 
 /** Edit distance (optimal string alignment: a swapped pair of letters is one edit), for closest-match suggestions. */
 function distance(a, b) {

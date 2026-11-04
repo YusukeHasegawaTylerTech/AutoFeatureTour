@@ -1,4 +1,5 @@
 {
+  "$schema": "../../../schemas/tour.schema.json",
   "name": "todomvc-fixture-demo",
   "platform": "todomvc",
   "fixtures": ["three-tasks"],

@@ -1,0 +1,1039 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofeaturetour.local/schemas/v1/tour.schema.json",
+  "title": "AutoFeatureTour tour (*.tour.json)",
+  "description": "What to show: scenes of narration and steps. Names its platform; holds no URLs, credentials, launch commands or app-wide settings (stand-alone tours without \"platform\" may, for quick experiments).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "scenes"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "This file's schema, for editors: a relative path to schemas/<type>.schema.json."
+    },
+    "name": {
+      "type": "string",
+      "description": "Run folder name (default: the file name)."
+    },
+    "platform": {
+      "type": "string",
+      "description": "The app: platforms/<platform>/."
+    },
+    "env": {
+      "type": "string",
+      "description": "Default environment (--target overrides; default: the platform's default)."
+    },
+    "role": {
+      "type": "string",
+      "description": "Login role (--role overrides; default: login.json \"default\")."
+    },
+    "fixtures": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "description": "Fixtures from the platform's fixtures/: data ({data.x}), setup/teardown and off-camera steps."
+    },
+    "story": {
+      "type": "object",
+      "description": "The user story the tour verifies.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Ticket id, e.g. RMS-6142 (used in the run folder name)."
+        },
+        "title": {
+          "type": "string",
+          "description": "Story title."
+        },
+        "description": {
+          "type": "string",
+          "description": "Story text."
+        },
+        "acceptanceCriteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Numbered from 1 in scenes' \"criteria\"."
+        },
+        "text": {
+          "type": "string",
+          "description": "The story as pasted."
+        }
+      },
+      "additionalProperties": false
+    },
+    "scenes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "description": "One scene: narration over the steps that show it.",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Shown on title cards and in reports."
+          },
+          "narration": {
+            "type": "string",
+            "description": "What the narrator says; the scene lasts as long as it does."
+          },
+          "url": {
+            "type": "string",
+            "description": "Path opened off camera just before the scene starts."
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Acceptance criteria this scene demonstrates (1-based)."
+          },
+          "steps": {
+            "$ref": "common.schema.json#/$defs/steps"
+          },
+          "comment": {
+            "type": "string",
+            "description": "A note for people."
+          },
+          "unresolved": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Story items the generator could not map to the app; recording refuses until resolved."
+          },
+          "todo": {
+            "type": "string",
+            "description": "Work left for a person; recording refuses until removed."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "narration"
+        ]
+      },
+      "description": "The scenes, in order."
+    },
+    "timeouts": {
+      "type": "object",
+      "description": "Milliseconds per kind of step.",
+      "properties": {
+        "action": {
+          "description": "Actions: finding and acting on an element (default 10000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "verify": {
+          "description": "Checks (default 15000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "waitFor": {
+          "description": "waitFor steps (default 30000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "navigation": {
+          "description": "Page loads (default 30000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "optional": {
+          "description": "Optional steps (default 3000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "retries": {
+      "description": "Retries for actions that time out (default 1).",
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "$ref": "common.schema.json#/$defs/placeholder"
+        }
+      ]
+    },
+    "onError": {
+      "enum": [
+        "fail",
+        "skip"
+      ],
+      "description": "\"skip\": an action that can't be done is skipped (checks still fail). Default fail."
+    },
+    "hooks": {
+      "type": "object",
+      "description": "Test data, off camera: setup before the browser starts, teardown after it closes (teardown runs whenever setup ran).",
+      "properties": {
+        "setup": {
+          "type": "array",
+          "items": {
+            "description": "A setup/teardown hook, run off camera with BASE_URL and RUN_DIR set.",
+            "anyOf": [
+              {
+                "type": "object",
+                "description": "A shell command.",
+                "properties": {
+                  "run": {
+                    "type": "string",
+                    "description": "Command line."
+                  },
+                  "cwd": {
+                    "type": "string",
+                    "description": "Working folder, relative to the file."
+                  },
+                  "optional": {
+                    "type": "boolean",
+                    "description": "Failure is only a warning."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "run"
+                ]
+              },
+              {
+                "type": "object",
+                "description": "A Node script.",
+                "properties": {
+                  "node": {
+                    "type": "string",
+                    "description": "Script path, relative to the file."
+                  },
+                  "args": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "optional": {
+                    "type": "boolean",
+                    "description": "Failure is only a warning."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "node"
+                ]
+              },
+              {
+                "type": "object",
+                "description": "An HTTP request.",
+                "properties": {
+                  "http": {
+                    "type": "object",
+                    "description": "The request.",
+                    "properties": {
+                      "method": {
+                        "type": "string",
+                        "description": "Default POST."
+                      },
+                      "url": {
+                        "type": "string",
+                        "description": "Relative to baseUrl."
+                      },
+                      "headers": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "body": {
+                        "description": "JSON value or string."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "url"
+                    ]
+                  },
+                  "optional": {
+                    "type": "boolean",
+                    "description": "A non-2xx answer is only a warning."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "http"
+                ]
+              }
+            ]
+          }
+        },
+        "teardown": {
+          "type": "array",
+          "items": {
+            "description": "A setup/teardown hook, run off camera with BASE_URL and RUN_DIR set.",
+            "anyOf": [
+              {
+                "type": "object",
+                "description": "A shell command.",
+                "properties": {
+                  "run": {
+                    "type": "string",
+                    "description": "Command line."
+                  },
+                  "cwd": {
+                    "type": "string",
+                    "description": "Working folder, relative to the file."
+                  },
+                  "optional": {
+                    "type": "boolean",
+                    "description": "Failure is only a warning."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "run"
+                ]
+              },
+              {
+                "type": "object",
+                "description": "A Node script.",
+                "properties": {
+                  "node": {
+                    "type": "string",
+                    "description": "Script path, relative to the file."
+                  },
+                  "args": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "optional": {
+                    "type": "boolean",
+                    "description": "Failure is only a warning."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "node"
+                ]
+              },
+              {
+                "type": "object",
+                "description": "An HTTP request.",
+                "properties": {
+                  "http": {
+                    "type": "object",
+                    "description": "The request.",
+                    "properties": {
+                      "method": {
+                        "type": "string",
+                        "description": "Default POST."
+                      },
+                      "url": {
+                        "type": "string",
+                        "description": "Relative to baseUrl."
+                      },
+                      "headers": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "body": {
+                        "description": "JSON value or string."
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "url"
+                    ]
+                  },
+                  "optional": {
+                    "type": "boolean",
+                    "description": "A non-2xx answer is only a warning."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "http"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "voice": {
+      "type": "string",
+      "description": "SAPI voice name."
+    },
+    "pronounce": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Narration substitutions: written form → how to say it (\"RMS\": \"R M S\")."
+    },
+    "viewport": {
+      "type": "object",
+      "description": "Browser size in CSS pixels (default 1440×810).",
+      "properties": {
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "width",
+        "height"
+      ]
+    },
+    "trace": {
+      "type": "boolean",
+      "description": "false: no trace.zip (it holds network traffic and DOM)."
+    },
+    "allowMocks": {
+      "type": "boolean",
+      "description": "Permit \"mock\" steps. Mocked responses are listed in the report."
+    },
+    "comment": {
+      "type": "string",
+      "description": "A note for people."
+    },
+    "style": {
+      "type": "string",
+      "description": "Generation hint (verification, demo, training); the engine ignores it."
+    },
+    "generatedBy": {
+      "type": "string",
+      "description": "Which planner wrote it."
+    },
+    "plannedAt": {
+      "type": "string",
+      "description": "When it was generated."
+    },
+    "draft": {
+      "type": "boolean",
+      "description": "Generated with gaps; recording refuses unless --allow-draft."
+    },
+    "needs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "What a draft still needs."
+    },
+    "baseUrl": {
+      "type": "string",
+      "description": "Root URL of the app in this environment."
+    },
+    "environments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "description": "One deployment of the app.",
+        "properties": {
+          "comment": {
+            "type": "string",
+            "description": "A note for people."
+          },
+          "baseUrl": {
+            "type": "string",
+            "description": "Root URL of the app in this environment."
+          },
+          "launch": {
+            "description": "Start the app if it isn't running: one service or a list.",
+            "anyOf": [
+              {
+                "type": "object",
+                "description": "A service the run starts when nothing answers at healthUrl (already up: used as is, never stopped).",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Label for logs."
+                  },
+                  "command": {
+                    "type": "string",
+                    "description": "Shell command that starts it (run from the platform folder)."
+                  },
+                  "cwd": {
+                    "type": "string",
+                    "description": "Working folder, relative to the platform folder."
+                  },
+                  "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "Extra environment variables ({port} is the free port)."
+                  },
+                  "port": {
+                    "description": "\"auto\" picks a free port per run ({port}).",
+                    "anyOf": [
+                      {
+                        "const": "auto"
+                      },
+                      {
+                        "type": "integer"
+                      }
+                    ]
+                  },
+                  "healthUrl": {
+                    "type": "string",
+                    "description": "URL that answers when it is up (default baseUrl; {baseUrl} and {port} allowed)."
+                  },
+                  "anyStatus": {
+                    "type": "boolean",
+                    "description": "Any HTTP status counts as up (default: 2xx/3xx)."
+                  },
+                  "timeoutSeconds": {
+                    "description": "How long to wait for it (default 120).",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "$ref": "common.schema.json#/$defs/placeholder"
+                      }
+                    ]
+                  },
+                  "stop": {
+                    "type": "boolean",
+                    "description": "false: leave it running after the run (slow-starting services)."
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "description": "A service the run starts when nothing answers at healthUrl (already up: used as is, never stopped).",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "Label for logs."
+                    },
+                    "command": {
+                      "type": "string",
+                      "description": "Shell command that starts it (run from the platform folder)."
+                    },
+                    "cwd": {
+                      "type": "string",
+                      "description": "Working folder, relative to the platform folder."
+                    },
+                    "env": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "description": "Extra environment variables ({port} is the free port)."
+                    },
+                    "port": {
+                      "description": "\"auto\" picks a free port per run ({port}).",
+                      "anyOf": [
+                        {
+                          "const": "auto"
+                        },
+                        {
+                          "type": "integer"
+                        }
+                      ]
+                    },
+                    "healthUrl": {
+                      "type": "string",
+                      "description": "URL that answers when it is up (default baseUrl; {baseUrl} and {port} allowed)."
+                    },
+                    "anyStatus": {
+                      "type": "boolean",
+                      "description": "Any HTTP status counts as up (default: 2xx/3xx)."
+                    },
+                    "timeoutSeconds": {
+                      "description": "How long to wait for it (default 120).",
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "$ref": "common.schema.json#/$defs/placeholder"
+                        }
+                      ]
+                    },
+                    "stop": {
+                      "type": "boolean",
+                      "description": "false: leave it running after the run (slow-starting services)."
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            ]
+          },
+          "attach": {
+            "description": "Attach-only: these must already be running.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A service the environment expects to be running; a run never starts it, and if it is down the run is UNREACHABLE.",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Label."
+                },
+                "healthUrl": {
+                  "type": "string",
+                  "description": "Default baseUrl."
+                },
+                "anyStatus": {
+                  "type": "boolean",
+                  "description": "Any HTTP status counts as up."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "timeouts": {
+            "type": "object",
+            "description": "Milliseconds per kind of step.",
+            "properties": {
+              "action": {
+                "description": "Actions: finding and acting on an element (default 10000).",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "common.schema.json#/$defs/placeholder"
+                  }
+                ]
+              },
+              "verify": {
+                "description": "Checks (default 15000).",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "common.schema.json#/$defs/placeholder"
+                  }
+                ]
+              },
+              "waitFor": {
+                "description": "waitFor steps (default 30000).",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "common.schema.json#/$defs/placeholder"
+                  }
+                ]
+              },
+              "navigation": {
+                "description": "Page loads (default 30000).",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "common.schema.json#/$defs/placeholder"
+                  }
+                ]
+              },
+              "optional": {
+                "description": "Optional steps (default 3000).",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "common.schema.json#/$defs/placeholder"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "ready": {
+            "type": "object",
+            "description": "When a page counts as ready after an action, for apps that never go network-idle.",
+            "properties": {
+              "busy": {
+                "type": "string",
+                "description": "CSS of busy indicators (spinners, skeletons); wait until none is visible."
+              },
+              "stableMs": {
+                "description": "Then the page must not change for this long (default 1500).",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "common.schema.json#/$defs/placeholder"
+                  }
+                ]
+              },
+              "timeout": {
+                "description": "Max wait for busy indicators to go (default 60000).",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "common.schema.json#/$defs/placeholder"
+                  }
+                ]
+              },
+              "stableTimeout": {
+                "description": "Max wait for a stable page (default 15000).",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "common.schema.json#/$defs/placeholder"
+                  }
+                ]
+              },
+              "strict": {
+                "type": "boolean",
+                "description": "A page that never settles is an APP failure (default: a warning)."
+              }
+            },
+            "additionalProperties": false
+          },
+          "ignoreHTTPSErrors": {
+            "type": "boolean",
+            "description": "Accept self-signed certificates."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "baseUrl"
+        ]
+      },
+      "description": "Stand-alone tours only."
+    },
+    "launch": {
+      "description": "Start the app if it isn't running: one service or a list.",
+      "anyOf": [
+        {
+          "type": "object",
+          "description": "A service the run starts when nothing answers at healthUrl (already up: used as is, never stopped).",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Label for logs."
+            },
+            "command": {
+              "type": "string",
+              "description": "Shell command that starts it (run from the platform folder)."
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Working folder, relative to the platform folder."
+            },
+            "env": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Extra environment variables ({port} is the free port)."
+            },
+            "port": {
+              "description": "\"auto\" picks a free port per run ({port}).",
+              "anyOf": [
+                {
+                  "const": "auto"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "healthUrl": {
+              "type": "string",
+              "description": "URL that answers when it is up (default baseUrl; {baseUrl} and {port} allowed)."
+            },
+            "anyStatus": {
+              "type": "boolean",
+              "description": "Any HTTP status counts as up (default: 2xx/3xx)."
+            },
+            "timeoutSeconds": {
+              "description": "How long to wait for it (default 120).",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
+            },
+            "stop": {
+              "type": "boolean",
+              "description": "false: leave it running after the run (slow-starting services)."
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "A service the run starts when nothing answers at healthUrl (already up: used as is, never stopped).",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Label for logs."
+              },
+              "command": {
+                "type": "string",
+                "description": "Shell command that starts it (run from the platform folder)."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working folder, relative to the platform folder."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Extra environment variables ({port} is the free port)."
+              },
+              "port": {
+                "description": "\"auto\" picks a free port per run ({port}).",
+                "anyOf": [
+                  {
+                    "const": "auto"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "healthUrl": {
+                "type": "string",
+                "description": "URL that answers when it is up (default baseUrl; {baseUrl} and {port} allowed)."
+              },
+              "anyStatus": {
+                "type": "boolean",
+                "description": "Any HTTP status counts as up (default: 2xx/3xx)."
+              },
+              "timeoutSeconds": {
+                "description": "How long to wait for it (default 120).",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "$ref": "common.schema.json#/$defs/placeholder"
+                  }
+                ]
+              },
+              "stop": {
+                "type": "boolean",
+                "description": "false: leave it running after the run (slow-starting services)."
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      ]
+    },
+    "login": {
+      "description": "Stand-alone tours only: { \"role\", \"steps\", \"signedIn\", \"checkPath\", \"maxAgeMinutes\" }.",
+      "type": "object"
+    },
+    "ready": {
+      "type": "object",
+      "description": "When a page counts as ready after an action, for apps that never go network-idle.",
+      "properties": {
+        "busy": {
+          "type": "string",
+          "description": "CSS of busy indicators (spinners, skeletons); wait until none is visible."
+        },
+        "stableMs": {
+          "description": "Then the page must not change for this long (default 1500).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "timeout": {
+          "description": "Max wait for busy indicators to go (default 60000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "stableTimeout": {
+          "description": "Max wait for a stable page (default 15000).",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "strict": {
+          "type": "boolean",
+          "description": "A page that never settles is an APP failure (default: a warning)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "errors": {
+      "type": "object",
+      "description": "The app's own error UI: a step that leaves it visible fails as APP.",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "CSS of the error element (dialog, toast)."
+        },
+        "text": {
+          "type": "string",
+          "description": "Only when its text matches this regex."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "selector"
+      ]
+    },
+    "appErrors": {
+      "type": "object",
+      "description": "What browser-side errors during a step do: \"fail\" (APP failure) or \"warn\" (listed in the report).",
+      "properties": {
+        "network": {
+          "enum": [
+            "fail",
+            "warn"
+          ],
+          "description": "HTTP 5xx responses (default warn)."
+        },
+        "network4xx": {
+          "enum": [
+            "fail",
+            "warn"
+          ],
+          "description": "Also fail on 4xx."
+        },
+        "console": {
+          "enum": [
+            "fail",
+            "warn"
+          ],
+          "description": "console.error messages (default warn)."
+        },
+        "pageErrors": {
+          "enum": [
+            "fail",
+            "warn"
+          ],
+          "description": "Uncaught exceptions (default warn)."
+        },
+        "ignore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Regexes of known noisy requests/messages: kept in network.json/console.json, marked ignored, never a cause."
+        }
+      },
+      "additionalProperties": false
+    },
+    "mask": {
+      "type": "object",
+      "description": "Blurred in the page before anything is recorded (video, screenshots, trace).",
+      "properties": {
+        "selectors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "CSS of elements to blur."
+        },
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Regexes of text to blur."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ignoreHTTPSErrors": {
+      "type": "boolean",
+      "description": "Stand-alone tours only."
+    },
+    "startPath": {
+      "type": "string",
+      "description": "Stand-alone tours only."
+    },
+    "target": {
+      "type": "string",
+      "description": "Stand-alone tours only: auth folder name."
+    },
+    "discover": {
+      "type": "object",
+      "description": "Stand-alone tours only."
+    }
+  }
+}

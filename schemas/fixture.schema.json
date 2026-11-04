@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofeaturetour.local/schemas/v1/fixture.schema.json",
+  "title": "AutoFeatureTour fixture (platforms/<name>/fixtures/<fixture>.json)",
+  "description": "Test data a tour needs: values, hooks to create/remove it, and browser steps run off camera before the first scene.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "This file's schema, for editors: a relative path to schemas/<type>.schema.json."
+    },
+    "description": {
+      "type": "string",
+      "description": "What it sets up."
+    },
+    "data": {
+      "type": "object",
+      "description": "Values, as {data.<key>} in tours and steps."
+    },
+    "setup": {
+      "type": "array",
+      "items": {
+        "description": "A setup/teardown hook, run off camera with BASE_URL and RUN_DIR set.",
+        "anyOf": [
+          {
+            "type": "object",
+            "description": "A shell command.",
+            "properties": {
+              "run": {
+                "type": "string",
+                "description": "Command line."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working folder, relative to the file."
+              },
+              "optional": {
+                "type": "boolean",
+                "description": "Failure is only a warning."
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "run"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "A Node script.",
+            "properties": {
+              "node": {
+                "type": "string",
+                "description": "Script path, relative to the file."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "optional": {
+                "type": "boolean",
+                "description": "Failure is only a warning."
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "node"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "An HTTP request.",
+            "properties": {
+              "http": {
+                "type": "object",
+                "description": "The request.",
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "description": "Default POST."
+                  },
+                  "url": {
+                    "type": "string",
+                    "description": "Relative to baseUrl."
+                  },
+                  "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "body": {
+                    "description": "JSON value or string."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "url"
+                ]
+              },
+              "optional": {
+                "type": "boolean",
+                "description": "A non-2xx answer is only a warning."
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "http"
+            ]
+          }
+        ]
+      },
+      "description": "Before the browser starts (run from fixtures/)."
+    },
+    "teardown": {
+      "type": "array",
+      "items": {
+        "description": "A setup/teardown hook, run off camera with BASE_URL and RUN_DIR set.",
+        "anyOf": [
+          {
+            "type": "object",
+            "description": "A shell command.",
+            "properties": {
+              "run": {
+                "type": "string",
+                "description": "Command line."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working folder, relative to the file."
+              },
+              "optional": {
+                "type": "boolean",
+                "description": "Failure is only a warning."
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "run"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "A Node script.",
+            "properties": {
+              "node": {
+                "type": "string",
+                "description": "Script path, relative to the file."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "optional": {
+                "type": "boolean",
+                "description": "Failure is only a warning."
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "node"
+            ]
+          },
+          {
+            "type": "object",
+            "description": "An HTTP request.",
+            "properties": {
+              "http": {
+                "type": "object",
+                "description": "The request.",
+                "properties": {
+                  "method": {
+                    "type": "string",
+                    "description": "Default POST."
+                  },
+                  "url": {
+                    "type": "string",
+                    "description": "Relative to baseUrl."
+                  },
+                  "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "body": {
+                    "description": "JSON value or string."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "url"
+                ]
+              },
+              "optional": {
+                "type": "boolean",
+                "description": "A non-2xx answer is only a warning."
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "http"
+            ]
+          }
+        ]
+      },
+      "description": "After the browser closes."
+    },
+    "steps": {
+      "$ref": "common.schema.json#/$defs/steps"
+    }
+  }
+}

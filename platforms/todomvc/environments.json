@@ -1,4 +1,5 @@
 {
+  "$schema": "../../schemas/environments.schema.json",
   "default": "demo",
   "demo": { "baseUrl": "https://demo.playwright.dev/todomvc/", "attach": [ { "name": "Playwright TodoMVC demo" } ] },
   "local": { "baseUrl": "http://localhost:8080/", "timeouts": { "navigation": 60000 } }
