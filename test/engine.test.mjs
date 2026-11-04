@@ -23,9 +23,9 @@ test('parseScript rejects a script without scenes', () => {
   assert.throws(() => parseScript(file), /No "## N. Title" scenes/);
 });
 
-test('spokenText strips markdown and applies pronunciations longest-first as listed', () => {
-  assert.equal(spokenText('*Agentic FOIA* handles `FOIA` requests', { 'Agentic FOIA': 'Agentic Foya', FOIA: 'Foya' }),
-    'Agentic Foya handles Foya requests');
+test('spokenText strips markdown and applies pronunciations in the order listed', () => {
+  assert.equal(spokenText('*Acme SQL* runs `SQL` queries', { 'Acme SQL': 'Acme sequel', SQL: 'sequel' }),
+    'Acme sequel runs sequel queries');
 });
 
 test('parseArgs handles flags, values and = forms', () => {

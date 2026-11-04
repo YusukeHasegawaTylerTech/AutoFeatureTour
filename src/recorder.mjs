@@ -26,11 +26,67 @@ function cursorScript() {
 }
 
 /**
+ * Blurs sensitive data on screen before it's ever recorded (the video, screenshots and trace all see the blurred page).
+ * mask.selectors: CSS for whole elements (e.g. ".ssn", "[data-pii]"); mask.patterns: regex sources matched in text
+ * (e.g. "\b\d{3}-\d{2}-\d{4}\b"), wrapped in blurred spans as the page changes. A hook point, not a guarantee:
+ * use demo data, and check the output.
+ */
+function maskScript(mask) {
+  const blur = 'filter: blur(7px) !important;';
+  const apply = () => {
+    if (mask.selectors?.length && !document.getElementById('tour-mask-css')) {
+      const st = document.createElement('style');
+      st.id = 'tour-mask-css';
+      st.textContent = mask.selectors.map(s => `${s} { ${blur} }`).join('\n');
+      document.documentElement.appendChild(st);
+    }
+    if (!mask.patterns?.length) return;
+    const re = new RegExp(mask.patterns.map(p => `(?:${p})`).join('|'), 'g');
+    const walk = root => {
+      const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: n =>
+        n.parentElement && !n.parentElement.closest('script, style, [data-tour-mask]') && re.test(n.data) ? 1 : 2 });
+      const nodes = [];
+      for (let n = tw.nextNode(); n; n = tw.nextNode()) nodes.push(n);
+      for (const n of nodes) {
+        re.lastIndex = 0;
+        const frag = document.createDocumentFragment();
+        let last = 0;
+        for (const m of n.data.matchAll(re)) {
+          frag.append(n.data.slice(last, m.index));
+          const span = document.createElement('span');
+          span.dataset.tourMask = '';
+          span.style.cssText = blur;
+          span.textContent = m[0];
+          frag.append(span);
+          last = m.index + m[0].length;
+        }
+        frag.append(n.data.slice(last));
+        n.replaceWith(frag);
+      }
+      // Field values aren't text nodes: blur inputs whose value matches.
+      for (const f of root.querySelectorAll?.('input, textarea') ?? []) { re.lastIndex = 0; f.style.filter = re.test(f.value) ? 'blur(7px)' : ''; }
+    };
+    walk(document.body);
+    new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1 || n.nodeType === 3) walk(n.nodeType === 3 ? n.parentElement ?? document.body : n); })
+      .observe(document.body, { childList: true, subtree: true, characterData: true });
+    for (const type of ['input', 'keyup', 'change']) document.addEventListener(type, e => { const f = e.target; if (f.matches?.('input, textarea')) { re.lastIndex = 0; f.style.filter = re.test(f.value) ? 'blur(7px)' : ''; } }, true); // keyup: Enter clears a field without an input event
+  };
+  if (document.readyState === 'loading') addEventListener('DOMContentLoaded', apply); else apply();
+}
+
+/**
  * One recorded browser session. Wrap each narrated scene in scene(id, fn) and pace actions with at(fraction of the
  * narration). Anything between scenes (seeding, waiting for jobs) is off camera and gets cut.
  */
 export class Tour {
-  constructor({ outDir, narration, viewport = { width: 1440, height: 810 } }) {
+  /**
+   * dryRun: no video and no pacing; steps still run (later steps depend on earlier ones), so every target is checked.
+   * headless: false shows the browser (debugging a tour). mask: PII to blur on screen; see maskScript.
+   */
+  constructor({ outDir, narration, viewport = { width: 1440, height: 810 }, dryRun = false, headless = true, mask } = {}) {
+    this.dryRun = dryRun;
+    this.headless = headless;
+    this.mask = mask;
     this.outDir = outDir;
     this.narration = narration; // [{ id, seconds }]
     this.viewport = viewport;
@@ -40,19 +96,20 @@ export class Tour {
   }
 
   /** Launches the browser and starts recording. initScripts: functions or [fn, arg] pairs run in every page. */
-  async start({ initScripts = [], cursor = true, headless = true, storageState, trace = true } = {}) {
+  async start({ initScripts = [], cursor = true, headless = this.headless, storageState, trace = true } = {}) {
     fs.mkdirSync(this.outDir, { recursive: true });
     this.browser = await chromium.launch({ headless });
     // Video frames are CSS pixels (deviceScaleFactor isn't applied), so record at the viewport size and scale later.
     this.context = await this.browser.newContext({
       viewport: this.viewport,
-      recordVideo: { dir: this.outDir, size: this.viewport },
+      ...(this.dryRun ? {} : { recordVideo: { dir: this.outDir, size: this.viewport } }),
       ...(storageState ? { storageState } : {}), // a saved login (aft login), so tours never type credentials on camera
     });
     // Always trace: a failed run can be opened with `npx playwright show-trace <run>/trace.zip`.
     if (trace) { await this.context.tracing.start({ screenshots: true, snapshots: true, sources: false }); this.tracing = true; }
     for (const s of initScripts) await (Array.isArray(s) ? this.context.addInitScript(s[0], s[1]) : this.context.addInitScript(s));
     if (cursor) await this.context.addInitScript(cursorScript);
+    if (this.mask?.selectors?.length || this.mask?.patterns?.length) await this.context.addInitScript(maskScript, this.mask);
     this.page = await this.context.newPage();
     this.page.on('dialog', d => d.accept());
     this.t0 = Date.now();
@@ -63,6 +120,7 @@ export class Tour {
 
   /** Waits until this fraction of the current scene's narration has played. */
   async at(fraction) {
+    if (this.dryRun) return;
     const wait = (this.current.start + fraction * this.current.seconds - this.now()) * 1000;
     if (wait > 0) await sleep(wait);
   }
@@ -119,6 +177,12 @@ export class Tour {
 
   /** Stops recording and writes recording.webm and timings.json (plus any extra fields) to outDir. */
   async finish(extra = {}) {
+    if (this.dryRun) {
+      await this.saveTrace('trace.zip');
+      await this.context.close();
+      fs.writeFileSync(path.join(this.outDir, 'timings.json'), JSON.stringify({ ...extra, dryRun: true, scenes: this.timings }, null, 2));
+      return null;
+    }
     await sleep(500);
     const video = this.page.video();
     await this.saveTrace('trace.zip');

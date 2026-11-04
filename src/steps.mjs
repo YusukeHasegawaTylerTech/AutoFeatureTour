@@ -129,7 +129,7 @@ export async function runStep(t, step, { baseUrl, timeouts = {} }) {
  * Runs a scene's steps. Unless the scene places its own "at" steps, actions are spread evenly across the narration
  * (the first right away, the last by about 80%), so the video moves while the narrator talks.
  */
-export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = false, timeouts } = {}) {
+export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = false, timeouts, report, scene } = {}) {
   const paced = unpaced || steps.some(s => 'at' in s); // unpaced: off camera (login, setup), as fast as possible
   const actions = steps.filter(s => !['at', 'wait', 'waitFor'].includes(actionOf(s)));
   let i = 0;
@@ -139,12 +139,53 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
       await t.at(actions.length > 1 ? 0.05 + (0.75 * i) / (actions.length - 1) : 0.1);
       i++;
     }
+    const index = steps.indexOf(step) + 1;
     try {
       await runStep(t, step, { baseUrl, timeouts });
+      report?.push({ scene, step: index, action: a, ok: true, spec: step });
     } catch (e) {
-      // A failed "verify" always stops the run (it's an acceptance check) unless that step is marked optional.
-      if (step.optional || (onError === 'skip' && a !== 'verify')) log(`step skipped (${e.message.split('\n')[0]}): ${JSON.stringify(step)}`);
-      else throw e;
+      const message = e.message.split('\n')[0];
+      const target = targetOf(step);
+      const suggestions = target ? await suggest(t.page, target) : [];
+      report?.push({ scene, step: index, action: a, ok: false, optional: !!step.optional, spec: step, error: message, url: t.page.url(), suggestions });
+      const hint = suggestions.length ? ` (did you mean ${suggestions.map(x => JSON.stringify(x)).join(', ')}?)` : '';
+      // collect (dry run): report everything and carry on. Otherwise a failed "verify" always stops the run (it's an
+      // acceptance check) unless that step is marked optional.
+      if (onError === 'collect' || step.optional || (onError === 'skip' && a !== 'verify'))
+        log(`${scene ?? 'setup'} step ${index} ${onError === 'collect' ? 'FAILED' : 'skipped'}: ${message}${hint}`);
+      else throw new StepError(`${scene ?? 'setup'} step ${index} ${JSON.stringify(step)}: ${message}${hint}`);
     }
   }
+}
+
+/** A step that couldn't be done; the CLI maps it to exit code 2. */
+export class StepError extends Error {}
+
+const targetOf = step => step[actionOf(step)] && actionOf(step) !== 'goto' && typeof step[actionOf(step)] !== 'number' ? step[actionOf(step)] : null;
+const targetText = t => (typeof t === 'string' ? t.replace(/^css=/, '') : t.name ?? t.label ?? t.placeholder ?? t.text ?? t.testId ?? t.css ?? '');
+
+/** Levenshtein distance, for closest-match suggestions. */
+function distance(a, b) {
+  const d = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = d[0]; d[0] = i;
+    for (let j = 1; j <= b.length; j++) { const tmp = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = tmp; }
+  }
+  return d[b.length];
+}
+
+/** Up to three visible names on the page closest to a target that didn't resolve. */
+export async function suggest(page, target) {
+  const want = targetText(target).toLowerCase().trim();
+  if (!want) return [];
+  const names = await page.evaluate(() => {
+    const vis = el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const out = new Set();
+    for (const el of document.querySelectorAll('a, button, [role], label, input, textarea, select, h1, h2, h3, h4, th, td, li, span'))
+      if (vis(el)) for (const v of [el.getAttribute('aria-label'), el.placeholder, el.innerText]) { const s = (v ?? '').replace(/\s+/g, ' ').trim(); if (s && s.length <= 60) out.add(s); }
+    return [...out].slice(0, 800);
+  }).catch(() => []);
+  return names
+    .map(n => ({ n, score: n.toLowerCase().includes(want) || want.includes(n.toLowerCase()) ? 0.1 : distance(want, n.toLowerCase()) / Math.max(want.length, n.length) }))
+    .filter(x => x.score < 0.5).sort((a, b) => a.score - b.score).slice(0, 3).map(x => x.n);
 }

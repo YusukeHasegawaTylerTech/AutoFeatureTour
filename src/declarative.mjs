@@ -16,6 +16,11 @@
 //   "timeouts": { "action": 10000, "verify": 15000, "waitFor": 30000, "navigation": 30000 },
 //   "viewport": { "width": 1440, "height": 810 },
 //   "voice": "Microsoft Zira Desktop", "pronounce": { "SQL": "sequel" },
+//   "hooks": {                                  // test data: run off camera before the browser starts / after it closes
+//     "setup":    [ { "run": "npm run seed:demo", "cwd": "../my-app" }, { "http": { "method": "POST", "url": "{baseUrl}/api/test/reset" } } ],
+//     "teardown": [ { "node": "hooks/cleanup.mjs" } ]  // hooks get BASE_URL and RUN_DIR in their environment
+//   },
+//   "mask": { "selectors": [".ssn", "[data-pii]"], "patterns": ["\b\d{3}-\d{2}-\d{4}\b"] },  // blurred on screen
 //   "onError": "skip",                          // "fail" (default) or "skip" steps that can't be done ("verify" always fails)
 //   "story": { "id": "RMS-6142", "title": "…", "acceptanceCriteria": ["…"] },
 //   "scenes": [
@@ -33,7 +38,26 @@ import path from 'node:path';
 import { authFile } from './auth.mjs';
 import { startProcess, stopProcess, waitForHttp } from './recorder.mjs';
 import { runSteps } from './steps.mjs';
-import { freePort } from './util.mjs';
+import { freePort, run } from './util.mjs';
+
+/** Runs setup/teardown hooks: a shell command, an HTTP call, or a Node script. */
+async function runHooks(hooks = [], { dir, outDir, baseUrl, log }) {
+  const env = { ...process.env, BASE_URL: baseUrl, RUN_DIR: outDir };
+  for (const h of hooks) {
+    if (h.run) { log(`hook: ${h.run}`); await run(h.run, [], { cwd: path.resolve(dir, h.cwd ?? '.'), env, shell: true }); }
+    else if (h.node) { log(`hook: node ${h.node}`); await run(process.execPath, [path.resolve(dir, h.node), ...(h.args ?? [])], { cwd: dir, env }); }
+    else if (h.http) {
+      const { method = 'POST', url, headers = {}, body } = h.http;
+      log(`hook: ${method} ${url}`);
+      const res = await fetch(new URL(url, baseUrl + '/'), { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers },
+        body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined });
+      if (!res.ok && !h.optional) throw new Error(`hook ${method} ${url}: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    } else throw new Error(`Unknown hook ${JSON.stringify(h)} (run, node or http)`);
+  }
+}
+
+/** A problem with the tour file itself; the CLI prints it without a stack trace (exit 1). */
+export class ConfigError extends Error {}
 
 /** Replaces {env:NAME} and {key} placeholders in every string of a JSON value. */
 function fill(value, vars) {
@@ -54,7 +78,7 @@ export function validate(cfg, file) {
     if (!s.narration) problems.push(`scenes[${i}].narration is required`);
     if (s.steps && !Array.isArray(s.steps)) problems.push(`scenes[${i}].steps must be an array`);
   });
-  if (problems.length) throw new Error(`${file}:\n  ${problems.join('\n  ')}`);
+  if (problems.length) throw new ConfigError(`${file}:\n  ${problems.join('\n  ')}`);
 }
 
 /** Applies the environment, then BASE_URL, then --base-url. */
@@ -62,7 +86,7 @@ export function resolveConfig(raw, { env, baseUrl } = {}) {
   let cfg = { ...raw };
   if (env) {
     const e = raw.environments?.[env];
-    if (!e) throw new Error(`No environment "${env}" in the tour (has: ${Object.keys(raw.environments ?? {}).join(', ') || 'none'})`);
+    if (!e) throw new ConfigError(`No environment "${env}" in the tour (has: ${Object.keys(raw.environments ?? {}).join(', ') || 'none'})`);
     cfg = { ...cfg, ...e, timeouts: { ...raw.timeouts, ...e.timeouts } };
   }
   if (process.env.BASE_URL) cfg.baseUrl = process.env.BASE_URL;
@@ -74,7 +98,8 @@ export const authTarget = (cfg, env) => `${cfg.target ?? cfg.name}${env ? `-${en
 
 /** Loads tour.json as a tour definition the CLI can run, like a .tour.mjs module. */
 export function loadTourJson(file, { env, baseUrl } = {}) {
-  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw new ConfigError(`${file}: not valid JSON (${e.message})`); }
   raw.name ??= path.basename(file).replace(/\.tour\.json$|\.json$/, '');
   const cfg0 = resolveConfig(raw, { env, baseUrl });
   validate(cfg0, file);
@@ -86,13 +111,15 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
     voice: raw.voice,
     pronounce: raw.pronounce,
     viewport: raw.viewport,
+    mask: cfg0.mask,
     scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration })),
     async record(ctx) {
       const port = cfg0.launch?.port === 'auto' ? await freePort() : cfg0.launch?.port;
       const vars = { port: port ?? '' };
       vars.baseUrl = fill(cfg0.baseUrl, vars).replace(/\/$/, '');
       const cfg = fill(cfg0, vars);
-      let proc;
+      let proc, setupDone = false;
+      const hookCtx = { dir, outDir: ctx.outDir, baseUrl: vars.baseUrl, log: ctx.log };
       try {
         if (cfg.launch?.command) {
           const logFile = path.join(ctx.outDir, 'app.log');
@@ -100,27 +127,32 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
           await waitForHttp(cfg.launch.healthUrl ?? vars.baseUrl, { ms: (cfg.launch.timeoutSeconds ?? 120) * 1000, hint: `see ${logFile}` });
           ctx.log(`app up at ${vars.baseUrl}`);
         }
+        await runHooks(cfg.hooks?.setup, hookCtx);
+        setupDone = true;
         const state = cfg.login ? authFile(ctx.toolRoot, authTarget(cfg, ctx.options.env), ctx.options.role ?? cfg.login.role) : null;
         const haveState = state && fs.existsSync(state);
         if (cfg.login && !haveState && !cfg.login.steps?.length)
           throw new Error(`No saved login at ${state}; run: aft login <tour.json> --manual${ctx.options.env ? ` --env ${ctx.options.env}` : ''}`);
         const t = ctx.tour;
         await t.start({ storageState: haveState ? state : undefined });
-        const opts = { baseUrl: vars.baseUrl + '/', onError: ctx.options.onError ?? cfg.onError ?? 'fail', timeouts: cfg.timeouts };
+        const opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report,
+          onError: ctx.dryRun ? 'collect' : ctx.options.onError ?? cfg.onError ?? 'fail' };
         await t.page.goto(vars.baseUrl + '/', { timeout: cfg.timeouts?.navigation ?? 30000 });
         if (cfg.login && !haveState) {
           ctx.log('logging in (off camera)');
-          await runSteps(t, cfg.login.steps, { ...opts, onError: 'fail', unpaced: true });
+          await runSteps(t, cfg.login.steps, { ...opts, onError: 'fail', unpaced: true, scene: 'login' });
           fs.mkdirSync(path.dirname(state), { recursive: true });
           await t.context.storageState({ path: state });
           ctx.log(`saved login: ${state}`);
         }
         for (const [i, s] of cfg.scenes.entries()) {
-          if (s.url) await runSteps(t, [{ goto: s.url }], { ...opts, unpaced: true });
-          await t.scene(ctx.scenes[i].id, () => runSteps(t, s.steps ?? [], opts));
+          const id = ctx.scenes[i].id;
+          if (s.url) await runSteps(t, [{ goto: s.url }], { ...opts, unpaced: true, scene: `${id} (url)` });
+          await t.scene(id, () => runSteps(t, s.steps ?? [], { ...opts, scene: id }));
         }
         await t.finish({ baseUrl: vars.baseUrl });
       } finally {
+        if (setupDone) await runHooks(cfg.hooks?.teardown, hookCtx).catch(e => ctx.log(`teardown failed: ${e.message}`));
         stopProcess(proc);
       }
     },

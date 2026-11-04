@@ -3,15 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Narrated feature-tour videos of web apps: script → speech → paced Playwright recording → video.",
-  "bin": { "aft": "src/cli.mjs" },
-  "engines": { "node": ">=22" },
+  "description": "Narrated feature-tour videos of web apps: story → script → validated, paced Playwright recording → video.",
+  "bin": {
+    "aft": "src/cli.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "tour": "node src/cli.mjs",
     "test": "node --test"
   },
   "dependencies": {
-    "pdfjs-dist": "^5.4.0",
     "playwright": "^1.56.0"
-  }
+  },
+  "optionalDependencies": {
+    "pdfjs-dist": "^5.4.0"
+  },
+  "files": [
+    "src",
+    "targets",
+    "examples",
+    "README.md"
+  ]
 }

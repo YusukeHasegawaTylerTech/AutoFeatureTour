@@ -1,91 +1,154 @@
 # AutoFeatureTour
 
-Narrated feature-tour videos of web apps. You write a narration script; a tour module drives the real app with
-Playwright, paced to the spoken narration; the engine turns that into one video with captions. The goal (see
-Roadmap) is to generate the script and tour module from a prompt plus the app's source code.
+Narrated feature-tour videos of web apps, from a user story or a hand-written script:
 
 ```
-script.md ──► speech per scene (wav) ──► record the app, paced to each scene's narration (recording.webm + timings)
-          ──► cut one clip per scene ──► mux narration (freeze last frame if needed) ──► tour.mp4 + tour.vtt
+story ──generate──► tour.json + script.md ──validate──► every step resolved ──run──► tour.mp4 + tour.vtt
+ (or a URL + brief)  (editable, reviewable)    (dry run, no video)               (paced to narration)
 ```
 
-Slow work between scenes (seeding data, waiting for background jobs) happens off camera and is cut out.
-Without `--record`, a scene uses a hand-made clip (`targets/<app>/clips/<tour>/scene-NN.mp4`) or a title card, so a
-script can be previewed as narration + titles before any recording exists.
+- **Script first.** `generate` writes an editable `tour.json` (steps) and `script.md` (narration) for a person to
+  review before anything is recorded. Audience, tone, pacing and steps live in the script; the engine just runs it.
+- **Any app.** Point it at a URL (local dev or a dedicated QA environment). Discovery crawls the app's screens;
+  steps use user-facing locators (role, label, placeholder, text) the way stories describe the UI.
+- **Fails clearly.** `validate` checks every step against the live app and suggests the closest match for anything
+  it can't find; a failed step or `verify` stops a run with exit code 2, a screenshot and a Playwright trace.
+- **Never overwrites.** Every command gets its own run folder.
 
-Started from AgenticFOIA's `docs/tour` (make-tour.ps1 + recorder), which is the first target here.
+## Install
 
-## Requirements
+Windows: double-click **`install.cmd`** (or run `powershell -ExecutionPolicy Bypass -File install.ps1 [-Link]`). It
+installs Node 22+ and ffmpeg with winget if missing, runs `npm ci` and `npx playwright install chromium`, optionally
+links the global `aft` command (`-Link`), and finishes with `aft doctor`. It's safe to re-run.
 
-Node 22+, ffmpeg/ffprobe on PATH (`winget install Gyan.FFmpeg`), and Windows for the SAPI voice (the only speech
-provider so far). Then:
-
-```
-npm install
-npx playwright install chromium
-```
-
-## Usage
-
-```
-node src/cli.mjs <tour.mjs> [--record] [--out <dir>] [--clips <dir>] [--voice <name>] [--rate <-10..10>]
-                 [--tail <seconds>] [--no-captions] [--<target option> <value> ...]
-node src/cli.mjs --list-voices
-npm test
-```
-
-Put the tour file first. Output goes to `out/<tour name>/` (git-ignored). Options the engine doesn't know are passed
-to the tour as `ctx.options` (camelCased).
-
-### AgenticFOIA
-
-Expects the AgenticFOIA repo next to this one (or `--app-repo <path>` / `AFT_AGENTICFOIA_REPO`), plus the .NET 10 SDK,
-Tesseract, and for the main tour the whisper/VAD models (the same `AGENTICFOIA_Media__*` variables the AgenticFOIA CLI
-uses, or `--whisper-model`, `--vad-model`, `--tesseract`, `--detection-models`).
+Elsewhere: Node 22+, ffmpeg/ffprobe on PATH, then `npm ci && npx playwright install chromium --with-deps`
+(`npm link` for a global `aft`).
 
 ```
-node src/cli.mjs targets/agenticfoia/main.tour.mjs --record
-node src/cli.mjs targets/agenticfoia/pdf-ocr.tour.mjs --record --engine Placeholder
+aft doctor                    # what's installed, what's missing and how to fix it (exit 1 if something required is missing)
+aft doctor --target <app>     # also that target's own requirements (targets/<app>/requirements.mjs)
 ```
 
-It builds the API and web app in Release (`--skip-build` reuses them), starts a private API (port 5190, data in
-`out/<tour>/data`) and a web server (port 4310) serving the built SPA, the tour's helper pages and an `/api` proxy.
-The default engine is `ClaudeCli` (local `claude -p`), which AgenticFOIA allows for synthetic data only.
+Without `npm link`, use `node src/cli.mjs` wherever this README says `aft`.
 
-## Writing a target
+## Commands
 
 ```
-targets/<app>/
-  scripts/<tour>.md     narration: "## N. Title", "*capture cue*" lines, then narration paragraphs
-  <tour>.tour.mjs       export default { name, script, pronounce?, viewport?, voice?, async record(ctx) }
-  app.mjs               launch / seed / API helpers shared by the app's tours
-  pages/                optional helper pages (diagrams, comparisons) that set window.tourReady = true
+aft generate --story <file|text> [--base-url <url>] [--llm claude] [--style verification|demo|training] [--prompt "..."]
+aft validate <tour.json>        dry run: performs every step without recording; writes validation.md
+aft run      <tour.json>        record the video
+aft all      --story <file|text> --base-url <url> [--llm claude]     generate → validate → run in one run folder
+aft auto     <url> [--prompt "..."]                                  discover → plan → run, no story
+aft discover <url> [--max-pages 12] [--include <regex>] [--exclude <regex>]
+aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm claude]
+aft render   <tour> [--record]  narration over title cards or hand-made clips (no browser), or a recording
+aft login    <tour.json> [--target <env>] [--role <name>] [--manual]
+aft doctor | --help | --version | --list-voices
 ```
 
-`record(ctx)` gets `{ tour, scenes, outDir, options, toolRoot, targetDir, log, run }`. Typical shape:
+| Flag | Meaning |
+|---|---|
+| `--target <env>` (alias `--env`) | an environment from the tour's `environments` (e.g. `local`, `qa`) |
+| `--base-url <url>` | overrides the environment's URL; so does the `BASE_URL` environment variable (flag wins) |
+| `--script <file>` | the tour file, as an alternative to the positional argument |
+| `--out <folder>` | use this folder if it's new or empty; otherwise a run subfolder is made inside it |
+| `--name <name>` | run name (default: story id + tour name) |
+| `--headed` | show the browser (default headless) |
+| `--speech sapi\|silent` | narration voice: Windows SAPI (default on Windows) or silent audio (default elsewhere; use it for CI) |
+| `--voice <name>`, `--rate -10..10`, `--tail <s>` | SAPI voice, speed, pause after each scene |
+| `--on-error fail\|skip` | skip steps that can't be done instead of failing (a failed `verify` still fails) |
+| `--llm claude [--model <id>]` | plan with local `claude -p` instead of the built-in heuristic (see Data below) |
+| `--no-captions`, `--no-record` | skip tour.vtt; `auto` without recording |
+| anything else | passed to a `.tour.mjs` target as `ctx.options` (e.g. `--engine`, `--skip-build`) |
 
-```js
-const page = await ctx.tour.start({ initScripts: [...] });   // starts recording
-await ctx.tour.scene('scene-01', async t => {                 // one narrated scene
-  await t.at(0.3);                                            // 30% of the way through its narration
-  await t.click(page.locator('#add'));
-});
-// ...off-camera work between scenes is cut...
-await ctx.tour.finish();                                      // writes recording.webm + timings.json
+**Exit codes:** 0 ok · 1 usage, config or unexpected error · 2 a step or `verify` failed, or `validate` found
+unresolved steps · 3 the app wasn't reachable. Everything is non-interactive except `login --manual` and `--headed`.
+
+## Output
+
+```
+out/<story-id-or-tour>/<YYYYMMDD-HHMMSS>-<id>/     one folder per command, never reused
+  run.json          command, arguments, status, timings
+  discovery.json    screens/  (generate, auto, all)
+  tour.json         script.md                      the script and its narration
+  validation.md     validation.json                validate / all
+  tour.mp4  tour.vtt  recording.webm  clips/  scene-NN.wav  timings.json  screens/scene-NN.png
+  trace.zip         npx playwright show-trace <file>   (trace-failed.zip, screens/failure.png, recording-failed.webm on failure)
+out/<name>/latest.json   pointer to the newest successful run      out/<name>/runs.jsonl   one line per run
 ```
 
-Tour helpers: `at`, `moveTo`, `click`, `typeInto`, `drag`, `helper(url)`. In `src/recorder.mjs`:
-`startStaticServer` (SPA + routes + API proxy), `startProcess`, `waitForHttp`.
+Set `AFT_OUT_DIR` to put `out/` elsewhere. Concurrent runs are safe: separate folders, free ports for launched apps,
+no shared temp files.
 
-## Rules
+## Writing a tour (tour.json)
 
-- **Synthetic or demo data only.** Never point a tour at shared or production environments, or at real records.
-  Each run should start the app with its own fresh data.
-- Tours are plain code checked in. Rendering never depends on an LLM.
+```json
+{
+  "name": "todomvc",
+  "environments": { "local": { "baseUrl": "http://localhost:8080/" }, "qa": { "baseUrl": "https://qa.example.com/", "timeouts": { "verify": 30000 } } },
+  "login": { "role": "clerk", "steps": [ { "goto": "/login" }, { "fill": "Email", "text": "{env:DEMO_USER}" }, { "fill": "Password", "text": "{env:DEMO_PASSWORD}" }, { "click": { "role": "button", "name": "Sign in" } } ] },
+  "hooks": { "setup": [ { "run": "npm run seed:demo" } ], "teardown": [ { "http": { "method": "POST", "url": "/api/test/reset" } } ] },
+  "mask": { "selectors": ["[data-pii]"], "patterns": ["\\b\\d{3}-\\d{2}-\\d{4}\\b"] },
+  "story": { "id": "TODO-101", "title": "Track tasks", "acceptanceCriteria": ["A user can add tasks"] },
+  "scenes": [
+    { "title": "Adding tasks", "url": "#/", "criteria": [1],
+      "narration": "We type a task and press Enter. It appears in the list straight away.",
+      "steps": [ { "fill": "What needs to be done?", "text": "Renew the permit" }, { "press": "Enter" }, { "verify": { "text": "Renew the permit" } } ] }
+  ]
+}
+```
 
-## Roadmap
+Steps: `goto`, `click`, `fill` (+`text`), `press`, `hover`, `point`, `select` (+`option`), `scroll`, `verify`, `waitFor`,
+`wait`, `at` (a fraction of the narration). Any step can be `"optional": true` or have a `"timeout"`. Actions spread
+across the narration automatically unless a scene uses `at`. Targets: a plain string tries role (button, link, tab…),
+label, placeholder, then text; or be explicit with `{ "role", "name" }`, `{ "label" }`, `{ "placeholder" }`,
+`{ "text" }`, `{ "testId" }`, and only as a last resort `{ "css" }`; add `"nth"` to pick among matches.
+`npx playwright codegen <url>` is a quick way to find the right role and name for an element.
 
-- Generic `tour.yaml` launch config (command, health URL, reset script, login) so simple apps need no `app.mjs`.
-- Agent layer: from a prompt plus the app's source, draft `script.md` and the scene code, run it against the app and
-  repair failing steps (Claude Agent SDK with repo read tools + Playwright).
-- Cross-platform speech (Piper), per-sentence captions, frame-grab review before the final render.
+Other keys: `launch` (start the app for the run: `command`, `cwd`, `env`, `port: "auto"`, `healthUrl`), `timeouts`
+(`action`, `verify`, `waitFor`, `navigation`, `optional`, in ms; per environment too), `viewport`, `voice`,
+`pronounce`, `onError`. Full reference: the top of [src/declarative.mjs](src/declarative.mjs) and
+[src/steps.mjs](src/steps.mjs). Example: [examples/todomvc/tour.json](examples/todomvc/tour.json).
+
+**Logins** are saved Playwright storage state, `auth/<target>[-<env>]/<role>.json` (git-ignored). `aft login` runs
+the tour's login steps with credentials from environment variables or a `.env` file (git-ignored), or with
+`--manual` opens a browser for SSO/MFA and saves the state once you've logged in. `run` loads the saved state (or
+logs in off camera and saves it). Credentials never appear on camera or in the tour file.
+
+**Test data:** `hooks.setup` / `hooks.teardown` run off camera: `{ "run": "<shell command>" }`, `{ "node": "<script>" }`
+or `{ "http": { "method", "url", "body" } }`, with `BASE_URL` and `RUN_DIR` in their environment. Note that
+`validate` really performs the steps (without recording), so it changes data the same way a run does.
+
+**Sensitive data:** `mask.selectors` (CSS) and `mask.patterns` (regex) are blurred in the page before anything is
+recorded, so the video, screenshots and trace all see the blurred version. It's a hook point, not a guarantee.
+
+## Stories → scripts
+
+`aft generate --story story.md --base-url <url> --llm claude` reads a pasted story (id such as `RMS-6142`, title,
+acceptance criteria), crawls the app, and asks Claude for scenes that demonstrate each criterion, with `verify` steps
+and narration that refers back to the criteria. Steps it can't ground are listed under `unresolved` in the script.
+Without `--llm`, a story gives a draft with one scene per criterion for a person to fill in. Examples:
+[examples/stories](examples/stories).
+
+## Code targets (.tour.mjs)
+
+When a tour needs more than steps (building and launching a private app, seeding through an API, custom helper
+pages), write a module: `export default { name, script, pronounce?, viewport?, async record(ctx) }`, where `ctx` has
+`{ tour, scenes, outDir, options, toolRoot, targetDir, log, run }` and `ctx.tour` offers `start`, `scene(id, fn)`,
+`at`, `click`, `typeInto`, `moveTo`, `drag`, `helper(url)`, `screenshot`, `finish`. An optional
+`targets/<app>/requirements.mjs` adds checks to `aft doctor`.
+
+Targets: [targets/agenticfoia](targets/agenticfoia/README.md) (the app this tool started from).
+
+## Data and environments
+
+- **Synthetic or test data only.** Local or dedicated QA/test environments are fine; never production or real records.
+- `--llm claude` sends the discovery inventory (screen names, labels, short text excerpts) and the story to Claude.
+  Use it only where that's allowed for the app's data; the heuristic planner sends nothing anywhere.
+- Scripts are files a person reviews. Recording never depends on an LLM.
+
+## Next
+
+Cross-platform voice (Piper) behind the speech provider interface · story input by Jira/ADO key · discovery that
+explores state-dependent UI (after setup hooks or a scripted path) · per-sentence captions · `aft validate --fix`
+applying closest-match suggestions.
