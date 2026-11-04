@@ -48,14 +48,46 @@ aft run      my.tour.json --speech silent                        # headless/CI: 
 aft all      --story story.md --base-url <url> --llm claude      # story → script → dry run → video
 ```
 
-Exit codes: 0 ok, 1 usage/config/unexpected, 2 step or `verify` failed (or validate found unresolved steps), 3 app
-unreachable. Nothing prompts unless you ask (`login --manual`, `--headed`).
+Exit codes: 0 ok · 1 usage/config · 2 SCRIPT failure · 3 app unreachable · 4 CRITERION failure · 5 APP error (see
+"When a run fails"). Nothing prompts unless you ask (`login --manual`, `--headed --pause`).
 
 Run folder contents: `tour.mp4` (the video), `tour.vtt` (captions), `recording.webm` (raw browser recording),
 `clips/` (per scene), `scene-NN.wav` (narration), `timings.json` (scene windows in the recording), `screens/`
 (a still per scene, discovery pages), `trace.zip` (Playwright trace), `tour.json` / `script.md` (generated
 scripts), `validation.md`, `discovery.json`, `run.json` (command, args, status). On failure: `screens/failure.png`,
 `trace-failed.zip`, `recording-failed.webm`. `out/<name>/latest.json` points at the newest successful run.
+
+## When a run fails
+
+A tour video never silently shows an error: a failed run behaves like a failed test. Detection, classification and
+reporting are deterministic (no LLM anywhere on the run path).
+
+| exit | class | meaning |
+|---|---|---|
+| 0 | ok | every step and check passed; `tour.mp4` written |
+| 1 | error | usage, config or unexpected error |
+| 2 | SCRIPT | an action step (goto/click/fill/select/…) couldn't be done, or the script isn't ready (unresolved or empty scenes). The script is wrong or the UI changed |
+| 3 | unreachable | nothing answers at the app's URL |
+| 4 | CRITERION | a `verify` ran and its check failed: possibly a real app bug ("AC2 not met") |
+| 5 | APP | the app showed its own error UI (tour `"errors"`) during a step: the environment or a bug |
+
+`verify` steps count for the scene's `"criteria"` (or their own `"criterion"`); `report.md` gives each acceptance
+criterion as met, met so far, NOT MET, not run or not checked. Actions that time out are retried (`"retries"`,
+default 1); checks never are. A failed run writes **no** `tour.mp4`. It keeps `recording-failed.webm`,
+`report.json`/`report.md`, `screens/failure.png`, `trace-failed.zip`, and a **triage bundle**:
+
+```
+<run>/triage/            (--zip: also <run>/triage.zip)
+  report.md / report.json   failing step, raw Playwright error, did-you-mean matches, criteria so far (schema aft-triage/1)
+  script.json               the script that ran, failing step marked "__FAILED__" (secret values masked)
+  page/aria.yml             accessibility snapshot at the failure · page/page.json (URL, title) · page/text.txt · page/dom.html
+  screenshot.png  trace.zip  console.json (console + page errors)  network.json (failed requests, HTTP >= 400)
+  PROMPT.md                 a tool-agnostic brief: paste the folder into any AI assistant to triage it
+```
+
+The tool doesn't triage. Hand the bundle to a person or any AI. To replay by hand: `aft run <tour> --headed --pause`
+(stops at the failure with the Playwright inspector), `--until-step N` (stop after step N; scene steps counted across
+the tour as in report.md; exit 0, no video), `--from-step N` (steps before N run fast, unpaced).
 
 ## Adding a target app
 
@@ -88,7 +120,10 @@ Start from `examples/todomvc/tour.json`; most apps need nothing more than a `tou
    - `verify` for whatever a criterion requires to be visible; no destructive actions unless the story needs them;
    - anything listed under `unresolved` needs a person or a discovery of the right screen.
 4. `aft validate <run>/tour.json`; fix each ✘ in `validation.md` (it suggests the closest names on the page), repeat.
-5. `aft run <run>/tour.json` (records into a new run folder).
+5. `aft run <run>/tour.json` (records into a new run folder). On failure, read `triage/report.md`: SCRIPT means fix
+   the step (match a name from `triage/page/aria.yml`); CRITERION or APP means the app, so report it, don't edit the
+   check away.
+6. Example: [examples/stories/RMS-6142.tour.json](examples/stories/RMS-6142.tour.json) (generated, then corrected by hand).
 
 ## Rules
 
@@ -107,8 +142,9 @@ Start from `examples/todomvc/tour.json`; most apps need nothing more than a `tou
 |---|---|
 | `ffmpeg not found` | install it (see Setup) and open a new terminal |
 | `The sapi speech provider needs Windows` / no voices | `--speech silent` |
-| `Target not found: …` (exit 2) | the name differs on the page; see the "did you mean" suggestion, or `aft validate` for all of them; check with `npx playwright codegen <url>` |
-| `Verification failed` (exit 2) | the app doesn't show what the criterion expects, or it's slow: raise `timeouts.verify` |
+| `SCRIPT failure … Target not found` (exit 2) | the name differs on the page; see the "did you mean" suggestion, or `aft validate` for all of them; check with `npx playwright codegen <url>` |
+| `CRITERION … not met` (exit 4) | the app doesn't show what the criterion expects (a real bug?), or it's slow: raise `timeouts.verify` |
+| `APP error` (exit 5) | the app's own error dialog; see `triage/network.json` for the failing request (e.g. HTTP 500) and the server log |
 | lands on a login page / 401s | saved login expired: `aft login <tour.json> --target <env>` (`--manual` for SSO) |
 | `No saved login at …` | the tour has `login` without steps: run `aft login --manual` first |
 | exit 3, `didn't come up` | app not running at `baseUrl`, or `launch.healthUrl` wrong; see `app.log` |

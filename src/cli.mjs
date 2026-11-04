@@ -16,13 +16,18 @@
 //
 // Target selection: --target <environment in tour.json> (alias --env), --base-url <url> or BASE_URL. Other flags:
 // --out <folder>, --name <run name>, --headed, --speech sapi|silent, --voice, --rate, --tail, --no-captions,
-// --on-error fail|skip, --allow-draft (record a script that still has unresolved/empty scenes). Credentials: env vars or a .env file (never committed).
+// --on-error fail|skip, --allow-draft (record a script that still has unresolved/empty scenes).
+// Hand triage: --headed --pause (stop at the failure with the Playwright inspector), --until-step N / --from-step N
+// (scene steps counted across the tour; steps before --from-step run fast and unpaced), --zip (triage.zip). Credentials: env vars or a .env file (never committed).
 //
 // Every command writes into its own run folder, out/<name>/<YYYYMMDD-HHMMSS>-<id>/ (story id in the name when there
 // is one), never reused; out/<name>/latest.json and runs.jsonl are pointers only.
 //
-// Exit codes: 0 ok · 1 usage/config/unexpected error · 2 a step or verify failed (or validate found unresolved
-// steps) · 3 the app wasn't reachable. Failures leave failure.png and trace-failed.zip in the run folder.
+// Exit codes: 0 ok · 1 usage/config/unexpected error · 2 SCRIPT failure (an action step couldn't be done, or the
+// script isn't ready: unresolved/empty scenes) · 3 the app wasn't reachable · 4 CRITERION failure (a verify step
+// ran and its check failed: possibly a real app bug) · 5 APP error (the app showed its own error UI, see tour
+// "errors": likely the environment or a bug). A failed run writes no tour.mp4; it leaves report.json,
+// report.md, screens/failure.png, trace-failed.zip and recording-failed.webm in the run folder.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,14 +40,15 @@ import { plan, readStory } from './plan.mjs';
 import { Tour } from './recorder.mjs';
 import { concat, cutClips, duration, muxScene, requireFfmpeg, writeCaptions } from './render.mjs';
 import { parseScript, spokenText } from './script.mjs';
-import { StepError } from './steps.mjs';
+import { StepError, StopRun } from './steps.mjs';
+import { writeTriage } from './triage.mjs';
 import { defaultProvider, estimateSeconds, listVoices, speak } from './tts.mjs';
 import { log, newRunDir, num, parseArgs, run } from './util.mjs';
 
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'zip', 'pause', 'fromStep', 'untilStep']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 class UsageError extends Error {}
@@ -125,12 +131,31 @@ async function recordWith(def, tourDir, outDir, scenes, args, { dryRun = false }
   const tour = newTour(def, outDir, scenes, args, { dryRun });
   const options = Object.fromEntries(Object.entries(args).filter(([k]) => !ENGINE.has(k)));
   if (envOf(args)) options.env = envOf(args);
-  const ctx = { tour, scenes, outDir, options, toolRoot, targetDir: tourDir, log, run, dryRun, report: [] };
+  const range = args.fromStep || args.untilStep ? { n: 0, from: Number(args.fromStep ?? 0), until: Number(args.untilStep ?? 0) } : null;
+  const ctx = { tour, scenes, outDir, options, toolRoot, targetDir: tourDir, log, run, dryRun, report: [], range };
+  const started = Date.now();
   try {
     await def.record(ctx);
+    if (!dryRun) writeReport(outDir, def, ctx.report, { ms: Date.now() - started });
   } catch (e) {
+    if (e instanceof StopRun) {
+      log(`${e.message}; browser state kept in the trace`);
+      if (args.pause && tour.page) { log('paused: the Playwright inspector is open; resume or close it to finish'); await tour.page.pause().catch(() => {}); }
+      await tour.saveTrace('trace.zip');
+      writeReport(outDir, def, ctx.report, { ms: Date.now() - started });
+      return Object.assign(ctx.report, { partial: e.message });
+    }
+    const report = !dryRun ? writeReport(outDir, def, ctx.report, { ms: Date.now() - started, error: e }) : null;
+    if (args.pause && tour.page && !tour.page.isClosed()) {
+      log('paused at the failure: the Playwright inspector is open; resume or close it to finish (needs --headed)');
+      await tour.page.pause().catch(() => {});
+    }
     if (tour.page && !tour.page.isClosed()) await tour.screenshot('failure');
     await tour.saveTrace('trace-failed.zip');
+    if (report) {
+      const bundle = await writeTriage({ outDir, tour, raw: def.raw, report, entry: e.entry, error: e.entry?.error ?? e.message.split('\n')[0], zip: !!args.zip });
+      console.error(`\nFAILED. Triage bundle: ${bundle}\n  read:  ${path.join(outDir, 'triage', 'report.md')}\n  trace: npx playwright show-trace "${path.join(outDir, 'trace-failed.zip')}"\n  hand off: give the triage folder (with PROMPT.md) to any AI assistant, or replay with --headed --pause${e.entry ? ` --until-step <n>` : ''}\n`);
+    }
     const net = e.message.match(/net::(ERR_[A-Z_]+) at (\S+)/);
     if (net && /CONNECTION|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE|TIMED_OUT|UNSAFE_PORT/.test(net[1]))
       throw new UnreachableError(`Can't reach ${net[2]} (${net[1]}). Is the app running there? Set the target with --base-url, BASE_URL or --target <environment>.`);
@@ -147,6 +172,38 @@ async function recordWith(def, tourDir, outDir, scenes, args, { dryRun = false }
 }
 
 // ---- Validate (dry run) ------------------------------------------------------------------------------------------
+
+/**
+ * report.json + report.md for a run: every step (action/check, locator, expected vs found, URL, time) and a verdict per
+ * acceptance criterion: met (all its checks passed), NOT MET (a check failed), not run (the run stopped earlier) or
+ * not checked (no verify covers it). Fully deterministic.
+ */
+function writeReport(outDir, def, steps, { ms, error } = {}) {
+  const storyCriteria = def.story?.acceptanceCriteria ?? [];
+  const ids = new Set([...storyCriteria.map((_, i) => String(i + 1)), ...steps.flatMap(s => s.criteria ?? [])]);
+  (def.raw?.scenes ?? []).forEach(s => [s.criteria ?? []].flat().forEach(c => ids.add(String(c))));
+  const planned = id => (def.raw?.scenes ?? []).reduce((n, s) => n + (s.steps ?? []).filter(st => 'verify' in st && [st.criterion ?? s.criteria ?? []].flat().map(String).includes(id)).length, 0);
+  const criteria = [...ids].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map(id => {
+    const checks = steps.filter(s => s.kind === 'check' && s.criteria?.includes(id));
+    const status = checks.some(c => !c.ok) ? 'NOT MET' : checks.length ? (checks.length < planned(id) ? 'met so far' : 'met') : planned(id) ? 'not run' : 'not checked';
+    return { id, text: storyCriteria[Number(id) - 1] ?? '', status, checks: checks.length };
+  });
+  const failure = error ? (error.failure ?? (error instanceof UnreachableError ? 'unreachable' : 'error')) : null;
+  const report = { tour: def.name, story: def.story?.id ?? null, result: failure ? `FAILED (${failure})` : 'PASSED', error: error?.message?.split('\n')[0] ?? null,
+    seconds: Math.round((ms ?? 0) / 100) / 10, criteria, steps };
+  fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify(report, null, 2));
+  const esc = s => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+  const md = [`# ${report.story ? `${report.story} · ` : ''}${report.tour}: ${report.result}`, '',
+    ...(report.error ? [`**${report.error}**`, ''] : []),
+    '## Acceptance criteria', '', '| | criterion | status | checks |', '|---|---|---|---|',
+    ...criteria.map(c => `| ${c.status === 'met' ? '✔' : c.status === 'NOT MET' ? '✘' : '·'} | ${esc(c.id)}${c.text ? `. ${esc(c.text)}` : ''} | ${c.status} | ${c.checks} |`),
+    '', '## Steps', '', '| | scene | step | kind | action | locator | result | ms |', '|---|---|---|---|---|---|---|---|',
+    ...steps.map(s => `| ${s.ok ? '✔' : '✘'} | ${esc(s.scene)} | ${s.step} | ${s.kind ?? ''}${s.criteria ? ` (${s.criteria.join(',')})` : ''} | ${s.action} | \`${esc(JSON.stringify(s.spec?.[s.action] ?? '')).slice(0, 70)}\` | ${s.ok ? (s.retried ? `ok after ${s.retried} retry` : 'ok') : `${s.failure?.toUpperCase()}: ${esc(s.error)}.${s.expected ? ` Expected ${esc(JSON.stringify(s.expected))}; ${esc(s.found)}.` : ''} At ${esc(s.url)}`} | ${s.ms ?? ''} |`),
+  ];
+  fs.writeFileSync(path.join(outDir, 'report.md'), md.join('\n') + '\n');
+  log(`report: ${path.join(outDir, 'report.md')}`);
+  return report;
+}
 
 /** Problems visible in the script itself, reported as blocking validation items. */
 function scriptIssues(raw) {
@@ -206,7 +263,8 @@ async function render(def, tourDir, outDir, args) {
     const issues = def.raw && !args.allowDraft ? scriptIssues(def.raw) : [];
     if (issues.length)
       throw new StepError(`the script isn't ready to record (${issues.length} issue(s)):\n  ${issues.map(i => `${i.scene}: ${i.error}`).join('\n  ')}\nFix tour.json (aft validate shows them too), or pass --allow-draft to record anyway.`);
-    await recordWith(def, tourDir, outDir, scenes, args);
+    const done = await recordWith(def, tourDir, outDir, scenes, args);
+    if (done.partial) { log(`partial run (${done.partial}): report written, no video rendered`); return { partial: true }; }
     const timings = JSON.parse(fs.readFileSync(path.join(outDir, 'timings.json'), 'utf8')).scenes;
     await cutClips(path.join(outDir, 'recording.webm'), timings, clipsDir);
   }
@@ -238,9 +296,9 @@ function loginStepsFor(args) {
   if (!args.tour) return {};
   const raw = resolveConfig(JSON.parse(fs.readFileSync(args.tour, 'utf8')), { env: envOf(args), baseUrl: args.baseUrl });
   raw.name ??= path.basename(args.tour).replace(/\.tour\.json$|\.json$/, '');
-  if (!raw.login) return { ready: raw.ready, ignoreHTTPSErrors: raw.ignoreHTTPSErrors, paths: raw.discover?.paths ?? [] };
+  if (!raw.login) return { ready: raw.ready, ignoreHTTPSErrors: raw.ignoreHTTPSErrors, paths: raw.discover?.paths ?? [], errors: raw.errors };
   const state = authFile(toolRoot, authTarget(raw, envOf(args)), args.role ?? raw.login.role);
-  const common = { ready: raw.ready, ignoreHTTPSErrors: raw.ignoreHTTPSErrors, paths: raw.discover?.paths ?? [] };
+  const common = { ready: raw.ready, ignoreHTTPSErrors: raw.ignoreHTTPSErrors, paths: raw.discover?.paths ?? [], errors: raw.errors };
   return fs.existsSync(state) ? { ...common, storageState: state } : { ...common, loginSteps: raw.login.steps };
 }
 
@@ -254,7 +312,7 @@ async function generateInto(out, args, { url, story, name }) {
   const tourFile = path.join(out, 'tour.json');
   if (args.tour) { // the app's own settings from a hand-written tour.json: login, environments, hooks, mask, timeouts
     const base = JSON.parse(fs.readFileSync(args.tour, 'utf8'));
-    for (const k of ['login', 'environments', 'hooks', 'mask', 'timeouts', 'launch', 'viewport', 'voice', 'pronounce', 'ready', 'ignoreHTTPSErrors', 'startPath', 'baseUrl'])
+    for (const k of ['login', 'environments', 'hooks', 'mask', 'timeouts', 'launch', 'viewport', 'voice', 'pronounce', 'ready', 'ignoreHTTPSErrors', 'startPath', 'baseUrl', 'errors'])
       if (base[k] !== undefined) tour[k] = base[k];
     if (tour.draft && tour.baseUrl) tour.needs = tour.needs?.filter(n => !n.startsWith('a target'));
     if (tour.needs && !tour.needs.length) { delete tour.needs; delete tour.draft; }
@@ -390,7 +448,7 @@ async function main() {
 }
 
 main().catch(e => {
-  const code = e instanceof StepError ? 2 : e instanceof UnreachableError ? 3 : 1;
+  const code = e instanceof StepError ? (e.failure === 'criterion' ? 4 : e.failure === 'app' ? 5 : 2) : e instanceof UnreachableError ? 3 : 1;
   console.error(code === 1 && !(e instanceof UsageError) && !(e instanceof ConfigError) ? e.stack ?? e : `error: ${e.message}`);
   process.exit(code);
 });

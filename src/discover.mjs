@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
-import { plainActor, runSteps, settle } from './steps.mjs';
+import { appError, plainActor, runSteps, settle } from './steps.mjs';
 import { log } from './util.mjs';
 
 const SKIP = /log ?out|sign ?out|delete|remove|destroy|unsubscribe|reset|\.(pdf|zip|csv|xlsx?|docx?|png|jpe?g|mp[34]|exe)(\?|$)/i;
@@ -39,7 +39,7 @@ function inventory() {
   };
 }
 
-export async function discover({ url, outDir, maxPages = 12, viewport = { width: 1440, height: 810 }, loginSteps, storageState, include, exclude, ready, ignoreHTTPSErrors, paths = [] }) {
+export async function discover({ url, outDir, maxPages = 12, viewport = { width: 1440, height: 810 }, loginSteps, storageState, include, exclude, ready, ignoreHTTPSErrors, paths = [], errors }) {
   const start = new URL(url);
   const browser = await chromium.launch();
   const pages = [];
@@ -70,6 +70,8 @@ export async function discover({ url, outDir, maxPages = 12, viewport = { width:
       if (new URL(landed).origin !== start.origin) { log(`skip ${next}: left the app (${landed})`); continue; }
       if (keyOf(landed) !== key) { if (seen.has(keyOf(landed))) continue; seen.add(keyOf(landed)); }
       const inv = await page.evaluate(inventory);
+      inv.error = await appError(page, errors);
+      if (inv.error) log(`page shows an app error: ${inv.error}`);
       const n = String(pages.length + 1).padStart(2, '0');
       const screenshot = path.join('screens', `page-${n}.png`);
       await page.screenshot({ path: path.join(outDir, screenshot) });

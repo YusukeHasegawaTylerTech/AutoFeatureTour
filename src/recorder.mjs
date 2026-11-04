@@ -114,6 +114,14 @@ export class Tour {
     if (this.mask?.selectors?.length || this.mask?.patterns?.length) await this.context.addInitScript(maskScript, this.mask);
     this.page = await this.context.newPage();
     this.page.on('dialog', d => d.accept());
+    // Browser-side evidence for the triage bundle (bounded, so a chatty app can't grow it without limit).
+    this.consoleErrors = [];
+    this.networkFailures = [];
+    const keep = (list, item) => { if (list.length < 500) list.push({ at: +this.now().toFixed(2), url: this.page.url(), ...item }); };
+    this.page.on('console', m => { if (['error', 'warning'].includes(m.type())) keep(this.consoleErrors, { type: m.type(), text: m.text().slice(0, 2000) }); });
+    this.page.on('pageerror', e => keep(this.consoleErrors, { type: 'pageerror', text: String(e.stack ?? e).slice(0, 2000) }));
+    this.page.on('requestfailed', r => keep(this.networkFailures, { method: r.method(), request: r.url(), failure: r.failure()?.errorText }));
+    this.page.on('response', r => { if (r.status() >= 400) keep(this.networkFailures, { method: r.request().method(), request: r.url(), status: r.status() }); });
     this.t0 = Date.now();
     return this.page;
   }

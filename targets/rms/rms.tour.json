@@ -31,6 +31,7 @@
     "stableTimeout": 15000,
     "timeout": 60000
   },
+  "errors": { "selector": "forge-dialog[open], mat-dialog-container, [role=alertdialog]", "text": "error|exception|unexpected|unable to" },
   "timeouts": { "action": 20000, "verify": 30000, "waitFor": 60000, "navigation": 90000, "optional": 5000 },
   "login": {
     "role": "dev",

@@ -14,6 +14,8 @@
 //     "stop": true                              // false: leave it running after the run (slow-starting services)
 //   },                                          // already answering at healthUrl? it's used as is and never stopped
 //   "ready": { "busy": ".spinner, .loading", "stableMs": 1500, "timeout": 60000 },  // instead of network idle
+//   "retries": 1,                                // rule-based retries of action steps that time out (checks: never)
+//   "errors": { "selector": ".error-dialog", "text": "error|exception" },  // the app's error UI: a step showing it fails
 //   "login": { "role": "clerk", "steps": [ { "goto": "/login" }, { "fill": "Email", "text": "{env:DEMO_USER}" }, ... ] },
 //   "timeouts": { "action": 10000, "verify": 15000, "waitFor": 30000, "navigation": 30000 },
 //   "viewport": { "width": 1440, "height": 810 },
@@ -150,7 +152,8 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
         }
         const t = ctx.tour;
         await t.start({ storageState: state ?? undefined, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors });
-        const opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report, ready: cfg.ready,
+        const opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report, ready: cfg.ready, errors: cfg.errors, retries: cfg.retries ?? 1,
+          range: ctx.range,
           onError: ctx.dryRun ? 'collect' : ctx.options.onError ?? cfg.onError ?? 'fail' };
         await t.page.goto(vars.baseUrl + '/' + (cfg.startPath ?? '').replace(/^\//, ''), { timeout: cfg.timeouts?.navigation ?? 30000 });
         await settle(t.page, cfg.ready);
@@ -161,7 +164,7 @@ export function loadTourJson(file, { env, baseUrl } = {}) {
         for (const [i, s] of cfg.scenes.entries()) {
           const id = ctx.scenes[i].id;
           if (s.url) await runSteps(t, [{ goto: s.url }], { ...opts, unpaced: true, scene: `${id} (url)` });
-          await t.scene(id, () => runSteps(t, s.steps ?? [], { ...opts, scene: id }));
+          await t.scene(id, () => runSteps(t, s.steps ?? [], { ...opts, scene: id, criteria: s.criteria ?? [] }));
         }
         await t.finish({ baseUrl: vars.baseUrl });
       } finally {

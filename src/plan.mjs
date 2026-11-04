@@ -157,6 +157,8 @@ const SYSTEM = `You write narrated product-tour videos for web applications. You
   Every step is checked against the live app before recording, so ground what you can and don't guess wildly.
 - Set role when the target is a button, link, tab, checkbox or menu item, so it can't match the wrong element.
 - The crawl only saw each screen's initial state; controls that appear later (after adding data) aren't listed.
+- A screen with "appError" showed the app's own error message when crawled: say so in "unresolved" for scenes
+  that need it (the environment may be broken), rather than inventing its contents.
 - Prefer demonstrating over destroying: no deleting, no irreversible submissions, unless the brief asks for it.
 - Use "verify" for anything an acceptance criterion requires to be visible.
 - Narration is spoken aloud: plain sentences, no markdown, 2-4 sentences per scene, describing what the viewer sees.
@@ -186,7 +188,7 @@ function inventoryFor(discovery) {
   return discovery.pages.map(p => ({
     path: p.path, title: p.title, headings: p.headings.map(h => h.name), nav: p.links.filter(l => l.nav).map(l => l.name).filter(Boolean),
     links: p.links.filter(l => !l.nav).map(l => l.name).filter(Boolean).slice(0, 25), buttons: p.buttons.map(b => b.name),
-    fields: p.fields, tabs: p.tabs.map(t => t.name), excerpt: p.excerpt.slice(0, 300),
+    fields: p.fields, tabs: p.tabs.map(t => t.name), excerpt: p.excerpt.slice(0, 300), ...(p.error ? { appError: p.error } : {}),
   }));
 }
 

@@ -42,6 +42,8 @@ function candidates(page, target) {
     const exact = ROLES.map(role => page.getByRole(role, { name: target, exact: true }));
     return [...exact, page.getByLabel(target, { exact: true }), page.getByPlaceholder(target, { exact: true }),
       ...ROLES.slice(0, 4).map(role => page.getByRole(role, { name: target })), page.getByText(target, { exact: true }), page.getByText(target),
+      // A form field by its name attribute (inputs without a visible label).
+      ...(/^[A-Za-z_][\w.-]*$/.test(target) ? [page.locator(`[name="${target}"]`)] : []),
       // Last resort: something shaped like a custom element's tag name (forge-app-bar, my-widget) as CSS.
       ...(/^[a-z][a-z0-9]*(-[a-z0-9]+)+$/.test(target) ? [page.locator(target)] : [])];
   }
@@ -105,11 +107,27 @@ export async function settle(page, ready) {
   }
 }
 
+/**
+ * The app's own error indicator, if the tour declares one ("errors": { "selector": "<css>", "text": "<regex>" }):
+ * returns the error's text when one is visible, else null. Lets a step fail with the app's message instead of
+ * carrying on over an error dialog.
+ */
+export async function appError(page, errors) {
+  if (!errors?.selector) return null;
+  const re = errors.text ? new RegExp(errors.text, 'i') : null;
+  for (const el of await page.locator(errors.selector).all()) {
+    if (!(await el.isVisible().catch(() => false))) continue;
+    const text = (await el.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+    if (!re || re.test(text)) return text.slice(0, 300) || '(error shown)';
+  }
+  return null;
+}
+
 /** A step as it may be shown in logs, reports and errors: secret values never are. */
 export const shown = step => (step.secret ? { ...step, text: '***' } : step);
 
 /** Runs one step on the tour. Pacing ("at") is the caller's business unless the step is an explicit "at". */
-export async function runStep(t, step, { baseUrl, timeouts = {}, ready }) {
+export async function runStep(t, step, { baseUrl, timeouts = {}, ready, errors }) {
   const page = t.page;
   // Per-target defaults (tour.json "timeouts"), per-step override; slow screens such as reports need more.
   // An optional step gives up sooner, so a miss doesn't stall the scene.
@@ -154,37 +172,67 @@ export async function runStep(t, step, { baseUrl, timeouts = {}, ready }) {
     case 'wait': await sleep(Number(step.wait) * 1000); break;
     case 'at': await t.at(Number(step.at)); break;
   }
+  const err = await appError(page, errors);
+  if (err) throw new Error(`the app showed an error: ${err}`);
 }
 
 /**
  * Runs a scene's steps. Unless the scene places its own "at" steps, actions are spread evenly across the narration
  * (the first right away, the last by about 80%), so the video moves while the narrator talks.
  */
-export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = false, timeouts, report, scene, ready } = {}) {
+/** Thrown at --until-step: the requested part of the run is done. */
+export class StopRun extends Error {}
+
+export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = false, timeouts, report, scene, ready, errors, criteria = [], retries = 1, range } = {}) {
   const paced = unpaced || steps.some(s => 'at' in s); // unpaced: off camera (login, setup), as fast as possible
   const actions = steps.filter(s => !['at', 'wait', 'waitFor'].includes(actionOf(s)));
   let i = 0;
   for (const step of steps) {
     const a = actionOf(step);
-    if (!paced && !['at', 'wait', 'waitFor'].includes(a)) {
+    // --from-step / --until-step count scene steps across the whole tour (1-based, as in report.md's order).
+    if (range && !unpaced) {
+      range.n++;
+      if (range.until && range.n > range.until) throw new StopRun(`stopped before step ${range.n} (--until-step ${range.until})`);
+    }
+    const fastForward = range?.from && range.n < range.from;
+    if (!paced && !fastForward && !['at', 'wait', 'waitFor'].includes(a)) {
       await t.at(actions.length > 1 ? 0.05 + (0.75 * i) / (actions.length - 1) : 0.1);
       i++;
     }
     const index = steps.indexOf(step) + 1;
+    // A check (verify) tests the app; anything else is the script driving it. Checks carry the acceptance criteria
+    // they cover: the step's own "criterion" (e.g. "AC2" or 2), else the scene's "criteria".
+    const kind = a === 'verify' ? 'check' : 'action';
+    const covers = kind === 'check' ? [step.criterion ?? criteria].flat().filter(c => c !== undefined && c !== '').map(String) : [];
+    const started = Date.now();
+    const entry = { scene, step: index, action: a, kind, ...(covers.length ? { criteria: covers } : {}), spec: shown(step) };
     try {
-      await runStep(t, step, { baseUrl, timeouts, ready });
-      report?.push({ scene, step: index, action: a, ok: true, spec: shown(step) });
+      // Rule-based retries for actions only (timeouts, elements not there yet). A failed check is never retried.
+      for (let attempt = 0; ; attempt++) {
+        try { await runStep(t, step, { baseUrl, timeouts, ready, errors }); break; } catch (e) {
+          if (kind === 'check' || attempt >= (step.retries ?? retries) || !/Timeout|not found|not visible|detached/i.test(e.message)) throw e;
+          log(`${scene ?? 'setup'} step ${index}: retrying (${e.message.split('\n')[0]})`);
+          await settle(t.page, ready);
+          entry.retried = attempt + 1;
+        }
+      }
+      report?.push({ ...entry, ok: true, ms: Date.now() - started });
     } catch (e) {
       const message = e.message.split('\n')[0];
       const target = targetOf(step);
       const suggestions = target ? await suggest(t.page, target) : [];
-      report?.push({ scene, step: index, action: a, ok: false, optional: !!step.optional, spec: shown(step), error: message, url: t.page.url(), suggestions });
+      // The app's own error UI (tour "errors") during a step is an APP failure, whatever the step.
+      const failure = /^the app showed an error/.test(message) ? 'app' : kind === 'check' ? 'criterion' : 'script';
+      Object.assign(entry, { ok: false, failure, optional: !!step.optional, error: message, url: t.page.url(), ms: Date.now() - started,
+        ...(target && failure !== 'app' ? { expected: target, found: suggestions.length ? `closest on the page: ${suggestions.join(' | ')}` : 'nothing similar on the page' } : {}),
+        suggestions });
+      report?.push(entry);
       const hint = suggestions.length ? ` (did you mean ${suggestions.map(x => JSON.stringify(x)).join(', ')}?)` : '';
       // collect (dry run): report everything and carry on. Otherwise a failed "verify" always stops the run (it's an
       // acceptance check) unless that step is marked optional.
       if (onError === 'collect' || step.optional || (onError === 'skip' && a !== 'verify'))
         log(`${scene ?? 'setup'} step ${index} ${onError === 'collect' ? 'FAILED' : 'skipped'}: ${message}${hint}`);
-      else throw new StepError(`${scene ?? 'setup'} step ${index} ${JSON.stringify(shown(step))}: ${message}${hint}`);
+      else throw Object.assign(new StepError(`${failure === 'criterion' ? `CRITERION${covers.length ? ` ${covers.join(', ')}` : ''} not met` : failure === 'app' ? 'APP error' : 'SCRIPT failure'}: ${scene ?? 'setup'} step ${index} ${JSON.stringify(shown(step))}: ${message}${hint}`), { failure, entry });
     }
   }
 }
