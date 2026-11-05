@@ -917,6 +917,21 @@
       },
       "additionalProperties": false
     },
+    "stage": {
+      "type": "object",
+      "description": "Staging (\"do / redo until here\", aft stage): how the live app is handed off.",
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "The role to hand off as (a second window with the saved login of that role); default: the tour role. --as overrides."
+        },
+        "note": {
+          "type": "string",
+          "description": "Hand-off text shown on the stage card: what to try by hand from there."
+        }
+      },
+      "additionalProperties": false
+    },
     "baseUrl": {
       "type": "string",
       "description": "Root URL of the app in this environment."

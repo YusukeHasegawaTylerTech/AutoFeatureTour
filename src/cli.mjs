@@ -24,6 +24,10 @@
 //   aft doctor   [--platform <name>]                  check this machine (+ platforms' requirements.mjs); exit 1 if missing
 //   aft session  start|status|stop [--platform <name>] [--target <env>] [--role <r>] [--session <name>] [--headed]
 //                                                    a warm, signed-in browser for the commands below (stop: only what it started)
+//   aft stage    <tour.json|run folder> [--target <env>] [--as <role>] [--until-scene N [--step J] | --until-step N | --setup-only]
+//                [--keep] [--redo [--force]] [--headless]   do / redo until here: the tour unrecorded up to that point,
+//                                                    then the live app is handed off (headed browser, data in place)
+//   aft stage    list | end <name> [--keep]          the live stages; end one (undo its data in reverse, or keep it)
 //   aft snapshot [--url <path>] [--screenshot]        the page now: URL, title, ARIA snapshot, visible text
 //   aft locate   "<target>"                           how a step target resolves: strategy, matches, visible, alternatives
 //   aft try-step '<step | [steps]>' [--url <path>]    perform steps live (fragments too): result per step + ARIA after
@@ -65,6 +69,7 @@ import { appSettingsFor } from './cli-app.mjs';
 import { platformCommand } from './platform-cli.mjs';
 import { call, parseArg, readSessions, Session, sessionName, sessionsDir, startDaemon } from './session.mjs';
 import { loadPlatform } from './platform.mjs';
+import { describePoint, endStage, listStages, stageName, stagePoint, stageSource, stageView, startStage } from './stage.mjs';
 import { exportTour, importTour } from './exchange.mjs';
 import { discover } from './discover.mjs';
 import { doctor } from './doctor.mjs';
@@ -483,7 +488,8 @@ function pickSession(args, { required = false } = {}) {
     if (!s && required) throw new UsageError(`No running session "${args.session}" (running: ${live.map(x => x.name).join(', ') || 'none'})`);
     return s ?? null;
   }
-  const match = live.filter(s => (!args.platform || s.platform === args.platform) && (!envOf(args) || s.env === envOf(args)) && (!args.role || s.role === args.role));
+  // A stage (aft stage) is only used when named: it is someone's hand-off, not a scratch page.
+  const match = live.filter(s => !s.stage && (!args.platform || s.platform === args.platform) && (!envOf(args) || s.env === envOf(args)) && (!args.role || s.role === args.role));
   if (match.length === 1) return match[0];
   if (match.length > 1) throw new UsageError(`Several sessions match (${match.map(s => s.name).join(', ')}): pick one with --session <name>`);
   if (required) throw new UsageError('No running session: aft session start --platform <name>');
@@ -777,6 +783,62 @@ const commands = {
     throw new UsageError(`Unknown: aft session ${sub} (start, status, stop)`);
   },
 
+  /** Do / redo until here: the tour unrecorded up to a point, handed off live (src/stage.mjs). */
+  async stage(args) {
+    const sub = args._[1];
+    const outRoot = path.resolve(process.env.AFT_OUT_DIR ?? path.join(toolRoot, 'out'));
+    const undoDead = async runDir => commands.cleanup({ _: ['cleanup', runDir] }).catch(e => ({ error: e.message.split('\n')[0] }));
+    if (sub === 'list') {
+      const stages = listStages(toolRoot);
+      if (!args.json) {
+        for (const s of stages) console.log(`${s.name.padEnd(40)} ${String(s.state).padEnd(8)} ${s.reached ?? describePoint(s.point)}  ${s.url ?? ''}`);
+        if (!stages.length) console.log('no stages');
+      }
+      return { stages };
+    }
+    if (sub === 'end') {
+      const name = args._[2] ?? args.session;
+      const s = readSessions(toolRoot).find(x => x.name === name && x.name.startsWith('stage-'));
+      if (!s) throw new UsageError(`No stage "${name ?? ''}" (stages: ${listStages(toolRoot).map(x => x.name).join(', ') || 'none'}); usage: aft stage end <name> [--keep]`);
+      const r = await endStage(toolRoot, s, { keep: args.keep === undefined ? undefined : args.keep !== 'false', undoDead });
+      const failed = r.undo?.failed?.length ?? 0;
+      log(`stage ${s.name}: ended${r.kept ? ', data kept (aft cleanup <run> undoes it later)' : r.undo ? `: ${r.undo.undone} undone${failed ? `, ${failed} failed` : ''}` : ''}`);
+      if (failed) throw Object.assign(new UsageError(`${failed} undo step(s) failed; the data is left in ${s.stage?.runDir}/ledger.json for aft cleanup`), { data: r });
+      return r;
+    }
+    const srcArg = sub;
+    if (!srcArg) throw new UsageError('Usage: aft stage <tour.json | run folder> [--target env] [--as role] [--until-scene N [--step J] | --until-step N | --setup-only] [--keep] [--redo]  ·  aft stage list  ·  aft stage end <name> [--keep]');
+    const src = stageSource(srcArg);
+    if (!src?.file) throw new UsageError(src ? `${src.runDir} has no tour.json (and its run.json names no tour file)` : `No such tour or run folder: ${srcArg}`);
+    if (!src.file.endsWith('.json')) throw new UsageError('aft stage takes a tour.json (code tours can\'t be staged)');
+    let point;
+    try { point = stagePoint(args); } catch (e) { throw new UsageError(e.message); }
+    const target = envOf(args) ?? src.env;
+    const def = loadTourJson(src.file, { env: target, baseUrl: args.baseUrl, role: args.role, toolRoot });
+    const name = stageName(def.name, def.env);
+    if (args.keep && def.warnings?.length) throw new UsageError(`--keep on a shared environment needs tagged data: ${def.warnings.join('; ')}`);
+    // One stage per tour and environment: --redo ends it (undoing its data) and stages again.
+    const existing = readSessions(toolRoot).find(s => s.name === name);
+    let replaced = null;
+    if (existing?.alive && !args.redo) throw new UsageError(`${def.name} is already staged${def.env ? ` on ${def.env}` : ''} (${name}, ${existing.stage?.reached ?? existing.stage?.state ?? existing.status}): --redo to end it and stage again, or aft stage end ${name}`);
+    if (existing) {
+      log(`stage ${name}: ending the current one first`);
+      replaced = await endStage(toolRoot, existing, { keep: false, undoDead });
+      const failed = replaced.undo?.failed?.length ?? 0;
+      if (failed && !args.force) throw Object.assign(new UsageError(`ending the current stage: ${failed} undo step(s) failed (${replaced.undo.failed.map(f => `${f.name}: ${f.error}`).join('; ')}); --force stages anyway (the leftover stays in its ledger for aft cleanup)`), { data: replaced });
+    }
+    const r = startRun(runName(def, args), args, 'stage');
+    lastRunDir = r.dir;
+    const s = await startStage({ toolRoot, name, outDir: r.dir, echo: text => process.stderr.write(text),
+      job: { file: src.file, sourceRun: src.runDir, point, keep: !!args.keep, args: { target, role: args.role, as: args.as, headless: !!args.headless, freshLogin: !!args.freshLogin } } });
+    const view = stageView({ ...s, alive: s.status === 'ready' });
+    if (s.status === 'failed') fs.rmSync(path.join(sessionsDir(toolRoot), `${name}.json`), { force: true });
+    if (!args.json) console.log(`${name}: ${view.state}${view.reached ? `, ${view.reached}` : ''}${view.url ? ` at ${view.url}` : ''}\n  end:  aft stage end ${name}${view.keep ? '' : ' [--keep]'}\n  redo: aft stage ${srcArg} --redo`);
+    const data = { ...view, ...(replaced ? { replaced } : {}) };
+    if (view.state === 'failed') throw Object.assign(new Failure(view.class ?? 'error', `stage ${name}: ${view.error}`), { data });
+    return data;
+  },
+
   async snapshot(args) {
     const r = await withSession(args, (s, live) => (live ? call(s, 'snapshot', { url: args.url, screenshot: !!args.screenshot }) : s.snapshot({ url: args.url, screenshot: !!args.screenshot })));
     if (!args.json) console.log(`${r.url}  "${r.title}"\n\n${r.aria}`);
@@ -844,7 +906,7 @@ async function main() {
   const command = commands[cmd] ? cmd : /\.(mjs|json)$/.test(cmd) ? 'render' : null;
   if (!command) throw new UsageError(`Unknown command "${cmd}"`);
   const data = await commands[command](command === cmd ? args : { ...args, _: ['render', ...args._] });
-  if (json) emit({ command: command === 'platform' || command === 'session' ? `${command} ${args._[1] ?? ''}`.trim() : command, ok: true, exitCode: process.exitCode ?? 0,
+  if (json) emit({ command: ['platform', 'session', 'stage'].includes(command) ? `${command} ${args._[1] ?? ''}`.trim() : command, ok: true, exitCode: process.exitCode ?? 0,
     class: 'ok', ...(lastRunDir ? { runDir: lastRunDir } : {}), data: data ?? null });
 }
 
@@ -859,7 +921,7 @@ main().catch(e => {
   if (json) {
     const args = parseArgs(process.argv.slice(2));
     const report = lastRunDir && fs.existsSync(path.join(lastRunDir, 'report.json')) ? path.join(lastRunDir, 'report.json') : undefined;
-    const sub = ['platform', 'session'].includes(args._[0]) ? ` ${args._[1] ?? ''}` : '';
+    const sub = ['platform', 'session', 'stage'].includes(args._[0]) ? ` ${args._[1] ?? ''}` : '';
     emit({ command: args._[0] ? `${args._[0]}${sub}`.trim() : null, ok: false, exitCode: code, class: cls, ...(lastRunDir ? { runDir: lastRunDir } : {}), ...(report ? { report } : {}),
       error: { message: e.message.split('\n')[0], ...(e.message.includes('\n') ? { details: e.message.split('\n').slice(1).map(l => l.trim()).filter(Boolean) } : {}),
         ...(e.entry ? { step: e.entry } : {}) }, data: e.data ?? lastData ?? null });

@@ -51,6 +51,15 @@ It opens the browser with a one-time token in the URL (kept as a cookie). The se
   (name, kind, fields from the page, the page address or a fixed value, secret fields, cleanup). After GENERATE and on
   SAVE, a `goto` that starts with "/" and so leaves the app's address is flagged (GENERATE makes ones that repeat the
   base path relative).
+- **Do / redo until here** (`aft stage`): ▶ DO UNTIL HERE on every scene (and ▶ on each step row, on hover) in the
+  script editor and on a run's storyboard, ▶ SETUP ONLY at the top (and ▶ DO IT ALL on a script's page). A popover asks
+  for the environment, the role to hand off as and "keep the data when I end"; the script runs without a video and
+  leaves the app open in a browser at that point, with its test data in place. The **stage card** (top of the page)
+  says where it stopped, the run tag, what it created (secrets ●●●) and what ending will undo, with ↗ OPEN (brings the
+  browser to the front), ↻ REDO UNTIL HERE (undo, then do it again), ⇢ MOVE TO… (pick ▶ elsewhere), ■ END & CLEAN UP
+  and ■ END, KEEP DATA; the point reached is outlined in the page. A failed stage shows what failed and links to its run
+  (review, suggest a fix); the browser stays at the failure. The start page lists **Live stages**. From a run's page it
+  stages the script that ran there.
 - **Videos** (a run's page and a script's page): scene markers under the player, from `tour.vtt`; click one to jump there.
 - **Compare** (⇄ on a run's page): the run next to an earlier run of the same script: result, time, video length,
   findings, each criterion, and every step that got better, worse, edited, added or removed.
@@ -60,5 +69,5 @@ It opens the browser with a one-time token in the URL (kept as a cookie). The se
 - **Jobs**: every command the UI started, with its live log, a Stop (Ctrl+C) button and the `--json` result.
 
 The UI never imports the engine: it runs `aft … --json` (only validate, render, run, doctor, generate, platform,
-login, session, snapshot, locate, try-step, export, import, suggest-fix, cleanup, reset) and reads and writes files. It writes only `.env` (sign-in details, only names the platform references) and files under `platforms/<name>/`
+login, session, snapshot, locate, try-step, export, import, suggest-fix, cleanup, reset, stage) and reads and writes files. It writes only `.env` (sign-in details, only names the platform references) and files under `platforms/<name>/`
 (not dotfiles, auth state or node_modules) `out/**/tour.json` `out/.imports/`, and `out/.trash/` (delete moves things there; restore moves them back). Tests: `test/ui-server.test.mjs`.

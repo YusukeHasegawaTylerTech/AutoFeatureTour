@@ -335,6 +335,10 @@ export const SCHEMAS = {
       needs: { type: 'array', items: { type: 'string' }, description: 'What a draft still needs.' },
       workarounds: { ...workarounds, description: 'Known issues for this story only, after the platform\'s and environment\'s rules (the same name refines one, "off": true turns it off for this story). Mark a real app issue worked around for now with "issue".' },
       review,
+      stage: obj('Staging ("do / redo until here", aft stage): how the live app is handed off.', {
+        role: str('The role to hand off as (a second window with the saved login of that role); default: the tour role. --as overrides.'),
+        note: str('Hand-off text shown on the stage card: what to try by hand from there.'),
+      }),
       ...PLATFORM_ONLY,
     },
   }),

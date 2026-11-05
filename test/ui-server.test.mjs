@@ -155,5 +155,25 @@ describe('ui server', () => {
   test('jobs: only the allowed commands; import only from uploaded files', async () => {
     assert.equal((await req('/api/jobs', { method: 'POST', body: { args: ['ui'] } })).status, 400);
     assert.equal((await req('/api/jobs', { method: 'POST', body: { args: ['import', path.join(root, '.env'), '--platform', 'demo'] } })).status, 400);
+    const job = await req('/api/jobs', { method: 'POST', body: { args: ['stage', 'list'] } });
+    assert.equal(job.status, 200);
+    // Let the child exit before the checkout is removed.
+    for (let i = 0; i < 50 && !(await req(`/api/jobs/${job.json.id}`)).json.done; i++) await new Promise(r => setTimeout(r, 100));
+  });
+
+  test('stages: read from .sessions/stage-*.json, with the run status, never the control token or port', async () => {
+    const rd = path.join(root, 'out', ...RUN.split('/'));
+    write(path.join(root, '.sessions', 'stage-a-local.json'), { schema: 'aft-session/1', name: 'stage-a-local', pid: process.pid, port: 54321, token: 'tok-very-secret-42',
+      status: 'ready', platform: 'demo', env: 'local', url: 'http://localhost:1/app/ok',
+      stage: { state: 'staged', tour: 'a', tourFile: path.join(root, 'platforms', 'demo', 'tours', 'a.tour.json'), runDir: rd, point: { untilScene: 1 }, reached: 'stopped after scene 1',
+        tag: 'aft-1105-abcd', artifacts: [{ name: 'acct', fields: { id: '7', pw: '***' } }], toUndo: [{ name: 'account', kind: 'hooks' }] } });
+    write(path.join(root, '.sessions', 'demo-local-user.json'), { name: 'demo-local-user', pid: process.pid, status: 'ready' });
+    const r = await req('/api/stages');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json.map(s => s.name), ['stage-a-local'], 'plain sessions are not stages');
+    const s = r.json[0];
+    assert.deepEqual([s.state, s.alive, s.run, s.runStatus, s.tourFile, s.reached], ['staged', true, RUN, 'failed', 'platforms/demo/tours/a.tour.json', 'stopped after scene 1']);
+    assert.doesNotMatch(JSON.stringify(r.json), /tok-very-secret|54321/);
+    fs.rmSync(path.join(root, '.sessions'), { recursive: true, force: true });
   });
 });

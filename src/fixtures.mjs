@@ -184,7 +184,9 @@ export async function finishUndo(found, { log, openBrowser, deadline, hooks: wit
 export function earlierOpen(outDir, doc) {
   const base = path.dirname(outDir);
   return openLedgers(path.dirname(base), { name: path.basename(base), platform: doc.platform, env: doc.env })
-    .filter(f => path.resolve(f.dir) !== path.resolve(outDir));
+    // A live stage's data is in use (someone is testing by hand on it), and a stage ended with "keep" was kept on
+    // purpose: only `aft stage end` or an explicit `aft cleanup` undoes those.
+    .filter(f => path.resolve(f.dir) !== path.resolve(outDir) && !f.ledger.doc.stage?.live && !f.ledger.doc.stage?.kept);
 }
 
 /**

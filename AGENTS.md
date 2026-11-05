@@ -404,6 +404,7 @@ What happens when, and whether it can be skipped:
 | per env + role, until it expires | sign-in → `auth/<platform>/<env>/<role>.json` (`aft login`, or automatically on the first run) | skipped while the saved state works; renewed automatically on expiry when login steps and credentials exist; `--fresh-login` forces it |
 | per session (one command) | launch or attach to the app; browser start | attach is skipped if the app is up; launch never restarts a running service |
 | per run | earlier runs' pending undo → fixture items (check → setup) → browser → session check → fixture steps (off camera) → scenes → browser cleanup → hook undo (reverse) | fixtures only if the tour lists them; only what ran is undone; ledger.json throughout |
+| per stage (`aft stage`) | the run's pipeline up to the point, unrecorded → hand-off (headed browser, data in place) → `stage end`: browser undo, hook undo (reverse), services stopped | `--keep` / End, keep data leaves the ledger pending (`aft cleanup <run>` later); one stage per tour + env, `--redo` replaces it |
 | per step | the action, settle (`ready`), the app's error UI and `appErrors` policy, rule-based retry (actions only) | `"optional": true` steps may fail without failing the run; checks never |
 
 ### Onboarding a platform
@@ -476,6 +477,38 @@ aft session stop
 
 `try-step` really performs the steps (it can change data, like `validate`). Sessions write `<tool>/.sessions/<name>.json`
 (git-ignored; it holds the local control token) and log to `out/sessions/<name>/<run>/session.log`.
+
+### Staging: do / redo until here
+
+A person reviewing a tour wants the app *live* at a point of it (after setup, after scene 2, after a step): the
+story's records created, signed in as the right role, then test by hand from there. `aft stage` runs the tour's
+pipeline without recording (no video, TTS or trace; every step unpaced) up to that point, and leaves the browser open
+(headed), the services running and the data in place. Checks still run, so a broken state fails loudly (same classes
+and report as a run; the browser stays open at the failure).
+
+```
+aft stage <tour.json | run folder> [--target env] [--as role] [--until-scene N [--step J] | --until-step N | --setup-only] [--keep] [--redo [--force]] [--headless] --json
+aft stage list --json
+aft stage end <name> [--keep] --json
+```
+
+- Points: `--setup-only` (fixtures and fixture steps, no scene), `--until-scene N` (scenes 1..N), `--until-scene N --step J`
+  (scene N up to its script step J; a fragment counts as one, as in the editor), `--until-step N` (steps counted across
+  the tour, as for `run`); none: the whole tour. A run folder stages the script that ran there (its `tour.json`, else the
+  tour file in run.json), on that run's environment unless `--target`.
+- One stage per tour and environment, named `stage-<tour>-<env>`: a second `aft stage` is refused; `--redo` ends the
+  current one (undoing its data, newest first) and stages again with a new run tag. If that undo fails, `--redo` stops
+  unless `--force` (the leftover stays in the old ledger for `aft cleanup`).
+- `--as <role>` (or the tour's `"stage": { "role" }`) hands off in a second window signed in with that role's saved
+  login (`aft login --role <r>` first). `"stage": { "note" }` is shown on the UI's stage card (what to try).
+- The undo is deferred: ledger.json items stay `done` with `"stage": { "live": true }`; runs of the same tour don't undo a
+  live stage's data (or one ended with `--keep`, `"kept": true`), only `stage end` or an explicit `aft cleanup <run>` does.
+  `--keep` on a shared environment needs tagged data (`{run.tag}`).
+- A stage is a detached process (`src/stage-daemon.mjs`, log `<run>/stage.log`) with a session's control port:
+  `aft snapshot` / `locate` / `try-step --session stage-<tour>-<env>` work on it (it's only used when named).
+- Run folder: run.json (`"command": "stage"`, status staging → staged | failed → ended), report.json, ledger.json,
+  artifacts.json, `screens/stage.png`; `latest.json` is never touched. `aft stage list` and the UI's `GET /api/stages`
+  read `.sessions/stage-*.json` (never the control token).
 
 ## Story to video (for agents)
 
@@ -561,7 +594,7 @@ snapshots, the console and network; find the last red action.
 `src/cli.mjs` commands and run folders · `exchange.mjs` export/import between platforms · `schema-defs.mjs` the schemas' source, `schema.mjs` validation and messages · `steps.mjs` step runner, locators, suggestions, code steps · `declarative.mjs`
 tour.json → a run (platform composition, launch/attach, login, hooks, fixtures) · `platform.mjs` platforms, fragments,
 fixtures, init · `platform-cli.mjs` `aft platform` · `session.mjs` / `session-daemon.mjs` sessions, snapshot, locate,
-try-step · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
+try-step · `stage.mjs` / `stage-daemon.mjs` do / redo until here · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
 `plan.mjs` heuristic and Claude planners, stories · `render.mjs` ffmpeg · `tts.mjs` speech · `auth.mjs` saved logins ·
 `doctor.mjs` checks · `workarounds.mjs` known issues (merge, checkpoint, matching) · `review.mjs` evidence, findings,
 decisions, verdict · `fix.mjs` AI fix proposals (`suggest-fix`) · `ledger.mjs` ledger.json, run tags · `fixtures.mjs`

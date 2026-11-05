@@ -2,6 +2,7 @@
 // Advanced screens live in app.js behind the ☰ menu.
 
 import { filmedScenes, mountMarkers, sceneStarts } from './media.js';
+import { mountLiveStages, mountStage, stageButton } from './stage.js';
 
 export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES }) {
   const send = (method, url, data) => api(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
@@ -9,6 +10,15 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
   const slugify = s => s.trim().toLowerCase().replace(/\.(tour\.)?json$/, '').replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '');
   const query = () => new URLSearchParams(location.hash.split('?')[1] ?? '');
   const readTour = async p => JSON.parse((await api(`/api/pfile?path=${encodeURIComponent(p)}`)).text);
+  /** Environments and login roles for the stage popover (aft stage --target / --as). */
+  const stageOptions = async (platform, pd, tour) => {
+    let roles = [], defaultRole = tour?.role ?? null;
+    if (pd?.files?.some(f => f.rel === 'login.json')) try {
+      const l = JSON.parse((await api(`/api/pfile?path=${encodeURIComponent(`platforms/${platform}/login.json`)}`)).text);
+      roles = Object.keys(l.roles ?? {}); defaultRole ??= l.default ?? roles[0] ?? null;
+    } catch {}
+    return { envs: pd?.environments ?? [], defaultEnv: tour?.env ?? pd?.default ?? null, roles, defaultRole, tourName: tour?.name ?? null, runLink: id => `#/run/${id}` };
+  };
   const saveFile = (p, obj) => send('PUT', `/api/pfile?path=${encodeURIComponent(p)}`, { text: JSON.stringify(obj, null, 2) + '\n' });
 
   // ---- ⧉ clone / 🗑 delete icon buttons, used on every item ----
@@ -425,6 +435,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       // The start page: every app with its scripts, a "new script" tile closing each app's row, and "new app" last.
       $app.innerHTML = `<div class="page-title">Your scripts</div>
         ${dropZoneHtml(null)}
+        <div id="live-stages"></div>
         ${ps.map(p => `<div class="group-title">${h(p.name)} ${icons('platform', p.name)}</div><div class="tiles">
           ${p.tours.map(t => { const r = last.get(t.path); const st = !r || r.status === 'running' ? 'none' : r.status === 'done' ? 'ok' : 'bad';
             return `<a class="tile ${st === 'none' ? '' : st}" href="#/tour/${encodeURIComponent(t.path)}">${h(pretty(t.file))}
@@ -435,6 +446,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         <div class="group-title">&nbsp;</div><div class="tiles">
           <a class="tile tile-new" href="#/newapp"><span class="plus">✚</span>NEW APP<span class="sub">set up another app</span></a></div>`;
       wireIcons($app, () => render());
+      mountLiveStages($app.querySelector('#live-stages'), { tourLink: s => (s.tourFile?.startsWith('platforms/') ? `#/tour/${encodeURIComponent(s.tourFile)}` : s.run ? `#/run/${s.run}` : null) }).catch(() => {});
       return importZone(ps);
     },
 
@@ -475,6 +487,8 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           ${edit ? '<button class="chunky mid c-blue" id="export" title="One file to send to QA or another machine, to import there"><span class="icon">📤</span>EXPORT</button>' : ''}
         </div>
         <div id="export-msg"></div>
+        ${edit ? `<div class="stage-bar" data-stage-at="setup">${stageButton({ setup: true })} ${stageButton({})}
+          <span class="hint">get the app live, with this script's test data, to test by hand (EDIT has ▶ on every scene and step)</span></div><div id="stage-box"></div>` : ''}
         <div id="creds"></div>
         ${lastVideo ? `<div class="group-title">Latest video</div><div class="card" style="max-width:900px"><video controls preload="metadata" src="${fileUrl(lastVideo.id, 'tour.mp4')}">
           <track default kind="captions" src="${fileUrl(lastVideo.id, 'tour.vtt')}"></video><div id="markers"></div></div>` : ''}`;
@@ -482,6 +496,8 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         let t = null; try { t = rd.files.some(f => f.path === 'tour.json') ? await (await fetch(fileUrl(lastVideo.id, 'tour.json'))).json() : await readTour(p); } catch {}
         await mountMarkers($app.querySelector('#markers'), $app.querySelector('video'), { vttUrl: fileUrl(lastVideo.id, 'tour.vtt'), scenes: filmedScenes(rd.files, t) });
       }).catch(() => {});
+      let stageStop = null;
+      if (edit) readTour(p).then(async t => { stageStop = await mountStage($app, $app.querySelector('#stage-box'), { ...(await stageOptions(platform, d, t)), source: p, tourFile: p }); }).catch(() => {});
       if (hasLogin) signInCard(platform, $app.querySelector('#creds'), { open: lastAny && friendly(lastAny).kind === 'login' && lastAny.status === 'failed' });
       let job = null;
       const start = async what => {
@@ -553,6 +569,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       const [tourData, pd, runs] = await Promise.all([api(`/api/tour-data?path=${encodeURIComponent(p)}`).catch(() => null),
         api(`/api/platform?name=${encodeURIComponent(platform)}`).catch(() => ({})), api('/api/runs').catch(() => [])]);
       const data = tourData?.data ?? {};
+      const stageOpts = await stageOptions(platform, pd, tour);
       const lastVideo = runs.find(r => rel(r.input?.[0]) === p && r.command === 'run' && r.status === 'done');
       const filmedLength = {};   // scene number → seconds in the last video
       if (lastVideo) try {
@@ -579,9 +596,12 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           <div class="title-row"><div class="page-title">✏️ ${h(pretty(p.split('/').pop()))}</div>
             <button class="chunky small c-purple" id="gen" ${genOpen ? 'disabled' : ''}>✨ GENERATE</button></div>
           ${genPanel()}
-          ${tour.scenes.map((s, i) => `<div class="scene-card ${flagScene === i + 1 ? 'flag' : ''} ${s.camera === false ? 'offcam' : ''}" data-s="${i}">
+          <div class="stage-bar" data-stage-at="setup">${stageButton({ setup: true })} <span class="hint">or ▶ on a scene or step: get the app live at that point, to test by hand</span></div>
+          <div id="stage-box"></div>
+          ${tour.scenes.map((s, i) => `<div class="scene-card ${flagScene === i + 1 ? 'flag' : ''} ${s.camera === false ? 'offcam' : ''}" data-s="${i}" data-stage-at="s${i + 1}">
             <div class="scene-head"><span class="scene-num">${i + 1}</span>
               <input class="scene-title" data-s="${i}" data-f="title" value="${h(s.title ?? '')}" placeholder="Scene title">
+              ${stageButton({ scene: i + 1 })}
               <span class="icons"><button class="icon-btn cam ${s.camera === false ? 'cam-off' : ''}" data-local data-camscene="${i}"
                   title="${s.camera === false ? 'Off camera: it runs and is checked, but is not in the video. Click to film it.' : 'On camera. Click to run it off camera (checked, not filmed, no narration needed).'}"
                   aria-label="${s.camera === false ? 'Scene is off camera' : 'Scene is on camera'}" aria-pressed="${s.camera === false}">🎥</button>
@@ -759,17 +779,17 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       function stepRow(st, i, j, flag) {
         const k = kindOf(st), K = KINDS[k];
         const off = st.camera === false;
-        const tools = `<span class="row-tools"><button class="cam ${off ? 'cam-off' : ''}" data-camstep="${j}" data-s="${i}" aria-pressed="${off}"
+        const tools = `<span class="row-tools">${stageButton({ scene: i + 1, step: j + 1 }, { compact: true })}<button class="cam ${off ? 'cam-off' : ''}" data-camstep="${j}" data-s="${i}" aria-pressed="${off}"
             title="${off ? 'Off camera: it runs and is checked, but is cut from the video. Click to film it.' : 'On camera. Click to cut this step from the video (it still runs).'}" aria-label="${off ? 'Step is off camera' : 'Step is on camera'}">🎥</button>
           <button data-mv="-1" data-s="${i}" data-j="${j}" title="Move up">↑</button><button data-mv="1" data-s="${i}" data-j="${j}" title="Move down">↓</button>
           <button data-clonestep="${j}" data-s="${i}" title="Copy this step" aria-label="Copy this step">⧉</button>
           <button class="del" data-del="${j}" data-s="${i}" title="Delete this step" aria-label="Delete this step">🗑</button></span>`;
         const cls = `step-row ${flag ? 'flag' : ''} ${off ? 'offcam' : ''}`;
-        if (st.pin) return `<div class="${cls} adv"><span class="step-icon">📌</span><span>Pin <b>${h(st.pin)}</b>${st.role ? ` (${h(st.role)})` : ''}: ${h(Object.keys(st.fields ?? {}).join(', '))}
+        if (st.pin) return `<div data-stage-at="s${i + 1}.${j + 1}" class="${cls} adv"><span class="step-icon">📌</span><span>Pin <b>${h(st.pin)}</b>${st.role ? ` (${h(st.role)})` : ''}: ${h(Object.keys(st.fields ?? {}).join(', '))}
           ${st.cleanup ? '<span class="badge ok">has cleanup</span>' : '<span class="badge warn" title="Say how to remove it (✏️) so the run cleans up after itself">no cleanup</span>'}
           <button class="edit-pin" data-editpin="${i}:${j}" title="Edit this pin">✏️</button></span>${tools}</div>
           ${pinOpen === `${i}:${j}` ? pinEditor(st, i, j) : ''}`;
-        if (!K) return `<div class="${cls} adv"><span class="step-icon">⚙</span><span>advanced step: ${h(summary(st))}</span>${tools}<span class="data-hints">${dataHint(JSON.stringify(st), data)}</span></div>`;
+        if (!K) return `<div data-stage-at="s${i + 1}.${j + 1}" class="${cls} adv"><span class="step-icon">⚙</span><span>advanced step: ${h(summary(st))}</span>${tools}<span class="data-hints">${dataHint(JSON.stringify(st), data)}</span></div>`;
         const refs = artifactRefs(i, j);
         const inputs = K.fields.map(([f, ph, type]) => `<span class="in-wrap"><input class="step-in" data-s="${i}" data-j="${j}" data-k="${f}" ${type === 'number' ? 'type="number" min="0" step="0.5"' : ''}
           value="${h(getF(st, f) ?? '')}" placeholder="${h(ph)}">${refs.length && type !== 'number' ? `<select class="art-pick" data-s="${i}" data-j="${j}" data-k="${f}" title="Use a value this run created earlier (a pinned artifact)" aria-label="Insert an artifact value">
@@ -777,7 +797,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         const words = K.words.map(w => w ? `<span>${h(w)}</span>` : '');
         const parts = []; for (let n = 0; n < words.length; n++) { parts.push(words[n]); if (inputs[n]) parts.push(inputs[n]); }
         const hints = K.fields.map(([f]) => dataHint(getF(st, f), data)).join('');
-        return `<div class="${cls}"><span class="step-icon">${K.icon}</span>${parts.join('')}${off ? '<span class="badge offcam">off camera</span>' : ''}${tools}
+        return `<div data-stage-at="s${i + 1}.${j + 1}" class="${cls}"><span class="step-icon">${K.icon}</span>${parts.join('')}${off ? '<span class="badge offcam">off camera</span>' : ''}${tools}
           <span class="data-hints" data-hints="${i}:${j}">${hints}</span></div>`;
       }
       function wire() {
@@ -887,6 +907,9 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         }
         const flagged = $app.querySelector('.step-row.flag') ?? $app.querySelector('.scene-card.flag');
         flagged?.scrollIntoView({ block: 'center' });
+        // ▶ do until here: stages the saved script
+        mountStage($app, $app.querySelector('#stage-box'), { ...stageOpts, source: p, tourFile: p,
+          warn: () => (dirty ? 'You have unsaved changes: the saved script is used. SAVE first to include them.' : '') });
       }
       async function generate() {
         const msg = $app.querySelector('#gen-msg');

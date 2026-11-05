@@ -48,7 +48,7 @@ import { checkTour, expandSceneSteps, expandSteps, fixtureItems, loadFixtures, l
 import { Workarounds, workaroundProblems } from './workarounds.mjs';
 import { probe, startProcess, stopProcess, waitForHttp } from './recorder.mjs';
 import { Failure } from './failures.mjs';
-import { fillArtifacts, runSteps, settle } from './steps.mjs';
+import { fillArtifacts, runSteps, settle, StopRun } from './steps.mjs';
 import { freePort } from './util.mjs';
 import { earlierOpen, finishUndo, Ledger, recordArtifact, runHooks, setupBrowser, setupItems, sharedWarnings, undoInBrowser, writeArtifacts } from './fixtures.mjs';
 import { runTag, undoAll } from './ledger.mjs';
@@ -214,7 +214,13 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
     scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration ?? '', offCamera: s.camera === false })),
     /** Warnings about the tour as written (data left untagged on a shared environment). */
     warnings: sharedWarnings(cfg0),
+    /** The saved login of a role in the tour's environment (a stage hands off as another role). */
+    authFile: role => composed.authFile(role),
+    platformFolder: composed.platform?.dir ?? null,
+    tourFile: path.resolve(file),
     async record(ctx) {
+      // A stage (src/stage.mjs): stop at a point, keep the browser, services and data until `aft stage end`.
+      const stage = ctx.stage ?? null;
       const tag = runTag(ctx.outDir);
       const { cfg, vars } = await materialize(cfg0, { tag });
       // Values marked secret (resolved from the environment) are scrubbed from every report and bundle file.
@@ -226,7 +232,7 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
       let services = { procs: [] };
       // Everything set up is written to ledger.json before it runs, so a crash leaves a record for `aft cleanup`.
       const ledger = new Ledger(path.join(ctx.outDir, 'ledger.json'), { tour: raw.name, tourFile: path.resolve(file), tourDir: dir, platform: composed.platform?.name ?? null,
-        env: composed.env ?? null, role: cfg.login?.role ?? null, baseUrl: vars.baseUrl, tag, ...(ctx.dryRun ? { dryRun: true } : {}) });
+        env: composed.env ?? null, role: cfg.login?.role ?? null, baseUrl: vars.baseUrl, tag, ...(ctx.dryRun ? { dryRun: true } : {}), ...(stage ? { stage: { live: true } } : {}) });
       ctx.ledger = ledger;
       const onPin = a => {
         a.scriptStep = t.stepScript ?? null;
@@ -249,7 +255,8 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
       try {
         services = await startServices(cfg, vars, { outDir: ctx.outDir, log, dir });
         // An earlier run of this tour that crashed or was interrupted: finish its undo first, so this run starts clean.
-        const earlier = ctx.options?.out ? [] : earlierOpen(ctx.outDir, ledger.doc);
+        // Never for a stage: that data may be the stage it replaces, which `--redo` ends explicitly.
+        const earlier = ctx.options?.out || stage ? [] : earlierOpen(ctx.outDir, ledger.doc);
         if (earlier.length) { log(`${earlier.length} earlier run(s) of this tour left data behind: undoing it first`); await finishUndo(earlier, { log }); }
         const items = cfg.fixtureItems ?? fixtureItems({ setup: cfg.hooks?.setup, teardown: cfg.hooks?.teardown }, 'tour');
         const looked = await setupItems(items, { ledger, hookCtx, artifacts: () => t.artifacts, log });
@@ -259,13 +266,14 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
         // Data for {data.x} left in steps until now: fixture data, plus what setup hooks looked up.
         t.data = { ...cfg.data, ...looked };
         if (cfg.workarounds?.length) t.workarounds = new Workarounds(cfg.workarounds, { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, ready: cfg.ready, log });
-        const startOpts = { storageState: login.state ?? undefined, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, trace: cfg.trace !== false };
+        const startOpts = { storageState: login.state ?? undefined, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, trace: cfg.trace !== false && !(stage && !stage.trace) };
         await t.start(startOpts);
         browserUp = true;
         opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report, ready: cfg.ready, errors: cfg.errors, retries: cfg.retries ?? 1,
           allowMocks: !!cfg.allowMocks, outDir: ctx.outDir,
           range: ctx.range,
-          onError: ctx.dryRun ? 'collect' : ctx.options.onError ?? cfg.onError ?? 'fail' };
+          onError: stage ? 'fail' : ctx.dryRun ? 'collect' : ctx.options.onError ?? cfg.onError ?? 'fail' };
+        ctx.live = { cfg, vars, services, opts, startOpts, ledger };
         // Check the session where the tour starts (off camera: before the first scene, so it's cut from the video).
         await login.ensure(t, startOpts, cfg.scenes[0]?.url);
         try {
@@ -278,26 +286,36 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
           await setupBrowser(t, cfg.fixtureBrowser ?? [], { ledger, opts, log });
           for (const [i, s] of cfg.scenes.entries()) {
             const id = ctx.scenes[i].id;
+            // A stage's stop point by scene: range.scenes = n runs the first n scenes (0: setup only).
+            if (ctx.range?.scenes !== undefined && i >= ctx.range.scenes)
+              throw new StopRun(ctx.range.scenes ? `stopped after scene ${ctx.range.scenes}` : 'stopped after setup');
+            // range.step with range.scenes = n: scene n only up to that step of the script (fragments count as one).
+            const cut = ctx.range?.step && ctx.range.scenes === i + 1;
+            const steps = cut ? (s.steps ?? []).filter((x, k) => (x.scriptStep ?? k + 1) <= ctx.range.step) : s.steps ?? [];
             if (s.url) await runSteps(t, [{ goto: s.url }], { ...opts, unpaced: true, scene: `${id} (url)` });
             // Off camera: it runs and is checked like any scene, but it isn't filmed or narrated.
             if (s.camera === false) {
-              await runSteps(t, s.steps ?? [], { ...opts, offCamera: true, scene: id, criteria: s.criteria ?? [] });
+              await runSteps(t, steps, { ...opts, offCamera: true, scene: id, criteria: s.criteria ?? [] });
               await t.screenshot(id);
-            } else await t.scene(id, () => runSteps(t, s.steps ?? [], { ...opts, scene: id, criteria: s.criteria ?? [] }));
+            } else await t.scene(id, () => runSteps(t, steps, { ...opts, scene: id, criteria: s.criteria ?? [] }));
             ctx.progress?.();
+            if (cut) throw new StopRun(`stopped after scene ${i + 1} · step ${ctx.range.step}`);
           }
         } finally {
           // Browser cleanup (artifacts' cleanup steps, fixtures' cleanupSteps), off camera; also after a failed scene.
-          await undoInBrowser(t, ledger, { opts, log }).catch(e => log(`cleanup failed: ${e.message.split('\n')[0]}`));
+          if (!stage) await undoInBrowser(t, ledger, { opts, log }).catch(e => log(`cleanup failed: ${e.message.split('\n')[0]}`));
         }
-        await t.finish({ baseUrl: vars.baseUrl });
+        if (!stage) await t.finish({ baseUrl: vars.baseUrl }); // a stage keeps its page open for the hand-off
       } finally {
-        // Hook undo, newest first, only what ran. Browser steps left pending (the browser was gone) wait for aft cleanup.
-        const r = await undoAll(ledger, { undoHooks, log }).catch(e => { log(`teardown failed: ${e.message}`); return null; });
-        if (r?.failed) log(`${r.failed} undo step(s) failed: data left behind (see ledger.json; aft cleanup ${ctx.outDir})`);
+        if (stage) ctx.live = { ...ctx.live, services, ledger }; // a stage: nothing undone or stopped yet (ctx.undo, at `stage end`)
+        else {
+          // Hook undo, newest first, only what ran. Browser steps left pending (the browser was gone) wait for aft cleanup.
+          const r = await undoAll(ledger, { undoHooks, log }).catch(e => { log(`teardown failed: ${e.message}`); return null; });
+          if (r?.failed) log(`${r.failed} undo step(s) failed: data left behind (see ledger.json; aft cleanup ${ctx.outDir})`);
+          for (const p of services.procs) stopProcess(p);
+        }
         ctx.fixtures = ledger.summary();
         ctx.artifacts = writeArtifacts(ctx.outDir, t.artifacts, ledger);
-        for (const p of services.procs) stopProcess(p);
       }
     },
   };

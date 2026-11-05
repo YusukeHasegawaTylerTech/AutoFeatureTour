@@ -246,7 +246,7 @@ function runDetail(id) {
 
 // ---- jobs: CLI child processes, output streamed over SSE ----
 const jobs = new Map();
-const ALLOWED = new Set(['validate', 'render', 'run', 'doctor', 'generate', 'platform', 'login', 'session', 'snapshot', 'locate', 'try-step', 'export', 'import', 'suggest-fix', 'cleanup', 'reset']);
+const ALLOWED = new Set(['validate', 'render', 'run', 'doctor', 'generate', 'platform', 'login', 'session', 'snapshot', 'locate', 'try-step', 'export', 'import', 'suggest-fix', 'cleanup', 'reset', 'stage']);
 // import only reads files the UI saved itself (POST /api/upload-export), each in its own folder under out/.imports/
 const importsDir = path.join(outDir, '.imports');
 function startJob(args) {
@@ -272,6 +272,33 @@ function startJob(args) {
   return job;
 }
 const jobView = j => ({ id: j.id, args: j.args, startedAt: j.startedAt, done: j.done, exitCode: j.exitCode, result: j.result });
+
+// ---- stages (aft stage): .sessions/stage-*.json, the daemon's state; never its control token or port ----
+const sessionsDir = path.join(root, '.sessions');
+const pidAlive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const stageFiles = () => (isDir(sessionsDir) ? fs.readdirSync(sessionsDir).filter(f => /^stage-[\w-]+\.json$/.test(f)) : [])
+  .map(f => readJson(path.join(sessionsDir, f))).filter(Boolean);
+function listStages() {
+  return stageFiles().map(s => {
+    const st = s.stage ?? {};
+    const alive = !!s.pid && pidAlive(s.pid);
+    const runDir = st.runDir ?? s.outDir ?? null;
+    const run = runDir ? readJson(path.join(runDir, 'run.json')) : null;
+    const rel = runDir && within(outDir, runDir) ? path.relative(outDir, runDir).split(path.sep).join('/') : null;
+    return { name: s.name, alive, state: alive ? st.state ?? s.status : 'dead', tour: st.tour ?? null, tourFile: st.tourFile ? path.relative(root, st.tourFile).split(path.sep).join('/') : null,
+      platform: s.platform ?? st.platform ?? null, env: s.env ?? st.env ?? null, role: st.role ?? null, as: st.as ?? null, point: st.point ?? {}, reached: st.reached ?? null,
+      run: rel, runStatus: run?.status ?? null, tag: st.tag ?? null, keep: !!st.keep, note: st.note ?? null, url: s.url ?? null, startedAt: st.startedAt ?? null,
+      error: st.error ?? s.error ?? null, class: st.class ?? s.class ?? null, failing: st.failing ?? null, artifacts: st.artifacts ?? [], toUndo: st.toUndo ?? [], warnings: st.warnings ?? [],
+      sourceRun: st.sourceRun && within(outDir, st.sourceRun) ? path.relative(outDir, st.sourceRun).split(path.sep).join('/') : null };
+  });
+}
+/** Brings a live stage's browser window to the front (the token stays on this side). */
+async function openStage(name) {
+  const s = stageFiles().find(x => x.name === name);
+  if (!s?.port || !s.token || !pidAlive(s.pid)) return { status: 404, body: { error: 'no such live stage' } };
+  const r = await fetch(`http://127.0.0.1:${s.port}/`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-aft-token': s.token }, body: JSON.stringify({ op: 'open' }) });
+  return { status: r.status, body: await r.json().catch(() => ({})) };
+}
 
 // ---- files ----
 function serveFile(req, res, file) {
@@ -419,6 +446,8 @@ async function api(req, res, url) {
     fs.writeFileSync(file, text);
     return send(res, 200, { file: path.relative(root, file), tour: doc.tour?.name ?? null, source: doc.source ?? {} });
   }
+  if (m === 'GET' && p === '/api/stages') return send(res, 200, listStages());
+  if (m === 'POST' && p === '/api/stage-open') { const { name } = await body(req); const r = await openStage(String(name ?? '')); return send(res, r.status, r.body); }
   if (m === 'GET' && p === '/api/jobs') return send(res, 200, [...jobs.values()].map(jobView).reverse());
   if (m === 'POST' && p === '/api/jobs') {
     const { args } = await body(req);

@@ -2,6 +2,7 @@ import { simpleViews } from './simple.js';
 import { mountReview } from './review.js';
 import { filmedScenes, mountMarkers } from './media.js';
 import { mountSchemaForm } from './form.js';
+import { mountStage, stageButton } from './stage.js';
 // AutoFeatureTour UI: hash-routed, no build step.
 const $app = document.getElementById('app');
 const h = (s = '') => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -60,26 +61,30 @@ async function storyboard(id, d, input) {
     const v = sp[k]; const t = typeof v === 'string' ? v : v && typeof v === 'object' ? (v.name ?? v.text ?? v.label ?? v.css ?? v.url ?? v.use ?? JSON.stringify(v)) : String(v);
     const extra = sp.text && k !== 'text' && typeof sp.text === 'string' ? ` "${sp.text.slice(0, 40)}"` : sp.state ? ` (${sp.state})` : '';
     return `${k} ${String(t).slice(0, 80)}${extra}`; };
-  return `<div class="card"><h3>Scenes</h3>${strip('setup')}${ids.map(sid => {
+  // ▶ do until here: stages the script that ran (tour.json in the run folder, else the tour file it ran)
+  const stage = !!scenes.length;
+  return `<div class="card"><h3>Scenes</h3>${stage ? `<div class="stage-bar" data-stage-at="setup">${stageButton({ setup: true })} <span class="muted">or ▶ on a scene or step: the app live at that point, with this run's script, to test by hand</span></div>` : ''}${strip('setup')}${ids.map(sid => {
     const n = Number(sid.slice(6)), sc = scenes[n - 1] ?? {};
     const own = steps.filter(s => String(s.scene ?? '').replace(/\s.*$/, '') === sid);
     const bad = own.some(s => s.ok === false && !s.optional);
     const offScene = sc.camera === false;
     const url = pageUrl(sc.url), img = shot(sid);
-    return `<div class="board ${bad ? 'board-bad' : ''} ${offScene ? 'board-off' : ''}" id="board-${sid}">
+    return `<div class="board ${bad ? 'board-bad' : ''} ${offScene ? 'board-off' : ''}" id="board-${sid}" data-stage-at="s${n}">
       <div class="board-shot">${img ? `<a href="${img}" target="_blank" title="Open the full screenshot"><img src="${img}" loading="lazy" alt="${h(sid)} at its end"></a>` : '<div class="noshot muted">no screenshot</div>'}</div>
       <div class="board-body">
         <div class="board-head"><span class="board-num ${bad ? 'bad' : own.length ? 'ok' : ''}">${n}</span><b>${h(sc.title ?? sid)}</b>
           ${sc.criteria?.length ? `<span class="badge muted">AC ${h(sc.criteria.join(', '))}</span>` : ''}
           ${offScene ? '<span class="badge offcam" title="Runs and is checked, but is not in the video">🎥 off camera</span>' : ''}
           ${url ? `<a class="board-link" href="${h(url)}" target="_blank" title="${h(url)}">open in the app ↗</a>` : ''}
-          ${tourPath ? `<a class="board-link" href="#/write/${encodeURIComponent(tourPath)}?scene=${n}">edit scene ✏️</a>` : ''}</div>
+          ${tourPath ? `<a class="board-link" href="#/write/${encodeURIComponent(tourPath)}?scene=${n}">edit scene ✏️</a>` : ''}
+          ${stage && n <= scenes.length ? stageButton({ scene: n }) : ''}</div>
         ${sc.narration ? `<p class="board-narr">“${h(sc.narration)}”</p>` : ''}
         <ol class="board-steps">${own.map(s => {
           const isUrl = /\(url\)/.test(s.scene ?? '');
           const edit = tourPath && !isUrl ? `<a href="#/write/${encodeURIComponent(tourPath)}?scene=${n}&step=${s.scriptStep ?? s.step}" title="Edit this step">✏️</a>` : '';
-          return `<li class="${s.ok === false ? (s.optional ? 'warn' : 'bad') : ''}"><span class="${s.ok === false ? 'bad' : s.ok ? 'ok' : 'muted'}">${s.ok === false ? '✘' : s.ok ? '✔' : '·'}</span>
-            <code>${h(isUrl ? `open ${s.spec?.goto ?? sc.url ?? ''}` : what(s.spec ?? s.action))}</code>${s.from ? ` <span class="muted">(${h(s.from)})</span>` : ''}${s.offCamera && !offScene ? ' <span class="badge offcam" title="Cut from the video">🎥 off camera</span>' : ''}${s.spec?.pin ? ` <span class="badge pin" title="Pinned as an artifact">📌 ${h(s.spec.pin)}</span>` : ''} ${edit}
+          const at = !isUrl && n <= scenes.length ? s.scriptStep ?? null : null;
+          return `<li class="${s.ok === false ? (s.optional ? 'warn' : 'bad') : ''}"${at ? ` data-stage-at="s${n}.${at}"` : ''}><span class="${s.ok === false ? 'bad' : s.ok ? 'ok' : 'muted'}">${s.ok === false ? '✘' : s.ok ? '✔' : '·'}</span>
+            <code>${h(isUrl ? `open ${s.spec?.goto ?? sc.url ?? ''}` : what(s.spec ?? s.action))}</code>${s.from ? ` <span class="muted">(${h(s.from)})</span>` : ''}${s.offCamera && !offScene ? ' <span class="badge offcam" title="Cut from the video">🎥 off camera</span>' : ''}${s.spec?.pin ? ` <span class="badge pin" title="Pinned as an artifact">📌 ${h(s.spec.pin)}</span>` : ''} ${edit}${stage && at ? stageButton({ scene: n, step: at }, { compact: true }) : ''}
             ${s.error ? `<div class="bad">${h(s.error)}</div>` : ''}${s.suggestions?.length ? `<div class="muted">did you mean: ${h(s.suggestions.join(', '))}</div>` : ''}</li>`; }).join('')
           || '<li class="muted">no steps ran</li>'}</ol></div></div>`; }).join('')}${strip('teardown')}</div>${artifactsBoard(id, d.artifacts?.length ? d.artifacts : d.report?.artifacts ?? [], tourPath)}`;
 }
@@ -196,7 +201,7 @@ const views = {
             <td>${h(s.scene)}</td><td>${h(s.step)}</td><td><code>${h(JSON.stringify(s.spec ?? s.action))}</code>
             ${s.error ? `<div class="bad">${h(s.error)}</div>` : ''}${s.suggestions?.length ? `<div class="muted">did you mean: ${h(s.suggestions.join(', '))}</div>` : ''}</td>
             <td>${s.ms ?? ''}</td></tr>`).join('')}</table></div>` : ''}
-        <div id="review"></div><div id="story"></div>
+        <div id="stage-box"></div><div id="review"></div><div id="story"></div>
         ${has('validation.md') ? `<details class="card"><summary><b>validation.md</b> <span class="muted">(raw)</span></summary><pre id="val"></pre></details>` : ''}
       </div><div>
         ${has('report.md') ? `<div class="card"><h3>report.md</h3><pre id="repmd"></pre></div>` : ''}
@@ -210,7 +215,16 @@ const views = {
     if (video && has('tour.vtt')) runTour(id, d, input).then(tour => mountMarkers($app.querySelector('#markers'), video,
       { vttUrl: fileUrl(id, 'tour.vtt'), scenes: filmedScenes(d.files, tour) })).catch(() => {});
     mountReview($app.querySelector('#review'), { id, d, input, h, api, rel, fileUrl, onCheckAgain: p => startJob(['validate', p]) }).catch(e => console.error(e));
-    storyboard(id, d, input).then(html => { const el = $app.querySelector('#story'); if (el) el.innerHTML = html; }).catch(() => {}); fill('#repmd', 'report.md'); fill('#aria', 'triage/page/aria.yml');
+    storyboard(id, d, input).then(async html => {
+      const el = $app.querySelector('#story');
+      if (!el) return;
+      el.innerHTML = html;
+      if (!el.querySelector('[data-stage]')) return;
+      const tour = await runTour(id, d, input);
+      const pd = tour?.platform ? await api(`/api/platform?name=${encodeURIComponent(tour.platform)}`).catch(() => null) : null;
+      await mountStage(el, $app.querySelector('#stage-box'), { source: `out/${id}`, tourName: null, envs: pd?.environments ?? [],
+        defaultEnv: r.args?.target ?? r.args?.env ?? tour?.env ?? pd?.default ?? null, roles: [], defaultRole: tour?.role ?? null, runLink: x => `#/run/${x}` });
+    }).catch(e => console.error(e)); fill('#repmd', 'report.md'); fill('#aria', 'triage/page/aria.yml');
     $app.querySelectorAll('button[data-cmd]').forEach(b => (b.onclick = () =>
       startJob([b.dataset.cmd, rel(input), ...(b.dataset.extra ? b.dataset.extra.split(' ') : [])])));
     if (r.status === 'running') setTimeout(() => location.hash === `#/run/${id}` && render(), 3000);
