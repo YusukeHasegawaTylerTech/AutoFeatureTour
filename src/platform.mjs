@@ -210,7 +210,7 @@ export function loadMocks(p, names = []) {
 
 /** Reads the tour's fixtures: their data (merged, later wins) and setup/teardown hooks (run in the fixture's folder). */
 export function loadFixtures(p, names = []) {
-  const data = {}, setup = [], teardown = [], steps = [];
+  const data = {}, setup = [], teardown = [], steps = [], items = [], browser = [];
   for (const n of names) {
     if (!SAFE.test(n)) throw new PlatformError(`Fixture names must match ${SAFE} (got "${n}")`);
     const file = path.join(p.dir, 'fixtures', `${n}.json`);
@@ -218,11 +218,28 @@ export function loadFixtures(p, names = []) {
     const f = readJson(file, undefined, 'fixture');
     Object.assign(data, f.data);
     const dir = path.join(p.dir, 'fixtures');
+    const at = h => (h ? [h].flat().map(x => ({ ...x, dir })) : undefined);
     setup.push(...(f.setup ?? []).map(h => ({ ...h, dir })));
     teardown.unshift(...(f.teardown ?? []).map(h => ({ ...h, dir })));
     steps.push(...(f.steps ?? []));
+    items.push(...fixtureItems({ items: f.items, setup: at(f.setup), teardown: at(f.teardown), readOnly: f.readOnly }, n)
+      .map(i => ({ ...i, check: i.check ? { ...i.check, dir } : undefined, setup: at(i.setup), teardown: at(i.teardown) })));
+    if (f.steps?.length || f.checkSteps?.length || f.cleanupSteps?.length)
+      browser.push({ fixture: n, steps: f.steps ?? [], checkSteps: f.checkSteps ?? [], cleanupSteps: f.cleanupSteps ?? [], readOnly: !!f.readOnly });
   }
-  return { data, setup, teardown, steps };
+  return { data, setup, teardown, steps, items, browser };
+}
+
+/**
+ * A fixture's (or a tour's "hooks") setup as paired items, in order. "items" as written; the older "setup" /
+ * "teardown" lists become one item per setup hook (nothing to undo) and a last item whose undo is the teardown list,
+ * so the teardown runs only when every setup hook ran, as before.
+ */
+export function fixtureItems({ items = [], setup = [], teardown = [], readOnly = false }, fixture) {
+  const out = items.map(i => ({ ...i, fixture, readOnly: !!(i.readOnly || readOnly) }));
+  (setup ?? []).forEach((h, k) => out.push({ name: `${fixture} setup ${k + 1}`, fixture, setup: [h], readOnly, legacy: true }));
+  if (teardown?.length) out.push({ name: `${fixture} teardown`, fixture, teardown, readOnly, legacy: true });
+  return out;
 }
 
 // ---- aft platform init -------------------------------------------------------------------------------------------

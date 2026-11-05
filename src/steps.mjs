@@ -15,7 +15,7 @@ import { log, sleep } from './util.mjs';
 const ROLES = ['button', 'link', 'tab', 'menuitem', 'checkbox', 'radio', 'option', 'switch', 'combobox', 'textbox'];
 // Order matters only for waitForResponse, which is also an option on other steps: any other action key wins.
 const ACTIONS = ['goto', 'click', 'dblclick', 'rightClick', 'hover', 'point', 'fill', 'type', 'clear', 'focus', 'press', 'check', 'uncheck', 'select', 'upload',
-  'drag', 'scroll', 'waitFor', 'verify', 'capture', 'wait', 'at', 'dialog', 'switchTo', 'download', 'mock', 'code', 'waitForResponse'];
+  'drag', 'scroll', 'waitFor', 'verify', 'capture', 'pin', 'wait', 'at', 'dialog', 'switchTo', 'download', 'mock', 'code', 'waitForResponse'];
 
 export function actionOf(step) {
   const a = ACTIONS.find(k => k in step);
@@ -161,7 +161,8 @@ export async function appError(page, errors) {
 
 /** A step as it may be shown in logs, reports and errors: secret values never are; code steps by file name. */
 export const shown = step => {
-  let s = step.secret ? { ...step, text: '***' } : step;
+  // secret: true on fill/type hides its text; a pin's "secret" is a list of field names (its values never are in the step).
+  let s = step.secret === true ? { ...step, text: '***' } : step;
   if (typeof s.code === 'string' && path.isAbsolute(s.code)) s = { ...s, code: path.basename(s.code) };
   return s;
 };
@@ -305,11 +306,18 @@ async function verify(t, step, { timeout, warnings, onPoll }) {
  * "pattern" (a regex, with or without /…/flags) keeps its first group, or the whole match without one.
  */
 async function capture(t, step, { timeout, warnings }) {
+  const { value } = await readValue(t, step, { timeout, warnings });
+  (t.vars ??= {})[step.as] = value;
+  log(`captured ${step.as} = "${value.slice(0, 80)}"`);
+}
+
+/** A value from the page, as capture reads it: { value, el } (el: the element it came from, if any). */
+async function readValue(t, step, { timeout, warnings }) {
   const c = step.capture;
-  let raw;
+  let raw, el = null;
   if (c && typeof c === 'object' && 'url' in c && Object.keys(c).length === 1) raw = t.page.url();
   else {
-    const el = await resolve(t.page, c, { timeout, warnings });
+    el = await resolve(t.page, c, { timeout, warnings });
     raw = step.attribute ? await el.getAttribute(step.attribute)
       : await el.evaluate(e => ('value' in e && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.tagName) ? e.value : e.innerText));
     if (raw === null) throw new Error(`${JSON.stringify(c)} has no attribute "${step.attribute}"`);
@@ -323,12 +331,66 @@ async function capture(t, step, { timeout, warnings }) {
     value = m[1] ?? m[0];
   }
   if (!value) throw new Error(`capture: ${JSON.stringify(c)} is empty`);
-  (t.vars ??= {})[step.as] = value;
-  log(`captured ${step.as} = "${value.slice(0, 80)}"`);
+  return { value, el };
+}
+
+/**
+ * pin: a named group of values read from the page (an account the story created: its id, username, password), with
+ * a role and an undo. t.artifacts keeps them for {artifact.<name>.<field>} / {artifact[<role>].<field>}; t.onPin (the
+ * run) records its cleanup in the ledger at once. A cropped still of the element the first field came from is kept.
+ */
+async function pin(t, step, { timeout, warnings }) {
+  const fields = {};
+  let first = null;
+  for (const [k, spec] of Object.entries(step.fields ?? {})) {
+    if (spec && typeof spec === 'object' && 'value' in spec && Object.keys(spec).length === 1) { fields[k] = String(spec.value); continue; }
+    const r = await readValue(t, spec && typeof spec === 'object' && 'capture' in spec ? spec : { capture: spec }, { timeout, warnings })
+      .catch(e => { throw new Error(`pin ${step.pin}.${k}: ${e.message.split('\n')[0]}`); });
+    fields[k] = r.value;
+    first ??= r.el;
+  }
+  const unknown = (step.secret ?? []).filter(k => !(k in fields));
+  if (unknown.length) throw new Error(`pin ${step.pin}: "secret" names ${unknown.map(k => `"${k}"`).join(', ')}, which it has no field for`);
+  const secret = step.secret ?? [];
+  t.secrets?.push(...secret.map(k => fields[k]).filter(Boolean));
+  const a = { name: step.pin, role: step.role ?? null, fields, secret, source: 'step', stepKey: t.stepKey, readOnly: !!step.readOnly, at: new Date().toISOString() };
+  if (first && t.outDir) {
+    const dir = path.join(t.outDir, 'artifacts');
+    fs.mkdirSync(dir, { recursive: true });
+    const mask = (t.mask?.selectors ?? []).map(s => t.page.locator(s));
+    if (await first.screenshot({ path: path.join(dir, `${step.pin}.png`), mask, timeout: 5000 }).then(() => true, () => false)) a.shot = `artifacts/${step.pin}.png`;
+  }
+  // Its own cleanup may refer to it: resolved now, so the ledger holds exactly what to delete.
+  const all = [...(t.artifacts ?? []).filter(x => x.name !== a.name), a];
+  if (step.cleanup) a.cleanup = fillArtifacts(step.cleanup, all);
+  t.artifacts = all;
+  log(`pinned ${a.role ? `${a.role} ` : ''}${a.name}: ${Object.keys(fields).map(k => `${k}=${secret.includes(k) ? '***' : JSON.stringify(fields[k].slice(0, 40))}`).join(', ')}`);
+  await t.onPin?.(a);
+}
+
+const ARTIFACT_REF = /\{artifact(?:\.([A-Za-z0-9_-]+)|\[([A-Za-z0-9_-]+)\])\.([A-Za-z0-9_-]+)\}/g;
+
+/**
+ * Fills {artifact.<name>.<field>} and {artifact[<role>].<field>} (the latest artifact of that role) in every string of
+ * a value. An unknown artifact or field is an error (a SCRIPT failure in a step).
+ */
+export function fillArtifacts(value, artifacts = []) {
+  if (typeof value === 'string') return value.replace(ARTIFACT_REF, (m, name, role, field) => {
+    const a = name ? artifacts.find(x => x.name === name) : [...artifacts].reverse().find(x => x.role === role);
+    if (!a) throw new Error(name ? `no artifact "${name}": pin it first with { "pin": "${name}", "fields": { … } }` : `no artifact with role "${role}" pinned yet`);
+    if (!(field in a.fields)) throw new Error(`artifact "${a.name}" has no field "${field}" (has: ${Object.keys(a.fields).join(', ')})`);
+    return a.fields[field];
+  });
+  if (Array.isArray(value)) return value.map(v => fillArtifacts(v, artifacts));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fillArtifacts(v, artifacts)]));
+  return value;
 }
 
 /** {vars.x} in a step: the values captured so far. One that hasn't been captured is a SCRIPT failure. */
-function withVars(t, step) {
+function withVars(t, step0) {
+  // A pin's own cleanup is resolved when it is pinned (it may name the artifact being made).
+  if ('pin' in step0 && step0.cleanup) { const { cleanup, ...rest } = step0; return { ...withVars(t, rest), cleanup }; }
+  const step = JSON.stringify(step0).includes('{artifact') ? fillArtifacts(step0, t.artifacts ?? []) : step0;
   const json = JSON.stringify(step);
   if (!json.includes('{vars.') && !json.includes('{data.')) return step;
   // {data.x} left after loading: a value a fixture hook looked up at run time ("output"), filled in now.
@@ -482,6 +544,7 @@ export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCf
     }
     case 'verify': await verify(t, step, { timeout: step.timeout ?? timeouts.verify ?? 15000, warnings, onPoll: poll }); break;
     case 'capture': await capture(t, step, { timeout, warnings }); break;
+    case 'pin': await pin(t, step, { timeout, warnings }); break;
     case 'wait': await sleep(Number(step.wait) * 1000); break;
     case 'at': await t.at(Number(step.at)); break;
     case 'dialog': t.dialogPlan = { action: step.dialog, text: step.text, expect: step.expect }; break;
@@ -573,19 +636,25 @@ function appErrorPolicy(t, marks, entry, warnings = (entry.warnings ??= [])) {
 /** Thrown at --until-step: the requested part of the run is done. */
 export class StopRun extends Error {}
 
-export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = false, timeouts, report, scene, ready, errors, criteria = [], retries = 1, range, allowMocks, outDir } = {}) {
-  const paced = unpaced || steps.some(s => 'at' in s); // unpaced: off camera (login, setup), as fast as possible
-  const actions = steps.filter(s => !['at', 'wait', 'waitFor'].includes(actionOf(s)));
+/**
+ * unpaced: off camera (login, setup), as fast as possible, not counted by --from-step / --until-step. offCamera: a
+ * scene with "camera": false: as fast as possible, but its steps are the tour's (counted, reported as off camera). A
+ * step with "camera": false inside a filmed scene runs unpaced and its time is cut from the video.
+ */
+export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = false, offCamera = false, timeouts, report, scene, ready, errors, criteria = [], retries = 1, range, allowMocks, outDir } = {}) {
+  const paced = unpaced || offCamera || steps.some(s => 'at' in s);
+  const actions = steps.filter(s => !['at', 'wait', 'waitFor'].includes(actionOf(s)) && s.camera !== false);
   let i = 0;
   for (const step of steps) {
     const a = actionOf(step);
+    const hidden = offCamera || step.camera === false;
     // --from-step / --until-step count scene steps across the whole tour (1-based, as in report.md's order).
     if (range && !unpaced) {
       range.n++;
       if (range.until && range.n > range.until) throw new StopRun(`stopped before step ${range.n} (--until-step ${range.until})`);
     }
     const fastForward = range?.from && range.n < range.from;
-    if (!paced && !fastForward && !['at', 'wait', 'waitFor'].includes(a)) {
+    if (!paced && !fastForward && !hidden && !['at', 'wait', 'waitFor'].includes(a)) {
       await t.at(actions.length > 1 ? 0.05 + (0.75 * i) / (actions.length - 1) : 0.1);
       i++;
     }
@@ -596,10 +665,14 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
     const covers = kind === 'check' || a === 'code' ? [step.criterion ?? criteria].flat().filter(c => c !== undefined && c !== '').map(String) : [];
     const started = Date.now();
     const entry = { scene, step: index, action: a, kind, ...(covers.length && kind === 'check' ? { criteria: covers } : {}), spec: shown(step),
-      ...(step.from ? { from: step.from } : {}), ...(step.scriptStep ? { scriptStep: step.scriptStep } : {}), ...(step.knownIssue ? { knownIssue: step.knownIssue } : {}) };
+      ...(step.from ? { from: step.from } : {}), ...(step.scriptStep ? { scriptStep: step.scriptStep } : {}), ...(step.knownIssue ? { knownIssue: step.knownIssue } : {}),
+      ...(hidden && !unpaced ? { offCamera: true } : {}) };
+    // An off-camera step in a filmed scene: its time is cut from the video, and the narration's pacing skips it.
+    const offStart = step.camera === false && !offCamera && t.current ? t.now() : null;
     const warnings = [];
     // Attribution: browser errors and failing requests from now on belong to this step.
     t.stepKey = `${scene ?? 'setup'}#${index}`;
+    t.stepScript = step.scriptStep ?? null;
     t.stepLabel = `${a} ${JSON.stringify(shown(step)[a] ?? '').slice(0, 60)}`;
     const marks = { net: t.networkFailures?.length ?? 0, con: t.consoleErrors?.length ?? 0 };
     t.stepWarnings = warnings;
@@ -620,7 +693,7 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
           entry.retried = attempt + 1;
         }
       }
-      report?.push({ ...entry, ok: true, ms: Date.now() - started, ...(warnings.length ? { warnings } : {}) });
+      report?.push({ ...entry, ok: true, ms: Date.now() - started, url: t.page.url(), ...(warnings.length ? { warnings } : {}) });
     } catch (e) {
       const message = e.message.split('\n')[0];
       const target = targetOf(step);
@@ -643,13 +716,18 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
         log(`${scene ?? 'setup'} step ${index} ${onError === 'collect' ? 'FAILED' : 'skipped'}: ${message}${hint}`);
       else throw Object.assign(new StepError(`${failure === 'criterion' ? `CRITERION${entry.criteria?.length ? ` ${entry.criteria.join(', ')}` : ''} not met` : failure === 'app' ? 'APP error' : 'SCRIPT failure'}: ${scene ?? 'setup'} step ${index}${step.from ? ` (fragment ${step.from})` : ''} ${JSON.stringify(shown(step))}: ${message}${hint}`), { failure, entry });
     }
+    if (offStart !== null && t.current) {
+      const end = t.now();
+      t.markWait?.('offCamera', offStart, end);
+      t.current.shift = (t.current.shift ?? 0) + (end - offStart);
+    }
   }
 }
 
 /** A step that couldn't be done; the CLI maps it to exit code 2. */
 export class StepError extends Error {}
 
-const targetOf = step => step[actionOf(step)] && !['goto', 'code', 'press', 'dialog', 'switchTo', 'mock', 'waitForResponse', 'wait', 'at'].includes(actionOf(step)) && typeof step[actionOf(step)] !== 'number' ? step[actionOf(step)] : null;
+const targetOf = step => step[actionOf(step)] && !['goto', 'code', 'press', 'dialog', 'switchTo', 'mock', 'waitForResponse', 'wait', 'at', 'pin'].includes(actionOf(step)) && typeof step[actionOf(step)] !== 'number' ? step[actionOf(step)] : null;
 const targetText = t => (typeof t === 'string' ? t.replace(/^css=/, '') : t.name ?? t.label ?? t.placeholder ?? t.text ?? t.alt ?? t.testId ?? t.css ?? '');
 
 /** Edit distance (optimal string alignment: a swapped pair of letters is one edit), for closest-match suggestions. */

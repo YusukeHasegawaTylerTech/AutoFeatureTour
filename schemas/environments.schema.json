@@ -295,6 +295,18 @@
         "type": "boolean",
         "description": "Accept self-signed certificates."
       },
+      "shared": {
+        "type": "boolean",
+        "description": "Other people and runs use this environment (QA): data a run creates there must carry {run.tag} (or be marked \"readOnly\"); validate warns when a tour creates untagged data. A shared environment is never reset."
+      },
+      "reset": {
+        "description": "Hooks that put the environment back to a known state (restore a database snapshot): run by `aft reset` and `--reset` before a batch of runs. Refused on a shared environment.",
+        "type": "array",
+        "items": {
+          "$ref": "common.schema.json#/$defs/hook"
+        },
+        "minItems": 1
+      },
       "workarounds": {
         "type": "array",
         "items": {

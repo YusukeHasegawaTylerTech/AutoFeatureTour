@@ -121,7 +121,7 @@ const issueRules = raw => (raw?.workarounds ?? []).filter(r => r.issue && !r.off
  * Everything a person should decide about, with its decision if the tour has one.
  * steps: the run's step entries; firings: known issues that fired; mocks: [{ pattern }]; passed/complete: the outcome.
  */
-export function findings({ raw, steps, firings = [], mocks = [], evidence: ev = [], passed, complete = true }) {
+export function findings({ raw, steps, firings = [], mocks = [], evidence: ev = [], passed, complete = true, fixtures = [] }) {
   const out = [];
   const add = f => { if (!out.some(x => x.id === f.id)) out.push(f); };
   for (const s of steps) {
@@ -154,12 +154,55 @@ export function findings({ raw, steps, firings = [], mocks = [], evidence: ev = 
       add({ id: `known|${f.name}`, kind: 'workaround', scene: f.scene, title: `known issue "${f.name}" (${f.source}) ${f.action === 'hide' ? 'was hidden' : f.action === 'tolerate' ? 'was left on screen' : 'was dismissed'}`, detail: f.matched });
     }
   }
+  // Test data the run couldn't remove (an undo failed, or never ran): it is still in the environment.
+  for (const x of fixtures) if (x.status === 'undo-failed' || x.toUndo)
+    add({ id: `leftover|${x.name}`, kind: 'leftover', title: `leftover data: ${x.name} ${x.status === 'undo-failed' ? 'could not be undone' : 'was not undone'}`,
+      detail: `${x.undoError ?? 'its undo did not run'}. aft cleanup <run folder> tries again (see ledger.json).` });
+  for (const p of pinSuggestions(raw, steps)) add(p);
   for (const m of mocks) add({ id: `mock|${m.pattern}`, kind: 'mock', title: `simulated data: ${m.pattern} was answered by a mock`, detail: `status ${m.status ?? 200}` });
   if (passed && complete) for (const [name, r] of issues) if (!firings.some(f => f.name === name))
     add({ id: `gone|${name}`, kind: 'issue-gone', title: `app issue "${name}" did not occur: it may be fixed`, detail: `${[r.issue.note, r.issue.ticket].filter(Boolean).join(' · ')}. Remove the workaround if so.` });
 
   const decided = new Map((raw?.review?.decisions ?? []).map(d => [d.finding, d]));
   for (const f of out) if (!f.decision && decided.has(f.id)) f.decision = decided.get(f.id);
+  return out;
+}
+
+const ID_SEGMENT = /\/([A-Za-z][\w-]*)\/(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=[/?#]|$)/i;
+const idsIn = url => { const m = String(url ?? '').match(new RegExp(ID_SEGMENT.source, 'gi')) ?? []; return m.map(x => x.toLowerCase()); };
+
+/**
+ * "Step 4 created something new: pin it?" A step after which the URL shows a record id it didn't show before (a new
+ * order's page: /orders/123), in a scene with no pin step from there on. Only a suggestion, with the pin step to add;
+ * nothing is pinned automatically.
+ */
+export function pinSuggestions(raw, steps) {
+  const out = [];
+  let prev = null;
+  for (const s of steps) {
+    // The first URL seen is the baseline: ids already on screen there were not made by these steps.
+    if (!s.url || s.ok === false || prev === null) { prev = s.url ?? prev; continue; }
+    const a = s.action ?? actionOf(s.spec);
+    const fresh = idsIn(s.url).filter(x => !idsIn(prev).includes(x));
+    prev = s.url;
+    if (!fresh.length || !['click', 'press', 'dblclick', 'code', 'fill', 'select', 'check'].includes(a)) continue;
+    const m = sceneId(s.scene).match(/^scene-(\d+)$/);
+    if (!m) continue;
+    const scene = raw?.scenes?.[Number(m[1]) - 1];
+    const at = s.scriptStep ?? s.step;
+    if ((scene?.steps ?? []).some((st, i) => 'pin' in st && i + 1 >= at)) continue;
+    const [, seg] = fresh[0].match(ID_SEGMENT) ? s.url.match(ID_SEGMENT) : [];
+    const noun = String(seg ?? 'record').replace(/ies$/, 'y').replace(/s$/, '');
+    const base = `new${noun[0].toUpperCase()}${noun.slice(1).replace(/[^A-Za-z0-9]/g, '')}`;
+    // A name the script doesn't pin already (nor an earlier suggestion).
+    const taken = new Set([...(raw?.scenes ?? []).flatMap(sc => sc.steps ?? []).map(st => st.pin).filter(Boolean), ...out.map(o => o.proposal.step.pin)]);
+    let name = base;
+    for (let k = 2; taken.has(name); k++) name = `${base}${k}`;
+    out.push({ id: `pin?|${sceneId(s.scene)}|${at}`, kind: 'suggest-pin', scene: sceneId(s.scene), step: s.step, scriptStep: at,
+      title: `${sceneId(s.scene)} step ${at} created something new (a new id in the URL): pin it?`,
+      detail: `${s.url.replace(/^https?:\/\/[^/]+/, '')}: pinned, it can be referred to later as {artifact.${name}.id} and deleted by its cleanup, even after a crash.`,
+      proposal: { insertAfter: at, step: { pin: name, role: noun, fields: { id: { capture: { url: true }, pattern: `/${seg}/([^/?#]+)` } } } } });
+  }
   return out;
 }
 
@@ -189,11 +232,11 @@ function mockScenesOf(steps, raw) {
 }
 
 /** The whole review for a report: { verdict, label, evidence, findings, open }. */
-export function review({ raw, steps = [], criteria = [], firings: fired = [], mocks = [], passed, complete = true }) {
+export function review({ raw, steps = [], criteria = [], firings: fired = [], mocks = [], passed, complete = true, fixtures = [] }) {
   // A firing while a scene's page loads has no scene yet, only its step key ("scene-01 (url)#1").
   const firings = fired.map(f => ({ ...f, scene: f.scene ?? (/^scene-\d+/.exec(f.stepKey ?? '')?.[0] ?? null) }));
   const ev = evidence({ raw, steps, criteria, firings, mockScenes: mockScenesOf(steps, raw) });
-  const fs = findings({ raw, steps, firings, mocks, evidence: ev, passed, complete });
+  const fs = findings({ raw, steps, firings, mocks, evidence: ev, passed, complete, fixtures });
   const v = verdict({ passed, findings: fs });
   return { verdict: v, label: VERDICTS[v], evidence: ev, findings: fs, open: fs.filter(f => !f.decision).length };
 }

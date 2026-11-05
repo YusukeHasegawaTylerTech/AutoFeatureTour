@@ -176,7 +176,8 @@ export class Tour {
   /** Waits until this fraction of the current scene's narration has played. */
   async at(fraction) {
     if (this.dryRun) return;
-    const wait = (this.current.start + fraction * this.current.seconds - this.now()) * 1000;
+    // shift: time spent in off-camera steps, which the video cuts: pacing carries on as if it hadn't passed.
+    const wait = (this.current.start + (this.current.shift ?? 0) + fraction * this.current.seconds - this.now()) * 1000;
     if (wait > 0) await sleep(wait);
   }
 

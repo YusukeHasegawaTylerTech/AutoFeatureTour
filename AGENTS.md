@@ -54,7 +54,8 @@ Add `--json` to any command for one JSON result on stdout (see "Agent primitives
 Run folder contents: `tour.mp4` (the video), `tour.vtt` (captions), `recording.webm` (raw browser recording),
 `clips/` (per scene), `scene-NN.wav` (narration), `timings.json` (scene windows in the recording), `screens/`
 (a still per scene, discovery pages), `trace.zip` (Playwright trace), `tour.json` / `script.md` (generated
-scripts), `validation.md`, `discovery.json`, `run.json` (command, args, status). On failure: `screens/failure.png`,
+scripts), `validation.md`, `discovery.json`, `run.json` (command, args, status; a dry run with blocking steps is `failed`), `ledger.json` (what was set up and
+undone), `artifacts.json` + `artifacts/` (what the run pinned). On failure: `screens/failure.png`,
 `trace-failed.zip`, `recording-failed.webm`. `out/<name>/latest.json` points at the newest successful run.
 
 **Video trimming:** long waits (page loads and busy indicators, `waitFor`, `waitForResponse`, dismissed known issues)
@@ -248,7 +249,11 @@ One action key per step (the schema's `$defs/action_<name>` has every option, wi
 | `{ "wait": 1.5 }` / `{ "at": 0.5 }` | pause seconds / wait until that fraction of the narration | |
 | `{ "use": "frag", "with": {…} }` / `{ "code": "x.mjs", "with": {…} }` | a fragment / a code step (see Platforms) | |
 
-On any step: `optional`, `timeout`, `retries`, `criterion`, `comment`, `knownIssue` (see Review), and `waitForResponse` + `status` + `method`
+`{ "pin": "name", "fields": {…} }` pins an artifact (see Fixtures). **Off camera**: `"camera": false` on a scene
+means it runs and is checked (its criteria count) but has no narration, clip or caption. On a step, it runs unpaced and
+its time is always cut from the video. Off-camera entries are marked `offCamera` in the report.
+
+On any step: `optional`, `timeout`, `retries`, `criterion`, `comment`, `knownIssue` (see Review), `camera`, and `waitForResponse` + `status` + `method`
 (listen before acting, so the response can't be missed). Steps that may already have had their effect (code, mock,
 download, dialog, a waited-for response, a popup) are never retried. URL and text patterns are substrings, or
 `/regex/flags`. A click whose target sits under a fixed or sticky header, footer or toolbar is scrolled to the middle
@@ -356,6 +361,36 @@ id: `{ "run": "sqlcmd … -h -1 -Q \"SELECT TOP 1 Id …\"", "output": "text", "
 object merged into data; works for `node` and `http` hooks too) makes `{data.caseId}` available to steps and scene
 `url`s at run time. A `{data.x}` that nothing provided is a SCRIPT failure.
 
+**Repeatable runs.** Prefer paired **items** to the `setup`/`teardown` lists (which still work):
+`"items": [{ "name", "check": hook, "setup": hook | [hooks], "teardown": hook | [hooks], "readOnly" }]`. Items run in
+order and are undone in reverse, and only the ones that ran. A `check` that succeeds means the data is already there:
+setup is skipped ("already in place") and nothing is undone. A check that still fails after setup is a SCRIPT failure
+(`SETUP: …`). Browser data: `checkSteps` (all pass: `steps` skipped), `steps`, and `cleanupSteps`. Cleanup steps run off
+camera after the last scene, in a page of their own, even when a scene failed. Everything is written to
+`<run>/ledger.json` before it runs (pending → done → undone / undo-failed), so a crash or a kill leaves a record.
+Ctrl+C runs the pending undo, with a 30 s limit. **`aft cleanup`** finishes it later:
+`aft cleanup [<run>] [--platform p] [--target env] [--tag <prefix>] [--older-than 2d] [--all] [--dry-run]`. Without a
+run, `--all`, `--platform` or `--tag` it only lists what is pending. Browser undo runs in a one-shot signed-in session.
+The start of a run does this for earlier runs of the same tour. report.json `fixtures` (and report.md "Test data")
+show each item. A failed undo is a review finding, `leftover|<item>`.
+
+**Artifacts.** `{ "pin": "newOrder", "role": "order", "fields": { "id": { "capture": { "url": true }, "pattern":
+"/orders/(\\d+)" }, "customer": "#customer", "code": { "value": "…" } }, "secret": ["code"], "cleanup": [steps] | hook }`
+pins what the run just created. A field is a locator (its value or text), a capture spec, or `{ "value" }`. Later steps,
+scenes, teardowns and cleanups use `{artifact.newOrder.id}`, or `{artifact[order].id}` for the latest of a role. An
+unknown artifact or field is a SCRIPT failure. The cleanup joins the ledger the moment the pin is made. Secret fields
+are `***` in every report and in `artifacts.json`. That file records each artifact's fields, where it was made, a
+cropped still (`artifacts/<name>.png`) and its cleanup status. A setup hook with `"output"` can pin what it printed
+(`"pin": "account", "role", "secret"`). The review suggests a pin (`pin?|scene|step`, with the step to add) when a
+step's URL shows a new record id and nothing is pinned. `generate --llm` proposes pin steps. Nothing is pinned
+automatically.
+
+**Run tags and shared environments.** `{run.tag}` (`aft-MMDD-<run id>`, also `RUN_TAG` for hooks) works in any string.
+Tag what a tour creates, so parallel runs don't collide and `aft cleanup --tag aft-1105` finds them. `"shared": true` on
+an environment (QA): `validate` and runs warn about fixture items, fixture steps or pins that create data without
+`{run.tag}` (mark lookups `"readOnly"`). `"reset": [hooks]` on a local environment restores a known state. It runs with
+`aft reset --platform p [--target env]`, or `--reset` on run/validate, and is refused on a shared environment.
+
 ### Lifecycle
 
 What happens when, and whether it can be skipped:
@@ -367,7 +402,7 @@ What happens when, and whether it can be skipped:
 | per environment | `aft platform check <name> --target <env>` | mandatory before the first real tour there; re-run when the app or environment changes |
 | per env + role, until it expires | sign-in → `auth/<platform>/<env>/<role>.json` (`aft login`, or automatically on the first run) | skipped while the saved state works; renewed automatically on expiry when login steps and credentials exist; `--fresh-login` forces it |
 | per session (one command) | launch or attach to the app; browser start | attach is skipped if the app is up; launch never restarts a running service |
-| per run | fixture setup hooks → browser → session check → fixture steps (off camera) → scenes → fixture teardown | fixtures only if the tour lists them; teardown runs whenever setup ran |
+| per run | earlier runs' pending undo → fixture items (check → setup) → browser → session check → fixture steps (off camera) → scenes → browser cleanup → hook undo (reverse) | fixtures only if the tour lists them; only what ran is undone; ledger.json throughout |
 | per step | the action, settle (`ready`), the app's error UI and `appErrors` policy, rule-based retry (actions only) | `"optional": true` steps may fail without failing the run; checks never |
 
 ### Onboarding a platform
@@ -528,4 +563,5 @@ fixtures, init · `platform-cli.mjs` `aft platform` · `session.mjs` / `session-
 try-step · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
 `plan.mjs` heuristic and Claude planners, stories · `render.mjs` ffmpeg · `tts.mjs` speech · `auth.mjs` saved logins ·
 `doctor.mjs` checks · `workarounds.mjs` known issues (merge, checkpoint, matching) · `review.mjs` evidence, findings,
-decisions, verdict · `fix.mjs` AI fix proposals (`suggest-fix`). Tests: `npm test`.
+decisions, verdict · `fix.mjs` AI fix proposals (`suggest-fix`) · `ledger.mjs` ledger.json, run tags · `fixtures.mjs`
+hooks, fixture items, browser fixtures, artifacts, `aft cleanup` / `aft reset`. Tests: `npm test`.

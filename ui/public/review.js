@@ -37,6 +37,8 @@ export async function mountReview(box, { id, d, input, h, api, rel, fileUrl, onC
       case 'evidence': return [editScene(f) ? `<a class="btn" href="${editScene(f)}">✏️ ADD A CHECK</a>` : '', B('accept', '✔ GOOD ENOUGH')].join('');
       case 'workaround': return [B('accept', '✔ EXPECTED HERE'), B('workaround', '🩹 REAL ISSUE: WORK AROUND IT FOR NOW'), B('app-issue', '🐞 REAL ISSUE')].join('');
       case 'mock': return B('accept', '✔ FINE FOR THIS STORY');
+      case 'leftover': return [B('cleanup', '🧹 CLEAN UP NOW', 'primary'), B('accept', '✔ IT CAN STAY')].join('');
+      case 'suggest-pin': return [f.proposal ? B('pin', '📌 PIN IT', 'primary') : '', B('accept', '✔ NOT NEEDED')].join('');
       case 'issue-gone': return [B('remove-wa', '🗑 IT\'S FIXED: REMOVE THE WORKAROUND'), B('accept', '✔ KEEP IT')].join('');
       default: return B('accept', '✔ ACCEPT');
     }
@@ -50,7 +52,7 @@ export async function mountReview(box, { id, d, input, h, api, rel, fileUrl, onC
       ${rv.evidence.length ? `<table class="evidence"><tr><th>criterion</th><th>evidence</th><th>why</th></tr>${rv.evidence.map(e => {
         const [c, w] = STRENGTH[e.strength] ?? ['', e.strength];
         return `<tr><td><b>AC${h(e.id)}</b> <span class="muted">${h(e.text)}</span></td><td><span class="badge ${c}">${h(w)}</span></td><td>${h(e.reasons.join('; '))}</td></tr>`; }).join('')}</table>` : ''}
-      ${rv.findings.length ? `<div class="findings">${rv.findings.map((f, i) => `<div class="finding ${f.decision ? 'decided' : ''}" data-i="${i}">
+      ${rv.findings.length ? `<div class="findings">${rv.findings.map((f, i) => `<div class="finding kind-${h(f.kind)} ${f.decision ? 'decided' : ''}" data-i="${i}">
           <div class="finding-title">${f.kind === 'failure' ? '✘' : f.decision ? '●' : '○'} ${h(f.title)}</div>
           ${f.detail ? `<div class="muted">${h(String(f.detail).slice(0, 300))}</div>` : ''}
           ${f.suggestions?.length ? `<div class="muted">did you mean: ${h(f.suggestions.join(', '))}</div>` : ''}
@@ -214,6 +216,40 @@ export async function mountReview(box, { id, d, input, h, api, rel, fileUrl, onC
       return;
     }
     if (a === 'ai') return aiFix(el, f);
+    if (a === 'cleanup') return cleanUp(el);
+    if (a === 'pin') return pinIt(el, f);
+  };
+
+  /** 🧹 Leftover data: `aft cleanup <this run>` runs its pending undo again. */
+  const cleanUp = async el => {
+    const form = el.querySelector('.finding-form');
+    form.innerHTML = '<div class="verdict-line warn">🧹 Cleaning up…</div>';
+    const job = await api('/api/jobs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ args: ['cleanup', `out/${id}`] }) });
+    const es = new EventSource(`/api/jobs/${job.id}/events`);
+    es.addEventListener('done', ev => {
+      es.close();
+      const r = JSON.parse(ev.data), c = r.data?.cleaned?.[0];
+      form.innerHTML = r.ok ? `<div class="saved">✔ Cleaned up${c ? `: ${c.undone} undone` : ' (nothing was left)'}.</div>`
+        : `<div class="bad">✘ Still left behind: ${h(r.error?.message ?? 'the undo failed')}. See ledger.json; fix the cleanup steps, or remove the data by hand.</div>`;
+    });
+  };
+
+  /** 📌 PIN IT: adds the proposed pin step after the step that created the record, for a person to complete. */
+  const pinIt = async (el, f) => {
+    const tour = await load();
+    const n = Number(String(f.scene).slice(6)), sc = tour.scenes?.[n - 1];
+    if (!sc) { el.querySelector('.finding-form').innerHTML = '<div class="bad">That scene is no longer in the script.</div>'; return; }
+    const names = new Set((tour.scenes ?? []).flatMap(s => s.steps ?? []).filter(s => s.pin).map(s => s.pin));
+    const step = structuredClone(f.proposal.step);
+    for (let k = 2; names.has(step.pin); k++) step.pin = `${f.proposal.step.pin}${k}`;
+    step.comment = 'Pinned from the review: add "cleanup" (how to delete it), and more fields if later steps need them.';
+    sc.steps ??= [];
+    sc.steps.splice(Math.min(f.proposal.insertAfter, sc.steps.length), 0, step);
+    await save(tour);
+    await decide(f, 'script', { note: `pinned as ${step.pin}` });
+    const at = Math.min(f.proposal.insertAfter, sc.steps.length - 1) + 1;
+    box.querySelector('#review-msg').insertAdjacentHTML('beforeend', `<div class="saved">📌 Added <code>${h(JSON.stringify(step).slice(0, 160))}</code>
+      ${file.api === 'pfile' ? `<a class="btn" href="#/write/${encodeURIComponent(file.path)}?scene=${n}&step=${at}">✏️ ADD ITS CLEANUP</a>` : ''}</div>`);
   };
 
   /** ✨ AI FIX: asks `aft suggest-fix` for a proposal, shows it, and applies it only when accepted. */

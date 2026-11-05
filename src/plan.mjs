@@ -108,10 +108,11 @@ function storyDraft(story, discovery, { name }) {
 const STEP_SCHEMA = {
   type: 'object',
   properties: {
-    action: { type: 'string', enum: ['goto', 'click', 'fill', 'press', 'hover', 'point', 'select', 'scroll', 'verify', 'wait'] },
+    action: { type: 'string', enum: ['goto', 'click', 'fill', 'press', 'hover', 'point', 'select', 'scroll', 'verify', 'wait', 'pin'] },
     target: { type: 'string', description: 'Exact visible name/label/text from the inventory, or a path for goto' },
     role: { type: 'string', description: 'Optional ARIA role for target: button, link, tab, menuitem, textbox, checkbox, option, combobox' },
-    value: { type: 'string', description: 'Text to type (fill), option (select), key (press), pixels (scroll) or seconds (wait)' },
+    value: { type: 'string', description: 'Text to type (fill), option (select), key (press), pixels (scroll) or seconds (wait); for pin: the artifact name (newCase)' },
+    pinRole: { type: 'string', description: 'For pin: what kind of thing was created (case, account, order)' },
   },
   required: ['action'],
   additionalProperties: false,
@@ -162,6 +163,9 @@ const SYSTEM = `You write narrated product-tour videos for web applications. You
   that need it (the environment may be broken), rather than inventing its contents.
 - Prefer demonstrating over destroying: no deleting, no irreversible submissions, unless the brief asks for it.
 - Use "verify" for anything an acceptance criterion requires to be visible.
+- When the story creates something (a record, an account, an order), add a "pin" step right after it is created:
+  value = a name for it (newCase), pinRole = what it is (case), target = where its id or name shows (a heading, a
+  field label), or omit target to take the id from the page URL. A person reviews it and adds how to delete it.
 - Narration is spoken aloud: plain sentences, no markdown, 2-4 sentences per scene, describing what the viewer sees.
   With a story, tie each scene to the acceptance criteria it demonstrates (criteria field) and say so in the narration.
 - If part of the story can't be mapped to the inventory, still include the scene, leave out the steps you can't
@@ -180,6 +184,9 @@ function toStep(s) {
     case 'press': return { press: s.value ?? s.target ?? 'Enter' };
     case 'scroll': return { scroll: Number(s.value ?? 300) };
     case 'wait': return { wait: Number(s.value ?? 1) };
+    // A pin proposed by the planner: an id from the element (or the URL); its cleanup is for a person to add.
+    case 'pin': return { pin: String(s.value ?? 'newRecord').replace(/[^A-Za-z0-9_-]/g, '') || 'newRecord', ...(s.pinRole ? { role: s.pinRole } : {}),
+      fields: { id: target ? target : { capture: { url: true }, pattern: '/([^/?#]+)$' } }, comment: 'proposed by the planner: check the field, add "cleanup"' };
     default: return { [s.action]: target };
   }
 }

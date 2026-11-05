@@ -108,7 +108,27 @@ function platformDetail(name) {
       .map(f => ({ env: e, role: f.replace(/\.json$/, ''), savedAt: fs.statSync(path.join(p, f)).mtime }));
   });
   const envs = envFile(dir);
-  return { name, files, env, logins, default: envs.default, environments: envNames(envs), baseUrl: envs[envs.default]?.baseUrl };
+  // Per environment: shared (QA: data must carry {run.tag}) and whether it has "reset" hooks.
+  const envInfo = Object.fromEntries(envNames(envs).map(e => [e, { baseUrl: envs[e]?.baseUrl ?? null, shared: !!envs[e]?.shared, reset: Array.isArray(envs[e]?.reset) && envs[e].reset.length > 0 }]));
+  return { name, files, env, logins, default: envs.default, environments: envNames(envs), envInfo, baseUrl: envs[envs.default]?.baseUrl, cleanup: pendingCleanup(name) };
+}
+
+// ---- test data left behind: runs whose ledger.json still has undo pending (src/ledger.mjs; read as files) ----
+const OPEN_UNDO = new Set(['pending', 'done', 'undo-failed']);
+function pendingCleanup(platform) {
+  const runs = [];
+  if (!isDir(outDir)) return { runs, items: 0 };
+  for (const name of fs.readdirSync(outDir)) {
+    const base = path.join(outDir, name);
+    if (name.startsWith('.') || name === 'sessions' || !isDir(base)) continue;
+    for (const id of fs.readdirSync(base)) {
+      const l = readJson(path.join(base, id, 'ledger.json'));
+      if (!l || (platform && l.platform !== platform)) continue;
+      const items = (l.items ?? []).filter(i => i.undo && OPEN_UNDO.has(i.status)).map(i => ({ name: i.name, kind: i.kind, status: i.status, error: i.undoError ?? null }));
+      if (items.length) runs.push({ id: `${name}/${id}`, env: l.env ?? null, tag: l.tag ?? null, startedAt: l.startedAt, items });
+    }
+  }
+  return { runs, items: runs.reduce((n, r) => n + r.items.length, 0) };
 }
 
 // ---- runs ----
@@ -152,12 +172,17 @@ function runDetail(id) {
   } };
   walk(dir);
   return { id, run: readJson(path.join(dir, 'run.json')), report: readJson(path.join(dir, 'report.json')),
-    timings: readJson(path.join(dir, 'timings.json')), files };
+    timings: readJson(path.join(dir, 'timings.json')), files,
+    // What the run created and what it set up: artifacts (fields already masked) and each ledger item's outcome
+    // (never the undo steps themselves, which can hold values).
+    artifacts: readJson(path.join(dir, 'artifacts.json'))?.artifacts ?? [],
+    ledger: (l => (l ? { tag: l.tag ?? null, items: (l.items ?? []).map(({ id: n, name, kind, fixture, artifact, status, error, undoError, undo }) =>
+      ({ id: n, name, kind, fixture: fixture ?? null, artifact: artifact ?? null, status, error: error ?? null, undoError: undoError ?? null, undo: undo ? (undo.steps ? 'steps' : 'hooks') : null })) } : null))(readJson(path.join(dir, 'ledger.json'))) };
 }
 
 // ---- jobs: CLI child processes, output streamed over SSE ----
 const jobs = new Map();
-const ALLOWED = new Set(['validate', 'render', 'run', 'doctor', 'generate', 'platform', 'login', 'session', 'snapshot', 'locate', 'try-step', 'export', 'import', 'suggest-fix']);
+const ALLOWED = new Set(['validate', 'render', 'run', 'doctor', 'generate', 'platform', 'login', 'session', 'snapshot', 'locate', 'try-step', 'export', 'import', 'suggest-fix', 'cleanup', 'reset']);
 // import only reads files the UI saved itself (POST /api/upload-export), each in its own folder under out/.imports/
 const importsDir = path.join(outDir, '.imports');
 function startJob(args) {

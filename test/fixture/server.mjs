@@ -17,6 +17,8 @@
 //   /api/echo   200 {"ok": true}       /file.txt   a download (Content-Disposition: attachment; report-2026.txt)
 //   /known      known issues for workarounds: ?popup=1 (&stack=1), ?panel=1 (&two=1), ?tcm=1 (Save calls /api/tcm: 503)
 //   /tabs       tabs with aria-selected, and a count of page loads (sessionStorage)
+//   /orders/new a "Customer" field and Create: POST /api/orders, then /orders/<id> ("Order <id>", #customer, Delete)
+//   /api/orders GET: the orders that exist (JSON) · POST: create · DELETE /api/orders/<id>: remove
 
 import http from 'node:http';
 
@@ -87,8 +89,33 @@ const PAGES = {
 };
 
 export function startFixture() {
+  // Orders a tour creates (pin and cleanup tests); in memory, per server.
+  const orders = new Map();
+  let next = 100;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
+    const json = (code, v) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(v)); };
+    if (url.pathname === '/api/orders' && req.method === 'GET') return json(200, [...orders.values()]);
+    if (url.pathname === '/api/orders' && req.method === 'POST') {
+      let body = '';
+      req.on('data', d => { body += d; });
+      req.on('end', () => { const id = String(next++); orders.set(id, { id, customer: JSON.parse(body || '{}').customer ?? '' }); json(201, { id }); });
+      return;
+    }
+    const del = url.pathname.match(/^\/api\/orders\/(\w+)$/);
+    if (del && req.method === 'DELETE') return orders.delete(del[1]) ? json(200, { deleted: del[1] }) : json(404, { error: 'no such order' });
+    if (url.pathname === '/orders/new') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      return res.end(page('New order', `<h1>New order</h1><label>Customer <input id="customer"></label> <button id="create">Create</button>`,
+        `create.onclick = async () => { const r = await fetch('/api/orders', { method: 'POST', body: JSON.stringify({ customer: customer.value }) }); location.href = '/orders/' + (await r.json()).id; };`));
+    }
+    const ord = url.pathname.match(/^\/orders\/(\w+)$/);
+    if (ord) {
+      const o = orders.get(ord[1]);
+      res.writeHead(o ? 200 : 404, { 'Content-Type': 'text/html' });
+      return res.end(o ? page(`Order ${o.id}`, `<h1>Order ${o.id}</h1><p>Customer <strong id="customer">${o.customer}</strong></p><button id="del">Delete</button><p id="gone"></p>`,
+        `del.onclick = async () => { await fetch('/api/orders/${o.id}', { method: 'DELETE' }); gone.textContent = 'Deleted'; };`) : page('Not found', '<h1>No such order</h1>'));
+    }
     const authed = /session=ok/.test(req.headers.cookie ?? '');
     if (url.pathname === '/hang') return; // never answers
     if (url.pathname === '/api/fail') {

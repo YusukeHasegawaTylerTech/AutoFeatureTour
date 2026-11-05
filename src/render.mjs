@@ -20,23 +20,32 @@ export async function duration(file) {
  */
 export function trimPlan(scene, { mode = 'cut', over = 1.5, speed = 4, leadIn = 0.3 } = {}) {
   const none = { mode, windows: [], saved: 0, map: t => t };
-  if (mode === 'off' || !scene.waits?.length) return none;
-  const merged = [];
-  for (const w of [...scene.waits].sort((a, b) => a.start - b.start)) {
-    const last = merged[merged.length - 1];
-    if (last && w.start <= last.end) last.end = Math.max(last.end, w.end);
-    else merged.push({ start: w.start, end: w.end });
-  }
-  const windows = merged.filter(w => w.end - w.start > over)
-    .map(w => ({ start: Math.max(scene.start, w.start + leadIn), end: Math.min(scene.end, w.end) })).filter(w => w.end - w.start > 0.05);
+  if (!scene.waits?.length) return none;
+  const merge = list => {
+    const merged = [];
+    for (const w of [...list].sort((a, b) => a.start - b.start)) {
+      const last = merged[merged.length - 1];
+      if (last && w.start <= last.end) last.end = Math.max(last.end, w.end);
+      else merged.push({ start: w.start, end: w.end });
+    }
+    return merged;
+  };
+  const clip = w => ({ ...w, start: Math.max(scene.start, w.start), end: Math.min(scene.end, w.end) });
+  // Off-camera steps ("camera": false) are always cut, whole, whatever the mode: they are not part of the video.
+  const forced = merge(scene.waits.filter(w => w.reason === 'offCamera')).map(w => clip({ ...w, drop: true })).filter(w => w.end - w.start > 0.05);
+  const outside = w => !forced.some(f => w.start < f.end && w.end > f.start);
+  const waits = mode === 'off' ? [] : merge(scene.waits.filter(w => w.reason !== 'offCamera')).filter(w => w.end - w.start > over)
+    .map(w => clip({ start: w.start + leadIn, end: w.end })).filter(w => w.end - w.start > 0.05 && outside(w));
+  const windows = [...forced, ...waits].sort((a, b) => a.start - b.start);
   if (!windows.length) return none;
-  const keep = mode === 'speed' ? 1 / speed : 0; // the fraction of each window that stays
-  const saved = windows.reduce((s, w) => s + (w.end - w.start) * (1 - keep), 0);
+  // The fraction of each window that stays.
+  const keep = w => (w.drop || mode !== 'speed' ? 0 : 1 / speed);
+  const saved = windows.reduce((s, w) => s + (w.end - w.start) * (1 - keep(w)), 0);
   const map = t => {
     let shift = 0;
     for (const w of windows) {
-      if (t >= w.end) shift += (w.end - w.start) * (1 - keep);
-      else if (t > w.start) shift += (t - w.start) * (1 - keep);
+      if (t >= w.end) shift += (w.end - w.start) * (1 - keep(w));
+      else if (t > w.start) shift += (t - w.start) * (1 - keep(w));
     }
     return t - shift;
   };
@@ -62,7 +71,7 @@ export async function cutClips(recording, timings, clipsDir) {
     let at = t.start;
     for (const w of windows) {
       if (w.start > at) pieces.push({ a: at - t.start, b: w.start - t.start, f: 1 });
-      if (t.trim.mode === 'speed') pieces.push({ a: w.start - t.start, b: w.end - t.start, f: t.trim.speed });
+      if (t.trim.mode === 'speed' && !w.drop) pieces.push({ a: w.start - t.start, b: w.end - t.start, f: t.trim.speed });
       at = w.end;
     }
     if (t.end > at) pieces.push({ a: at - t.start, b: t.end - t.start, f: 1 });

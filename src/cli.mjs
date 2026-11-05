@@ -17,6 +17,10 @@
 //   aft platform list | init <name> [--base-url <url>] [--no-login] | discover <name> | check <name>   onboard an app (AGENTS.md, Platforms)
 //   aft schema   [tour|platform|environments|login|fragment|fixture]   print a definition file's JSON Schema (no type: the list)
 //   aft validate <platform.json|environments.json|login.json|fragment|fixture|tour> --schema-only   check a file against its schema
+//   aft cleanup  [<run folder>] [--platform p] [--target env] [--tag <prefix>] [--older-than 2d] [--all] [--dry-run]
+//                                                    finish the undo of runs that left data behind (crash, Ctrl+C, failed teardown);
+//                                                    no run, --all, --platform or --tag: only lists them
+//   aft reset    --platform <name> [--target <env>]  the environment's "reset" hooks (never a shared one); --reset on run/validate
 //   aft doctor   [--platform <name>]                  check this machine (+ platforms' requirements.mjs); exit 1 if missing
 //   aft session  start|status|stop [--platform <name>] [--target <env>] [--role <r>] [--session <name>] [--headed]
 //                                                    a warm, signed-in browser for the commands below (stop: only what it started)
@@ -67,7 +71,9 @@ import { plan, readStory } from './plan.mjs';
 import { Tour } from './recorder.mjs';
 import { concat, cutClips, duration, muxScene, requireFfmpeg, trimPlan, writeCaptions } from './render.mjs';
 import { parseScript, spokenText } from './script.mjs';
-import { StepError, StopRun } from './steps.mjs';
+import { runSteps, StepError, StopRun } from './steps.mjs';
+import { Ledger, openLedgers, parseAge } from './ledger.mjs';
+import { finishUndo, resetEnvironment } from './fixtures.mjs';
 import { CLASSES, classify, exitCode, Failure, summaryLine } from './failures.mjs';
 import { criteriaOf, finalize, progress } from './triage.mjs';
 import { review as reviewOf } from './review.mjs';
@@ -78,7 +84,7 @@ import { log, newRunDir, num, parseArgs, run, sleep } from './util.mjs';
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 class UsageError extends Error {}
@@ -129,7 +135,8 @@ async function withRun(name, args, command, fn) {
   lastRunDir = r.dir;
   try {
     const result = (await fn(r.dir)) ?? {};
-    endRun(r, 'done', result);
+    // A dry run whose steps can't all be resolved is a failed run, even though the command itself finished.
+    endRun(r, result.blocking ? 'failed' : 'done', result.blocking ? { ...result, class: 'script', exitCode: CLASSES.script.exit } : result);
     return { runDir: r.dir, ...result };
   } catch (e) {
     // Failures outside a recording (narration, ffmpeg, the disk, discovery, planning) still get a report and bundle.
@@ -154,13 +161,15 @@ async function onSignal(signal) {
   const work = (async () => {
     if (active) {
       await active.tour.saveTrace('trace-failed.zip').catch(() => {});
+      // Undo what the run set up (browser steps while the browser is still there), within a time limit.
+      await active.undo?.({ deadline: Date.now() + 30000 }).catch(e => console.error('cleanup failed: ' + e.message));
       const report = await active.finalize(e, { complete: false }).catch(() => null);
       if (report) printFailure(report, active.outDir);
       await active.tour.close().catch(() => {});
     } else if (currentRun) await finalize({ outDir: currentRun.dir, error: e, complete: false }).catch(() => {});
     if (currentRun) endRun(currentRun, 'interrupted', { class: 'interrupted', exitCode: 130 });
   })();
-  await Promise.race([work, sleep(15000)]);
+  await Promise.race([work, sleep(45000)]);
   process.exit(130);
 }
 process.on('SIGINT', () => onSignal('SIGINT'));
@@ -194,13 +203,13 @@ const runName = (def, args) => args.name ?? (def.story?.id && !def.name.startsWi
 
 function scenesOf(def, tourDir) {
   return def.scenes
-    ? def.scenes.map((s, i) => ({ number: i + 1, id: `scene-${String(i + 1).padStart(2, '0')}`, title: s.title, narration: s.narration, cues: [] }))
+    ? def.scenes.map((s, i) => ({ number: i + 1, id: `scene-${String(i + 1).padStart(2, '0')}`, title: s.title, narration: s.narration ?? '', cues: [], ...(s.offCamera ? { offCamera: true } : {}) }))
     : parseScript(path.resolve(tourDir, def.script));
 }
 
 function newTour(def, outDir, scenes, args, extra = {}) {
   return new Tour({ outDir, viewport: def.viewport, mask: def.mask, headless: !args.headed,
-    narration: scenes.map(s => ({ id: s.id, seconds: s.seconds ?? estimateSeconds(s.narration) })), ...extra });
+    narration: scenes.filter(s => !s.offCamera).map(s => ({ id: s.id, seconds: s.seconds ?? estimateSeconds(s.narration) })), ...extra });
 }
 
 /** The run in progress, so a signal handler can still finalize its report and bundle. */
@@ -216,8 +225,9 @@ async function recordWith(def, tourDir, outDir, scenes, args, { dryRun = false }
   const ctx = { tour, scenes, outDir, options, toolRoot, targetDir: tourDir, platformDir: def.platformDir ?? tourDir, log, run, dryRun, report: [], range, secrets };
   ctx.progress = () => { if (!dryRun) progress(outDir, def, ctx.report, secrets); };
   const started = Date.now();
-  const done = async (error, extra = {}) => (dryRun ? null : finalize({ outDir, def, steps: ctx.report, tour, error, ms: Date.now() - started, zip: !!args.zip, secrets, ...extra }));
-  active = { outDir, tour, finalize: (error, extra) => done(error, extra) };
+  const done = async (error, extra = {}) => (dryRun ? null : finalize({ outDir, def, steps: ctx.report, tour, error, ms: Date.now() - started, zip: !!args.zip, secrets,
+    fixtures: ctx.fixtures ?? ctx.ledger?.summary() ?? [], artifacts: ctx.artifacts ?? [], ...extra, warnings: [...(def.warnings ?? []), ...(extra.warnings ?? [])] }));
+  active = { outDir, tour, finalize: (error, extra) => done(error, extra), undo: o => ctx.undo?.(o) };
   try {
     await def.record(ctx);
     await done(null);
@@ -248,6 +258,8 @@ async function recordWith(def, tourDir, outDir, scenes, args, { dryRun = false }
     // Known issues that fired and mocks that answered, for the dry run's review (a run's report has them already).
     ctx.report.firings = tour.workarounds?.firings ?? [];
     ctx.report.mocks = tour.mocks ?? [];
+    ctx.report.fixtures = ctx.fixtures ?? ctx.ledger?.summary() ?? [];
+    ctx.report.artifacts = ctx.artifacts ?? [];
     await tour.close();
     // A failed run leaves Playwright's partial video under a random name; give it a predictable one.
     for (const f of fs.readdirSync(outDir).filter(f => /^page@.*\.webm$/.test(f))) {
@@ -306,9 +318,12 @@ async function validate(def, tourDir, outDir, args) {
     lines.push(`| ${r.ok ? '✔' : r.optional ? '⚠' : '✘'} | ${r.scene} | ${r.step} | ${r.action} | \`${target.replace(/\|/g, '\\|')}\` | ${result.replace(/\|/g, '\\|')} |`);
   }
   // The same review as a run's (src/review.mjs): evidence per criterion, findings, the story's decisions.
-  const review = def.raw ? reviewOf({ raw: def.raw, steps: report, criteria: criteriaOf(def, report), firings: ran.firings ?? [], mocks: ran.mocks ?? [], passed: !blocking.length, complete: !ran.partial }) : null;
+  const review = def.raw ? reviewOf({ raw: def.raw, steps: report, criteria: criteriaOf(def, report), firings: ran.firings ?? [], mocks: ran.mocks ?? [], passed: !blocking.length, complete: !ran.partial,
+    fixtures: ran.fixtures ?? [], artifacts: ran.artifacts ?? [] }) : null;
+  if (def.warnings?.length) lines.splice(3, 0, '', ...def.warnings.map(w => '⚠ ' + w));
   if (review) lines.splice(3, 0, '', `**${review.label}**${review.open ? ` · ${review.open} finding(s) to decide` : ''}`, ...review.evidence.map(e => `- AC${e.id}: ${e.strength} (${e.reasons.join('; ')})`));
-  fs.writeFileSync(path.join(outDir, 'validation.json'), JSON.stringify({ steps: report.length, failed: failed.length, blocking: blocking.length, report, review }, null, 2));
+  fs.writeFileSync(path.join(outDir, 'validation.json'), JSON.stringify({ steps: report.length, failed: failed.length, blocking: blocking.length, report, review,
+    fixtures: ran.fixtures ?? [], artifacts: ran.artifacts ?? [], warnings: def.warnings ?? [] }, null, 2));
   fs.writeFileSync(path.join(outDir, 'validation.md'), lines.join('\n') + '\n');
   console.log(lines.slice(2).join('\n'));
   return { steps: report.length, failed: failed.length, blocking: blocking.length, report: path.join(outDir, 'validation.md') };
@@ -321,16 +336,18 @@ async function render(def, tourDir, outDir, args) {
   const tail = args.tail !== undefined ? Number(args.tail) : 0.75;
   const provider = args.speech ?? (args.voice === 'silent' ? 'silent' : defaultProvider());
   const scenes = scenesOf(def, tourDir);
-  fs.writeFileSync(path.join(outDir, 'script.md'), scenes.map(s => `## ${s.number}. ${s.title}\n\n${s.narration}\n`).join('\n'));
+  fs.writeFileSync(path.join(outDir, 'script.md'), scenes.map(s => `## ${s.number}. ${s.title}\n\n${s.offCamera ? '(off camera: runs and is checked, not filmed)' : s.narration}\n`).join('\n'));
 
-  for (const s of scenes) {
+  // Off-camera scenes run (and are checked) but have no narration, clip or caption.
+  const filmed = scenes.filter(s => !s.offCamera);
+  for (const s of filmed) {
     s.wav = path.join(outDir, `${s.id}.wav`);
     await speak({ text: spokenText(s.narration, def.pronounce), wav: s.wav, voice: args.voice === 'silent' ? undefined : args.voice ?? def.voice,
       rate: Number(args.rate ?? 0), provider });
     s.narrationSeconds = await duration(s.wav);
     s.seconds = s.narrationSeconds + tail;
   }
-  log(`narration (${provider}): ${scenes.length} scenes, ${num(scenes.reduce((a, s) => a + s.seconds, 0))} s`);
+  log(`narration (${provider}): ${filmed.length} scenes, ${num(filmed.reduce((a, s) => a + s.seconds, 0))} s`);
 
   const clipsDir = path.resolve(args.clips ?? (args.record ? path.join(outDir, 'clips') : path.join(tourDir, 'clips', def.name)));
   if (args.record) {
@@ -353,7 +370,7 @@ async function render(def, tourDir, outDir, args) {
       log(`trimmed waits (${trim.mode}): ${trimmed.map(x => `${x.scene} ${x.seconds}s`).join(', ')}`);
       noteTrim(outDir, trim, trimmed);
     }
-    for (const s of scenes) {
+    for (const s of filmed) {
       const t = timings.find(x => x.id === s.id);
       s.mocked = !!t?.mocked;
       s.notes = (t?.notes ?? []).map(n => ({ text: n.text, at: t.trim.map(n.at) - t.start }));
@@ -361,14 +378,14 @@ async function render(def, tourDir, outDir, args) {
   }
 
   const segments = [];
-  for (const s of scenes) {
+  for (const s of filmed) {
     const seg = await muxScene({ scene: s, clip: path.join(clipsDir, `${s.id}.mp4`), outDir });
     segments.push(seg.file);
     s.length = seg.length;
   }
   const file = await concat(segments, outDir);
   if (!args.noCaptions)
-    writeCaptions(scenes.map(s => ({ text: spokenText(s.narration), narrationSeconds: s.narrationSeconds, length: s.length, mocked: s.mocked, notes: s.notes })), path.join(outDir, 'tour.vtt'));
+    writeCaptions(filmed.map(s => ({ text: spokenText(s.narration), narrationSeconds: s.narrationSeconds, length: s.length, mocked: s.mocked, notes: s.notes })), path.join(outDir, 'tour.vtt'));
   const seconds = await duration(file);
   console.log(`Done: ${file}  (${num(seconds)} s)`);
   return { video: file, seconds: +num(seconds) };
@@ -518,6 +535,7 @@ const commands = {
       return { file, type, problems: [] };
     }
     const { def, dir } = await loadTour(file, args);
+    if (args.reset) await commands.reset({ ...args, _: ['reset'], platform: def.platform, tour: file, target: envOf(args) ?? def.env, name: undefined });
     const r = await withRun(runName(def, args), args, 'validate', out => validate(def, dir, out, args));
     if (r.blocking) { lastData = r; throw new StepError(`${r.blocking} step(s) can't be resolved; see validation.md in the run folder`); }
     return r;
@@ -527,6 +545,7 @@ const commands = {
 
   async render(args) {
     const { def, dir } = await loadTour(args.script ?? args._[1], args);
+    if (args.reset) await commands.reset({ ...args, _: ['reset'], platform: def.platform, tour: args.script ?? args._[1], target: envOf(args) ?? def.env, name: undefined });
     return withRun(runName(def, args), args, args.record ? 'run' : 'render', out => render(def, dir, out, args));
   },
 
@@ -608,6 +627,50 @@ const commands = {
     const run = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8'));
     return withRun(run.name ?? path.basename(path.dirname(path.resolve(dir))), args, 'suggest-fix',
       out => suggestFix({ runDir: path.resolve(dir), finding: String(args.finding), outDir: out, model: args.model }));
+  },
+
+  /** Finishes the undo runs left pending (crash, Ctrl+C, a failed teardown). Without a run, --all, --platform or --tag: lists them. */
+  async cleanup(args) {
+    const outRoot = path.resolve(process.env.AFT_OUT_DIR ?? path.join(toolRoot, 'out'));
+    const olderThanMs = args.olderThan !== undefined ? parseAge(args.olderThan) : null;
+    if (args.olderThan !== undefined && !olderThanMs) throw new UsageError(`--older-than takes an age like 2d, 12h or 30m (got "${args.olderThan}")`);
+    let found;
+    if (args._[1]) {
+      const dir = path.resolve(args._[1]);
+      const file = path.join(dir, 'ledger.json');
+      if (!fs.existsSync(file)) throw new UsageError(`${dir} has no ledger.json (only runs of this version record what they set up)`);
+      const ledger = Ledger.read(file);
+      found = ledger.pending({ retryFailed: true }).length ? [{ dir, file, ledger }] : [];
+    } else found = openLedgers(outRoot, { platform: args.platform, env: envOf(args), tag: args.tag, olderThanMs });
+    const pending = found.map(f => ({ run: f.dir, tour: f.ledger.doc.tour, platform: f.ledger.doc.platform ?? null, env: f.ledger.doc.env ?? null, tag: f.ledger.doc.tag ?? null,
+      startedAt: f.ledger.doc.startedAt, items: f.ledger.pending({ retryFailed: true }).map(i => ({ name: i.name, kind: i.kind, status: i.status, undo: i.undo.steps ? 'browser steps' : 'hooks' })) }));
+    for (const p of pending) console.log(`${p.run}\n${p.items.map(i => `  ${i.status.padEnd(11)} ${i.name} (${i.undo})`).join('\n')}`);
+    if (!pending.length) { console.log('nothing to clean up'); return { pending: [], cleaned: [] }; }
+    if (args.dryRun || (!args._[1] && !args.all && !args.platform && !args.tag)) {
+      console.log(`\n${pending.length} run(s) with undo pending. Run them: aft cleanup --all (or a run folder, --platform <name>, --tag <prefix>)`);
+      return { pending, cleaned: [] };
+    }
+    // Browser steps need a signed-in browser: a one-shot session for that run's platform, environment and role.
+    const openBrowser = async d => {
+      const app = appSettingsFor(toolRoot, d.platform ? { platform: d.platform, target: d.env ?? undefined, role: d.role ?? undefined } : { tour: d.tourFile });
+      const session = new Session({ app, outDir: newRunDir(path.join(outRoot, 'sessions', 'cleanup')), log, options: {} });
+      await session.start();
+      return { undoSteps: steps => runSteps(session.tour, steps, { ...session.stepOpts(null), scene: 'cleanup' }), close: () => session.stop() };
+    };
+    const cleaned = await finishUndo(found, { log, openBrowser });
+    const failed = cleaned.reduce((n, r) => n + r.failed + r.left, 0);
+    console.log(`\ncleaned ${cleaned.length} run(s): ${cleaned.reduce((n, r) => n + r.undone, 0)} undone, ${failed} still pending`);
+    if (failed) throw Object.assign(new UsageError(`${failed} undo step(s) failed or couldn't run; see each run's ledger.json`), { data: { pending, cleaned } });
+    return { pending, cleaned };
+  },
+
+  /** An environment's "reset" hooks (local only; never a shared environment). */
+  async reset(args) {
+    const app = appSettings(args);
+    if (!app?.platform) throw new UsageError('Usage: aft reset --platform <name> [--target <env>]');
+    const { cfg, vars } = await materialize(app.cfg);
+    return withRun(`${app.platform.name}-reset`, args, 'reset', out => resetEnvironment(cfg, { env: app.env, dir: app.platform.dir, outDir: out, baseUrl: vars.baseUrl, log })
+      .catch(e => { throw e.failure === 'error' ? new UsageError(e.message) : e; }));
   },
 
   async export(args) {

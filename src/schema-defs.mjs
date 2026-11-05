@@ -63,8 +63,30 @@ const common = {
   },
 };
 
+// A hook can look test data up (a record id from a query) instead of the tour hard-coding it: "output" makes its
+// stdout (or the HTTP response) data for the run's steps, as {data.<key>}.
+const NAME = { type: 'string', pattern: '^[A-Za-z0-9_-]+$' };
+const hookOutput = {
+  output: { enum: ['json', 'text'], description: 'Use what it prints (or the HTTP response) as data: "json" (an object merged into data) or "text" (trimmed, as data.<as>). Setup hooks only.' },
+  as: { ...NAME, description: 'With "output": "text": the data key ({data.<as>}).' },
+  pin: { ...NAME, description: 'With "output": pin what it created as an artifact of this name ({artifact.<pin>.<field>}; fields: the JSON object, or { <as>: text }), shown as "created by setup".' },
+  role: str('With "pin": what kind of thing it is (account, case…); {artifact[<role>].<field>} is the latest of that role.'),
+  secret: { type: 'array', items: { type: 'string' }, description: 'With "pin": fields that are secrets (redacted everywhere).' },
+};
+const hook = {
+  description: 'A setup/teardown hook, run off camera with BASE_URL, RUN_DIR and RUN_TAG set.',
+  anyOf: [
+    obj('A shell command.', { run: str('Command line.'), cwd: str('Working folder, relative to the file.'), optional: bool('Failure is only a warning.'), ...hookOutput }, { required: ['run'] }),
+    obj('A Node script.', { node: str('Script path, relative to the file.'), args: { type: 'array', items: { type: 'string' } }, optional: bool('Failure is only a warning.'), ...hookOutput }, { required: ['node'] }),
+    obj('An HTTP request.', { http: obj('The request.', { method: str('Default POST.'), url: str('Relative to baseUrl.'), headers: { type: 'object', additionalProperties: { type: 'string' } }, body: { description: 'JSON value or string.' } }, { required: ['url'] }), optional: bool('A non-2xx answer is only a warning.'), ...hookOutput }, { required: ['http'] }),
+  ],
+};
+common.$defs.hook = hook;
+const hooksOrOne = { description: 'A hook, or a list of hooks run in order.', anyOf: [ref('hook'), { type: 'array', items: ref('hook'), minItems: 1 }] };
+
 /** Keys any step may carry. */
 const STEP_COMMON = {
+  camera: bool('false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration).'),
   optional: bool('If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run.'),
   timeout: num('Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).', { minimum: 0 }),
   retries: num('Rule-based retries when an action times out or its target is not there yet (default: the tour\'s "retries", 1). Checks are never retried.', { minimum: 0 }),
@@ -147,6 +169,17 @@ export const ACTIONS = {
       attribute: str('Read this attribute (e.g. "href") instead of the text or value.'),
       pattern: str('A regex (with or without /…/flags): keep its first group, or the whole match. No match is a SCRIPT failure.'),
     }, ['as']),
+  pin: action('pin', 'Pin what the run just created (an account, a case) as a named artifact: a group of values read from the page, with a role and an undo. Later steps, scenes, teardown and cleanup use "{artifact.<pin>.<field>}" (or "{artifact[<role>].<field>}", the latest of that role). Its "cleanup" joins the run\'s ledger as soon as it is pinned, so `aft cleanup` can remove it after a crash.',
+    { ...NAME, description: 'The artifact\'s name.' }, {
+      role: str('What kind of thing it is (account, case, order…).'),
+      fields: { type: 'object', minProperties: 1, description: 'Field name → where its value comes from: a locator (an element\'s value or text, like capture), { "capture": <locator | { "url": true }>, "attribute", "pattern" }, or { "value": "<text, may use {vars.x}>" }.',
+        additionalProperties: { anyOf: [ref('locator'),
+          obj('Read like a capture step.', { capture: { anyOf: [ref('locator'), obj('The page URL.', { url: { const: true } }, { required: ['url'] })] }, attribute: str('Read this attribute.'), pattern: str('Regex: keep its first group, or the whole match.') }, { required: ['capture'] }),
+          obj('A value as is.', { value: { type: 'string' } }, { required: ['value'] })] } },
+      secret: { type: 'array', items: { type: 'string' }, description: 'Fields that are secrets: shown as ●●● and redacted from every report, bundle and caption.' },
+      cleanup: { description: 'How to remove it: browser steps (run off camera after the last scene, or by aft cleanup in a signed-in session), or hooks. "{artifact.<pin>.<field>}" works here.', anyOf: [ref('steps'), hooksOrOne] },
+      readOnly: bool('It isn\'t created by this run (it was looked up): no cleanup expected, even on a shared environment.'),
+    }, ['fields']),
   wait: action('wait', 'Pause for a number of seconds (prefer "at" or waitFor).', num('Seconds.', { minimum: 0 })),
   at: action('at', 'Wait until this fraction of the scene\'s narration has played (0–1); places the next actions in time.', num('Fraction of the narration, 0 to 1.', { minimum: 0, maximum: 1 })),
   dialog: action('dialog', 'How to answer the next alert/confirm/prompt (default: accept). Put it before the step that opens the dialog.', { enum: ['accept', 'dismiss'], description: 'accept or dismiss.' }, {
@@ -203,20 +236,6 @@ const mask = obj('Blurred in the page before anything is recorded (video, screen
 });
 const viewport = obj('Browser size in CSS pixels (default 1440×810).', { width: { type: 'integer' }, height: { type: 'integer' } }, { required: ['width', 'height'] });
 const pronounce = { type: 'object', additionalProperties: { type: 'string' }, description: 'Narration substitutions: written form → how to say it ("RMS": "R M S").' };
-// A hook can look test data up (a record id from a query) instead of the tour hard-coding it: "output" makes its
-// stdout (or the HTTP response) data for the run's steps, as {data.<key>}.
-const hookOutput = {
-  output: { enum: ['json', 'text'], description: 'Use what it prints (or the HTTP response) as data: "json" (an object merged into data) or "text" (trimmed, as data.<as>). Setup hooks only.' },
-  as: { type: 'string', pattern: '^[A-Za-z0-9_-]+$', description: 'With "output": "text": the data key ({data.<as>}).' },
-};
-const hook = {
-  description: 'A setup/teardown hook, run off camera with BASE_URL and RUN_DIR set.',
-  anyOf: [
-    obj('A shell command.', { run: str('Command line.'), cwd: str('Working folder, relative to the file.'), optional: bool('Failure is only a warning.'), ...hookOutput }, { required: ['run'] }),
-    obj('A Node script.', { node: str('Script path, relative to the file.'), args: { type: 'array', items: { type: 'string' } }, optional: bool('Failure is only a warning.'), ...hookOutput }, { required: ['node'] }),
-    obj('An HTTP request.', { http: obj('The request.', { method: str('Default POST.'), url: str('Relative to baseUrl.'), headers: { type: 'object', additionalProperties: { type: 'string' } }, body: { description: 'JSON value or string.' } }, { required: ['url'] }), optional: bool('A non-2xx answer is only a warning.'), ...hookOutput }, { required: ['http'] }),
-  ],
-};
 const video = obj('Post-processing of the recording.', {
   trimWaits: { enum: ['cut', 'speed', 'off'], description: 'Long waits (page loads, busy indicators, waitFor, waitForResponse, dismissed known issues): cut them (default), speed them up, or keep them. The narration is never cut. --no-trim keeps them for one run.' },
   trimWaitsOver: num('Only waits longer than this many seconds (default 1.5).', { minimum: 0 }),
@@ -241,6 +260,12 @@ const workaround = obj('A known app or environment issue: what it looks like, wh
   issue: obj('In a story: this works around a real app issue, for now. A passing run is then "passed with known issues", never plain green; a run where it no longer fires says the issue may be fixed.', {
     note: str('What the issue is.'), ticket: str('Where it is tracked (e.g. RMS-1234).'), since: str('When it was decided (ISO date).') }),
 }, { required: ['name'] });
+const fixtureItem = obj('One piece of test data: how to see it is there, set it up and undo it.', {
+  name: str('Shown in reports and the ledger.'), comment: str('A note for people.'),
+  check: { ...ref('hook'), description: 'A hook that succeeds when the data is already there: setup is skipped ("already in place") and nothing is undone. Run again after setup: still failing is a SCRIPT failure (the setup didn\'t do its job).' },
+  setup: { ...hooksOrOne, description: 'Creates it.' }, teardown: { ...hooksOrOne, description: 'Removes it ({artifact.x.y} and {run.tag} allowed). Runs only if setup ran.' },
+  readOnly: bool('Nothing is created (a lookup): no teardown expected, even on a shared environment.'),
+}, { required: ['name'] });
 const workarounds = { type: 'array', items: workaround, description: 'Known issues (see the workaround definition). Platform rules apply everywhere; environments refine them by name.' };
 const hooks = obj('Test data, off camera: setup before the browser starts, teardown after it closes (teardown runs whenever setup ran).', { setup: { type: 'array', items: hook }, teardown: { type: 'array', items: hook } });
 const launch1 = obj('A service the run starts when nothing answers at healthUrl (already up: used as is, never stopped).', {
@@ -256,16 +281,19 @@ const environment = obj('One deployment of the app.', {
   launch: { description: 'Start the app if it isn\'t running: one service or a list.', anyOf: [launch1, { type: 'array', items: launch1 }] },
   attach: { description: 'Attach-only: these must already be running.', type: 'array', items: attach1 },
   timeouts, ready, ignoreHTTPSErrors: bool('Accept self-signed certificates.'),
+  shared: bool('Other people and runs use this environment (QA): data a run creates there must carry {run.tag} (or be marked "readOnly"); validate warns when a tour creates untagged data. A shared environment is never reset.'),
+  reset: { description: 'Hooks that put the environment back to a known state (restore a database snapshot): run by `aft reset` and `--reset` before a batch of runs. Refused on a shared environment.', type: 'array', items: ref('hook'), minItems: 1 },
   workarounds: { ...workarounds, description: 'Known issues in this environment, merged with the platform\'s by name: a new name adds a rule here only; the same name refines it (partial entries are merged over the platform rule, "off": true disables it here).' },
 }, { required: ['baseUrl'] });
 
 const scene = obj('One scene: narration over the steps that show it.', {
-  title: str('Shown on title cards and in reports.'), narration: str('What the narrator says; the scene lasts as long as it does.'),
+  title: str('Shown on title cards and in reports.'), narration: str('What the narrator says; the scene lasts as long as it does. Required unless "camera": false.'),
+  camera: bool('false: off camera. The scene runs for real (unpaced, no narration needed), its checks still count and it is in the report and storyboard, but it is not in the video.'),
   url: str('Path opened off camera just before the scene starts.'), criteria: { type: 'array', items: { anyOf: [{ type: 'integer' }, { type: 'string' }] }, description: 'Acceptance criteria this scene demonstrates (1-based).' },
   steps: ref('steps'), comment: str('A note for people.'),
   unresolved: { type: 'array', items: { type: 'string' }, description: 'Story items the generator could not map to the app; recording refuses until resolved.' },
   todo: str('Work left for a person; recording refuses until removed.'),
-}, { required: ['title', 'narration'] });
+}, { required: ['title'] });
 
 const story = obj('The user story the tour verifies.', {
   id: str('Ticket id, e.g. RMS-6142 (used in the run folder name).'), title: str('Story title.'), description: str('Story text.'),
@@ -338,8 +366,12 @@ export const SCHEMAS = {
   fixture: file('fixture', 'AutoFeatureTour fixture (platforms/<name>/fixtures/<fixture>.json)', 'Test data a tour needs: values, hooks to create/remove it, and browser steps run off camera before the first scene.', {
     type: 'object', additionalProperties: false,
     properties: { ...$schemaProp, description: str('What it sets up.'), data: { type: 'object', description: 'Values, as {data.<key>} in tours and steps.' },
-      setup: { type: 'array', items: hook, description: 'Before the browser starts (run from fixtures/).' }, teardown: { type: 'array', items: hook, description: 'After the browser closes.' },
-      steps: ref('steps') },
+      items: { type: 'array', items: fixtureItem, description: 'Paired setup/teardown items, run in order before the browser starts; undone in reverse after it closes, and only the ones that ran. Each is recorded in the run\'s ledger.json before it runs, so `aft cleanup` can finish the undo after a crash.' },
+      setup: { type: 'array', items: hook, description: 'Before the browser starts (run from fixtures/). Older form: prefer "items".' }, teardown: { type: 'array', items: hook, description: 'After the browser closes, if every setup hook ran. Older form: prefer "items".' },
+      checkSteps: { ...ref('steps'), description: 'Browser checks, off camera before "steps": if they all pass, the data is already in place and "steps" are skipped.' },
+      steps: { ...ref('steps'), description: 'Browser steps, off camera before the first scene.' },
+      cleanupSteps: { ...ref('steps'), description: 'Browser steps that undo "steps", off camera after the last scene, before the browser closes (also when a scene failed). Skipped when "checkSteps" found the data already in place.' },
+      readOnly: bool('This fixture only reads existing data (nothing to clean up), even on a shared environment.') },
   }),
   mocks: file('mocks', 'AutoFeatureTour mock set (platforms/<name>/mocks/<set>.json)', 'Canned responses a tour can opt into with "mocks": ["<set>"] (and "allowMocks": true). Mocked runs are not end to end; reports and captions say so.', {
     type: 'object', additionalProperties: false, required: ['mocks'],

@@ -44,57 +44,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { authFile, saveLogin } from './auth.mjs';
 import { assertValid } from './schema.mjs';
-import { checkTour, expandSceneSteps, expandSteps, loadFixtures, loadMocks, loadPlatform, PlatformError, platformAuthFile, platformConfig } from './platform.mjs';
+import { checkTour, expandSceneSteps, expandSteps, fixtureItems, loadFixtures, loadMocks, loadPlatform, PlatformError, platformAuthFile, platformConfig } from './platform.mjs';
 import { Workarounds, workaroundProblems } from './workarounds.mjs';
 import { probe, startProcess, stopProcess, waitForHttp } from './recorder.mjs';
 import { Failure } from './failures.mjs';
-import { runSteps, settle } from './steps.mjs';
-import { freePort, run } from './util.mjs';
+import { fillArtifacts, runSteps, settle } from './steps.mjs';
+import { freePort } from './util.mjs';
+import { earlierOpen, finishUndo, Ledger, recordArtifact, runHooks, setupBrowser, setupItems, sharedWarnings, undoInBrowser, writeArtifacts } from './fixtures.mjs';
+import { runTag, undoAll } from './ledger.mjs';
 
-/**
- * Runs setup/teardown hooks: a shell command, an HTTP call, or a Node script. A hook with "output" looks data up (a
- * record id from a query): its stdout or response becomes data, "json" (an object, merged) or "text" (data.<as>).
- * Returns the data the hooks produced.
- */
-export async function runHooks(hooks = [], { dir: tourDir, outDir, baseUrl, log }) {
-  const env = { ...process.env, BASE_URL: baseUrl, RUN_DIR: outDir };
-  const data = {};
-  const take = (h, text) => {
-    if (!h.output) return;
-    if (h.output === 'json') {
-      let v;
-      try { v = JSON.parse(text); } catch { throw new Error(`hook ${h.run ?? h.node ?? h.http?.url}: "output": "json", but it printed no JSON: ${String(text).trim().slice(0, 200)}`); }
-      if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`hook ${h.run ?? h.node ?? h.http?.url}: "output": "json" must print a JSON object`);
-      Object.assign(data, v);
-    } else {
-      if (!h.as) throw new Error(`hook ${h.run ?? h.node ?? h.http?.url}: "output": "text" needs "as" (the data key)`);
-      const v = String(text).trim();
-      if (!v) throw new Error(`hook ${h.run ?? h.node ?? h.http?.url}: printed nothing for data.${h.as}`);
-      data[h.as] = v;
-    }
-    log(`hook data: ${Object.keys(data).join(', ')}`);
-  };
-  for (const h of hooks) {
-    const dir = h.dir ?? tourDir; // fixture hooks run from the fixture's folder
-    try {
-      if (h.run) { log(`hook: ${h.run}`); take(h, await run(h.run, [], { cwd: path.resolve(dir, h.cwd ?? '.'), env, shell: true, capture: !!h.output })); }
-      else if (h.node) { log(`hook: node ${h.node}`); take(h, await run(process.execPath, [path.resolve(dir, h.node), ...(h.args ?? [])], { cwd: dir, env, capture: !!h.output })); }
-      else if (h.http) {
-        const { method = 'POST', url, headers = {}, body } = h.http;
-        log(`hook: ${method} ${url}`);
-        const res = await fetch(new URL(url, baseUrl + '/'), { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers },
-          body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined });
-        const text = await res.text();
-        if (!res.ok) throw new Error(`hook ${method} ${url}: ${res.status} ${text.slice(0, 300)}`);
-        take(h, text);
-      } else throw new Error(`Unknown hook ${JSON.stringify(h)} (run, node or http)`);
-    } catch (e) {
-      if (!h.optional) throw e;
-      log(`hook failed (optional): ${e.message.split('\n')[0]}`);
-    }
-  }
-  return data;
-}
+export { runHooks };
 
 /** A problem with the tour file itself; the CLI prints it without a stack trace (exit 1). */
 export class ConfigError extends Error {}
@@ -103,7 +62,8 @@ export class ConfigError extends Error {}
 function fill(value, vars) {
   if (typeof value === 'string')
     return value.replace(/\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, k) => process.env[k] ?? '')
-      .replace(/\{([A-Za-z]+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+      .replace(/\{run\.tag\}/g, m => vars.runTag ?? m)
+      .replace(/\{([A-Za-z]+)\}/g, (m, k) => (k in vars && k !== 'runTag' ? String(vars[k]) : m));
   if (Array.isArray(value)) return value.map(v => fill(v, vars));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v, vars)]));
   return value;
@@ -115,7 +75,7 @@ export function validate(cfg, file) {
   if (!Array.isArray(cfg.scenes) || !cfg.scenes.length) problems.push('scenes must be a non-empty array');
   (cfg.scenes ?? []).forEach((s, i) => {
     if (!s.title) problems.push(`scenes[${i}].title is required`);
-    if (!s.narration) problems.push(`scenes[${i}].narration is required`);
+    if (!s.narration && s.camera !== false) problems.push(`scenes[${i}].narration is required (or "camera": false: an off-camera scene)`);
     if (s.steps && !Array.isArray(s.steps)) problems.push(`scenes[${i}].steps must be an array`);
   });
   if (problems.length) throw new ConfigError(`${file}:\n  ${problems.join('\n  ')}`);
@@ -164,13 +124,20 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
     // Data, most specific last: the platform's, the environment's, then the tour's fixtures.
     const data = { ...base.data, ...fx.data };
     const dirs = [path.join(p.dir, 'fragments'), dir];
+    // Each fixture's browser steps: checks (already in place?), the steps, and the cleanup that undoes them.
+    const browser = fx.browser.map(b => ({ ...b, steps: expandSteps(b.steps, { dirs, data }), checkSteps: expandSteps(b.checkSteps, { dirs, data }), cleanupSteps: expandSteps(b.cleanupSteps, { dirs, data }) }));
+    const mocks = loadMocks(p, raw.mocks);
     const cfg = {
       ...base, ...raw,
       timeouts: { ...base.timeouts, ...raw.timeouts },
       pronounce: { ...base.pronounce, ...raw.pronounce },
       hooks: { setup: [...fx.setup, ...(raw.hooks?.setup ?? [])], teardown: [...(raw.hooks?.teardown ?? []), ...fx.teardown] },
+      // Paired setup/teardown items: the fixtures', then the tour's own hooks.
+      fixtureItems: [...fx.items, ...fixtureItems({ setup: raw.hooks?.setup, teardown: raw.hooks?.teardown }, 'tour')],
       // Mock sets first (they must be in place before anything loads), then the fixtures' own steps.
-      fixtureSteps: [...loadMocks(p, raw.mocks), ...expandSteps(fx.steps, { dirs, data })],
+      fixtureMocks: mocks,
+      fixtureBrowser: browser,
+      fixtureSteps: [...mocks, ...browser.flatMap(b => [...b.checkSteps, ...b.steps, ...b.cleanupSteps])],
       data,
       scenes: (raw.scenes ?? []).map(s => ({ ...s, steps: expandSceneSteps(s.steps, { dirs, data }) })),
       ...(base.login ? { login: { ...base.login, steps: expandSteps(base.login.steps, { dirs, data }) } } : {}),
@@ -244,44 +211,92 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
     viewport: cfg0.viewport,
     mask: cfg0.mask,
     video: cfg0.video,
-    scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration })),
+    scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration ?? '', offCamera: s.camera === false })),
+    /** Warnings about the tour as written (data left untagged on a shared environment). */
+    warnings: sharedWarnings(cfg0),
     async record(ctx) {
-      const { cfg, vars } = await materialize(cfg0);
+      const tag = runTag(ctx.outDir);
+      const { cfg, vars } = await materialize(cfg0, { tag });
       // Values marked secret (resolved from the environment) are scrubbed from every report and bundle file.
       ctx.secrets?.push(...secretsOf(cfg));
+      const log = ctx.log;
+      const t = ctx.tour;
+      t.artifacts = [];
+      t.secrets = ctx.secrets;
       let services = { procs: [] };
-      let setupDone = false;
-      const hookCtx = { dir, outDir: ctx.outDir, baseUrl: vars.baseUrl, log: ctx.log };
+      // Everything set up is written to ledger.json before it runs, so a crash leaves a record for `aft cleanup`.
+      const ledger = new Ledger(path.join(ctx.outDir, 'ledger.json'), { tour: raw.name, tourFile: path.resolve(file), tourDir: dir, platform: composed.platform?.name ?? null,
+        env: composed.env ?? null, role: cfg.login?.role ?? null, baseUrl: vars.baseUrl, tag, ...(ctx.dryRun ? { dryRun: true } : {}) });
+      ctx.ledger = ledger;
+      const onPin = a => {
+        a.scriptStep = t.stepScript ?? null;
+        t.artifacts = [...t.artifacts.filter(x => x.name !== a.name), a];
+        recordArtifact(ledger, a);
+        writeArtifacts(ctx.outDir, t.artifacts, ledger);
+      };
+      t.onPin = onPin;
+      const hookCtx = { dir, outDir: ctx.outDir, baseUrl: vars.baseUrl, log, tag, onPin: a => { t.secrets?.push(...(a.secret ?? []).map(k => a.fields[k]).filter(Boolean)); onPin(a); } };
+      const undoHooks = hooks => runHooks(fillArtifacts(hooks, t.artifacts), hookCtx);
+      let opts = null;
+      let browserUp = false;
+      // Ctrl+C: undo what is pending (with a time limit), browser steps too while the browser is up.
+      ctx.undo = async ({ deadline } = {}) => {
+        if (browserUp && opts) await undoInBrowser(t, ledger, { opts, log, deadline }).catch(e => log(`cleanup failed: ${e.message}`));
+        await undoAll(ledger, { undoHooks, log, deadline });
+        ctx.fixtures = ledger.summary();
+        ctx.artifacts = writeArtifacts(ctx.outDir, t.artifacts, ledger);
+      };
       try {
-        services = await startServices(cfg, vars, { outDir: ctx.outDir, log: ctx.log, dir });
-        const looked = await runHooks(cfg.hooks?.setup, hookCtx);
-        setupDone = true;
-        const login = makeLogin(cfg, cfg0, composed, { outDir: ctx.outDir, log: ctx.log, options: ctx.options, baseUrl: vars.baseUrl });
+        services = await startServices(cfg, vars, { outDir: ctx.outDir, log, dir });
+        // An earlier run of this tour that crashed or was interrupted: finish its undo first, so this run starts clean.
+        const earlier = ctx.options?.out ? [] : earlierOpen(ctx.outDir, ledger.doc);
+        if (earlier.length) { log(`${earlier.length} earlier run(s) of this tour left data behind: undoing it first`); await finishUndo(earlier, { log }); }
+        const items = cfg.fixtureItems ?? fixtureItems({ setup: cfg.hooks?.setup, teardown: cfg.hooks?.teardown }, 'tour');
+        const looked = await setupItems(items, { ledger, hookCtx, artifacts: () => t.artifacts, log });
+        const login = makeLogin(cfg, cfg0, composed, { outDir: ctx.outDir, log, options: ctx.options, baseUrl: vars.baseUrl });
         await login.beforeStart();
-        const t = ctx.tour;
         t.policy = cfg.appErrors ?? {};
         // Data for {data.x} left in steps until now: fixture data, plus what setup hooks looked up.
         t.data = { ...cfg.data, ...looked };
-        if (cfg.workarounds?.length) t.workarounds = new Workarounds(cfg.workarounds, { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, ready: cfg.ready, log: ctx.log });
+        if (cfg.workarounds?.length) t.workarounds = new Workarounds(cfg.workarounds, { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, ready: cfg.ready, log });
         const startOpts = { storageState: login.state ?? undefined, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, trace: cfg.trace !== false };
         await t.start(startOpts);
-        const opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report, ready: cfg.ready, errors: cfg.errors, retries: cfg.retries ?? 1,
+        browserUp = true;
+        opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report, ready: cfg.ready, errors: cfg.errors, retries: cfg.retries ?? 1,
           allowMocks: !!cfg.allowMocks, outDir: ctx.outDir,
           range: ctx.range,
           onError: ctx.dryRun ? 'collect' : ctx.options.onError ?? cfg.onError ?? 'fail' };
         // Check the session where the tour starts (off camera: before the first scene, so it's cut from the video).
         await login.ensure(t, startOpts, cfg.scenes[0]?.url);
-        // Fixture steps: data the tour needs, put in place through the browser, off camera.
-        if (cfg.fixtureSteps?.length) await runSteps(t, cfg.fixtureSteps, { ...opts, unpaced: true, scene: 'fixtures' });
-        for (const [i, s] of cfg.scenes.entries()) {
-          const id = ctx.scenes[i].id;
-          if (s.url) await runSteps(t, [{ goto: s.url }], { ...opts, unpaced: true, scene: `${id} (url)` });
-          await t.scene(id, () => runSteps(t, s.steps ?? [], { ...opts, scene: id, criteria: s.criteria ?? [] }));
-          ctx.progress?.();
+        try {
+          // Browser undo an earlier run left pending, in this browser.
+          if (earlier.some(f => f.ledger.pending({ retryFailed: true }).some(i => i.undo.steps)))
+            await finishUndo(earlier, { log, hooks: false, openBrowser: async () => ({ undoSteps: steps => runSteps(t, steps, { ...opts, unpaced: true, scene: 'cleanup (earlier run)', report: null, onError: 'fail' }) }) });
+          // Fixture steps: data the tour needs, put in place through the browser, off camera. Mock sets first.
+          const mocks = cfg.fixtureMocks ?? cfg.fixtureSteps ?? [];
+          if (mocks.length) await runSteps(t, mocks, { ...opts, unpaced: true, scene: 'fixtures' });
+          await setupBrowser(t, cfg.fixtureBrowser ?? [], { ledger, opts, log });
+          for (const [i, s] of cfg.scenes.entries()) {
+            const id = ctx.scenes[i].id;
+            if (s.url) await runSteps(t, [{ goto: s.url }], { ...opts, unpaced: true, scene: `${id} (url)` });
+            // Off camera: it runs and is checked like any scene, but it isn't filmed or narrated.
+            if (s.camera === false) {
+              await runSteps(t, s.steps ?? [], { ...opts, offCamera: true, scene: id, criteria: s.criteria ?? [] });
+              await t.screenshot(id);
+            } else await t.scene(id, () => runSteps(t, s.steps ?? [], { ...opts, scene: id, criteria: s.criteria ?? [] }));
+            ctx.progress?.();
+          }
+        } finally {
+          // Browser cleanup (artifacts' cleanup steps, fixtures' cleanupSteps), off camera; also after a failed scene.
+          await undoInBrowser(t, ledger, { opts, log }).catch(e => log(`cleanup failed: ${e.message.split('\n')[0]}`));
         }
         await t.finish({ baseUrl: vars.baseUrl });
       } finally {
-        if (setupDone) await runHooks(cfg.hooks?.teardown, hookCtx).catch(e => ctx.log(`teardown failed: ${e.message}`));
+        // Hook undo, newest first, only what ran. Browser steps left pending (the browser was gone) wait for aft cleanup.
+        const r = await undoAll(ledger, { undoHooks, log }).catch(e => { log(`teardown failed: ${e.message}`); return null; });
+        if (r?.failed) log(`${r.failed} undo step(s) failed: data left behind (see ledger.json; aft cleanup ${ctx.outDir})`);
+        ctx.fixtures = ledger.summary();
+        ctx.artifacts = writeArtifacts(ctx.outDir, t.artifacts, ledger);
         for (const p of services.procs) stopProcess(p);
       }
     },
@@ -291,10 +306,10 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
 // ---- Pieces of a run, shared with sessions (src/session.mjs) -----------------------------------------------------
 
 /** Picks a free port when the launch asks for one and fills {port} / {baseUrl} / {env:NAME} everywhere. */
-export async function materialize(cfg0) {
+export async function materialize(cfg0, { tag } = {}) {
   const first = [cfg0.launch ?? []].flat()[0];
   const port = first?.port === 'auto' ? await freePort() : first?.port;
-  const vars = { port: port ?? '' };
+  const vars = { port: port ?? '', ...(tag ? { runTag: tag } : {}) };
   vars.baseUrl = fill(cfg0.baseUrl, vars).replace(/\/$/, '');
   return { cfg: fill(cfg0, vars), vars };
 }

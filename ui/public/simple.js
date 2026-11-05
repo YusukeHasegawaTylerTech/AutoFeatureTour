@@ -121,7 +121,8 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       fields: [['wait', '2', 'number']], words: ['Wait', 'seconds'], need: 'how many seconds' },
   };
   const isStr = v => typeof v === 'string';
-  function kindOf(s) {
+  function kindOf(s0) {
+    const { camera, ...s } = s0; // on/off camera is a toggle on any step, not part of its kind
     const k = Object.keys(s);
     if (k.length === 1 && isStr(s.goto)) return 'goto';
     if (k.length === 1 && isStr(s.click)) return 'click';
@@ -496,13 +497,16 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           <div class="title-row"><div class="page-title">✏️ ${h(pretty(p.split('/').pop()))}</div>
             <button class="chunky small c-purple" id="gen" ${genOpen ? 'disabled' : ''}>✨ GENERATE</button></div>
           ${genPanel()}
-          ${tour.scenes.map((s, i) => `<div class="scene-card ${flagScene === i + 1 ? 'flag' : ''}" data-s="${i}">
+          ${tour.scenes.map((s, i) => `<div class="scene-card ${flagScene === i + 1 ? 'flag' : ''} ${s.camera === false ? 'offcam' : ''}" data-s="${i}">
             <div class="scene-head"><span class="scene-num">${i + 1}</span>
               <input class="scene-title" data-s="${i}" data-f="title" value="${h(s.title ?? '')}" placeholder="Scene title">
-              <span class="icons"><button class="icon-btn" data-local data-clonescene="${i}" title="Copy this scene" aria-label="Copy this scene">⧉</button>
+              <span class="icons"><button class="icon-btn cam ${s.camera === false ? 'cam-off' : ''}" data-local data-camscene="${i}"
+                  title="${s.camera === false ? 'Off camera: it runs and is checked, but is not in the video. Click to film it.' : 'On camera. Click to run it off camera (checked, not filmed, no narration needed).'}"
+                  aria-label="${s.camera === false ? 'Scene is off camera' : 'Scene is on camera'}" aria-pressed="${s.camera === false}">🎥</button>
+                <button class="icon-btn" data-local data-clonescene="${i}" title="Copy this scene" aria-label="Copy this scene">⧉</button>
                 <button class="icon-btn del" data-local data-delscene="${i}" title="Delete this scene" aria-label="Delete this scene">🗑</button></span></div>
-            <label class="lbl">Narration</label>
-            <textarea class="narr" rows="3" data-s="${i}" data-f="narration" placeholder="What should the voice say here?">${h(s.narration ?? '')}</textarea>
+            ${s.camera === false ? `<div class="offcam-note">🎥 Off camera: these steps run and are checked, but this scene is not in the video and needs no narration.</div>` : `<label class="lbl">Narration</label>
+            <textarea class="narr" rows="3" data-s="${i}" data-f="narration" placeholder="What should the voice say here?">${h(s.narration ?? '')}</textarea>`}
             <label class="lbl">Steps</label>
             <div class="steps">${(s.steps ?? []).map((st, j) => stepRow(st, i, j, flagScene === i + 1 && flagStep === j + 1)).join('')
               || '<div class="hint">No steps yet.</div>'}</div>
@@ -517,17 +521,37 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           <p class="hint"><a href="#/edit/${encodeURIComponent(p)}">edit the raw file instead</a></p>`;
         wire();
       };
+      /** {artifact.<name>.<field>} references available at scene i, step j: pins earlier in the script (and role forms). */
+      const artifactRefs = (i, j) => {
+        const refs = [];
+        tour.scenes.forEach((s, si) => (s.steps ?? []).forEach((st, sj) => {
+          if (!st.pin || si > i || (si === i && sj >= j)) return;
+          for (const f of Object.keys(st.fields ?? {})) {
+            refs.push({ ref: `{artifact.${st.pin}.${f}}`, label: `${st.pin} · ${f}${(st.secret ?? []).includes(f) ? ' (secret)' : ''}` });
+            if (st.role) refs.push({ ref: `{artifact[${st.role}].${f}}`, label: `latest ${st.role} · ${f}` });
+          }
+        }));
+        return [...new Map(refs.map(r => [r.ref, r])).values()];
+      };
       function stepRow(st, i, j, flag) {
         const k = kindOf(st), K = KINDS[k];
-        const tools = `<span class="row-tools"><button data-mv="-1" data-s="${i}" data-j="${j}" title="Move up">↑</button><button data-mv="1" data-s="${i}" data-j="${j}" title="Move down">↓</button>
+        const off = st.camera === false;
+        const tools = `<span class="row-tools"><button class="cam ${off ? 'cam-off' : ''}" data-camstep="${j}" data-s="${i}" aria-pressed="${off}"
+            title="${off ? 'Off camera: it runs and is checked, but is cut from the video. Click to film it.' : 'On camera. Click to cut this step from the video (it still runs).'}" aria-label="${off ? 'Step is off camera' : 'Step is on camera'}">🎥</button>
+          <button data-mv="-1" data-s="${i}" data-j="${j}" title="Move up">↑</button><button data-mv="1" data-s="${i}" data-j="${j}" title="Move down">↓</button>
           <button data-clonestep="${j}" data-s="${i}" title="Copy this step" aria-label="Copy this step">⧉</button>
           <button class="del" data-del="${j}" data-s="${i}" title="Delete this step" aria-label="Delete this step">🗑</button></span>`;
-        if (!K) return `<div class="step-row adv ${flag ? 'flag' : ''}"><span class="step-icon">⚙</span><span>advanced step: ${h(summary(st))}</span>${tools}</div>`;
-        const inputs = K.fields.map(([f, ph, type]) => `<input class="step-in" data-s="${i}" data-j="${j}" data-k="${f}" ${type === 'number' ? 'type="number" min="0" step="0.5"' : ''}
-          value="${h(getF(st, f) ?? '')}" placeholder="${h(ph)}">`);
+        const cls = `step-row ${flag ? 'flag' : ''} ${off ? 'offcam' : ''}`;
+        if (st.pin) return `<div class="${cls} adv"><span class="step-icon">📌</span><span>Pin <b>${h(st.pin)}</b>${st.role ? ` (${h(st.role)})` : ''}: ${h(Object.keys(st.fields ?? {}).join(', '))}
+          ${st.cleanup ? '<span class="badge ok">has cleanup</span>' : '<span class="badge warn" title="Add &quot;cleanup&quot; (edit the raw file) so the run removes it">no cleanup</span>'}</span>${tools}</div>`;
+        if (!K) return `<div class="${cls} adv"><span class="step-icon">⚙</span><span>advanced step: ${h(summary(st))}</span>${tools}</div>`;
+        const refs = artifactRefs(i, j);
+        const inputs = K.fields.map(([f, ph, type]) => `<span class="in-wrap"><input class="step-in" data-s="${i}" data-j="${j}" data-k="${f}" ${type === 'number' ? 'type="number" min="0" step="0.5"' : ''}
+          value="${h(getF(st, f) ?? '')}" placeholder="${h(ph)}">${refs.length && type !== 'number' ? `<select class="art-pick" data-s="${i}" data-j="${j}" data-k="${f}" title="Use a value this run created earlier (a pinned artifact)" aria-label="Insert an artifact value">
+            <option value="">📌</option>${refs.map(r => `<option value="${h(r.ref)}">${h(r.label)}</option>`).join('')}</select>` : ''}</span>`);
         const words = K.words.map(w => w ? `<span>${h(w)}</span>` : '');
         const parts = []; for (let n = 0; n < words.length; n++) { parts.push(words[n]); if (inputs[n]) parts.push(inputs[n]); }
-        return `<div class="step-row ${flag ? 'flag' : ''}"><span class="step-icon">${K.icon}</span>${parts.join('')}${tools}</div>`;
+        return `<div class="${cls}"><span class="step-icon">${K.icon}</span>${parts.join('')}${off ? '<span class="badge offcam">off camera</span>' : ''}${tools}</div>`;
       }
       function wire() {
         const $$ = s => $app.querySelectorAll(s);
@@ -542,6 +566,19 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           $app.querySelector(`.step-in[data-s="${i}"][data-j="${steps.length - 1}"]`)?.focus();
         }));
         $$('[data-del]').forEach(b => (b.onclick = () => { tour.scenes[b.dataset.s].steps.splice(Number(b.dataset.del), 1); dirty = true; draw(); }));
+        // 🎥: off camera ("camera": false) or back on (the key removed: on camera is the default).
+        const toggleCam = o => { if (o.camera === false) delete o.camera; else o.camera = false; dirty = true; draw(); };
+        $$('[data-camscene]').forEach(b => (b.onclick = () => toggleCam(tour.scenes[b.dataset.camscene])));
+        $$('[data-camstep]').forEach(b => (b.onclick = () => toggleCam(tour.scenes[b.dataset.s].steps[b.dataset.camstep])));
+        // 📌: insert an {artifact.x.field} reference at the cursor of the field next to it.
+        $$('.art-pick').forEach(sel => (sel.onchange = () => {
+          if (!sel.value) return;
+          const input = sel.parentElement.querySelector('.step-in');
+          const at = input.selectionStart ?? input.value.length;
+          input.value = input.value.slice(0, at) + sel.value + input.value.slice(input.selectionEnd ?? at);
+          setF(tour.scenes[sel.dataset.s].steps[sel.dataset.j], sel.dataset.k, input.value);
+          dirty = true; sel.value = ''; input.focus();
+        }));
         $$('[data-mv]').forEach(b => (b.onclick = () => {
           const steps = tour.scenes[b.dataset.s].steps, j = Number(b.dataset.j), to = j + Number(b.dataset.mv);
           if (to < 0 || to >= steps.length) return;
@@ -613,7 +650,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         if (!tour.scenes.length) problems.push('Add at least one scene.');
         tour.scenes.forEach((s, i) => {
           if (!String(s.title ?? '').trim()) problems.push(`Scene ${i + 1}: give it a title.`);
-          if (!String(s.narration ?? '').trim()) problems.push(`Scene ${i + 1}: what should the voice say?`);
+          if (s.camera !== false && !String(s.narration ?? '').trim()) problems.push(`Scene ${i + 1}: what should the voice say?`);
         });
         tour.scenes.forEach((s, i) => (s.steps ?? []).forEach((st, j) => {
           const k = kindOf(st);

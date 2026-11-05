@@ -151,6 +151,182 @@
         "$ref": "#/$defs/step"
       }
     },
+    "hook": {
+      "description": "A setup/teardown hook, run off camera with BASE_URL, RUN_DIR and RUN_TAG set.",
+      "anyOf": [
+        {
+          "type": "object",
+          "description": "A shell command.",
+          "properties": {
+            "run": {
+              "type": "string",
+              "description": "Command line."
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Working folder, relative to the file."
+            },
+            "optional": {
+              "type": "boolean",
+              "description": "Failure is only a warning."
+            },
+            "output": {
+              "enum": [
+                "json",
+                "text"
+              ],
+              "description": "Use what it prints (or the HTTP response) as data: \"json\" (an object merged into data) or \"text\" (trimmed, as data.<as>). Setup hooks only."
+            },
+            "as": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "description": "With \"output\": \"text\": the data key ({data.<as>})."
+            },
+            "pin": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "description": "With \"output\": pin what it created as an artifact of this name ({artifact.<pin>.<field>}; fields: the JSON object, or { <as>: text }), shown as \"created by setup\"."
+            },
+            "role": {
+              "type": "string",
+              "description": "With \"pin\": what kind of thing it is (account, case…); {artifact[<role>].<field>} is the latest of that role."
+            },
+            "secret": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "With \"pin\": fields that are secrets (redacted everywhere)."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "run"
+          ]
+        },
+        {
+          "type": "object",
+          "description": "A Node script.",
+          "properties": {
+            "node": {
+              "type": "string",
+              "description": "Script path, relative to the file."
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "optional": {
+              "type": "boolean",
+              "description": "Failure is only a warning."
+            },
+            "output": {
+              "enum": [
+                "json",
+                "text"
+              ],
+              "description": "Use what it prints (or the HTTP response) as data: \"json\" (an object merged into data) or \"text\" (trimmed, as data.<as>). Setup hooks only."
+            },
+            "as": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "description": "With \"output\": \"text\": the data key ({data.<as>})."
+            },
+            "pin": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "description": "With \"output\": pin what it created as an artifact of this name ({artifact.<pin>.<field>}; fields: the JSON object, or { <as>: text }), shown as \"created by setup\"."
+            },
+            "role": {
+              "type": "string",
+              "description": "With \"pin\": what kind of thing it is (account, case…); {artifact[<role>].<field>} is the latest of that role."
+            },
+            "secret": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "With \"pin\": fields that are secrets (redacted everywhere)."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "node"
+          ]
+        },
+        {
+          "type": "object",
+          "description": "An HTTP request.",
+          "properties": {
+            "http": {
+              "type": "object",
+              "description": "The request.",
+              "properties": {
+                "method": {
+                  "type": "string",
+                  "description": "Default POST."
+                },
+                "url": {
+                  "type": "string",
+                  "description": "Relative to baseUrl."
+                },
+                "headers": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "body": {
+                  "description": "JSON value or string."
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "url"
+              ]
+            },
+            "optional": {
+              "type": "boolean",
+              "description": "A non-2xx answer is only a warning."
+            },
+            "output": {
+              "enum": [
+                "json",
+                "text"
+              ],
+              "description": "Use what it prints (or the HTTP response) as data: \"json\" (an object merged into data) or \"text\" (trimmed, as data.<as>). Setup hooks only."
+            },
+            "as": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "description": "With \"output\": \"text\": the data key ({data.<as>})."
+            },
+            "pin": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "description": "With \"output\": pin what it created as an artifact of this name ({artifact.<pin>.<field>}; fields: the JSON object, or { <as>: text }), shown as \"created by setup\"."
+            },
+            "role": {
+              "type": "string",
+              "description": "With \"pin\": what kind of thing it is (account, case…); {artifact[<role>].<field>} is the latest of that role."
+            },
+            "secret": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "With \"pin\": fields that are secrets (redacted everywhere)."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "http"
+          ]
+        }
+      ]
+    },
     "step": {
       "description": "One step: an object with exactly one action key.",
       "anyOf": [
@@ -218,6 +394,9 @@
           "$ref": "#/$defs/action_capture"
         },
         {
+          "$ref": "#/$defs/action_pin"
+        },
+        {
           "$ref": "#/$defs/action_wait"
         },
         {
@@ -254,6 +433,10 @@
         "reload": {
           "type": "boolean",
           "description": "Load the page afresh after navigating (clears UI state a hash-route change would keep)."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -387,6 +570,10 @@
           "type": "boolean",
           "description": "The click opens a new tab or window: wait for it and continue there (switch back with { \"switchTo\": \"main\" }). Only the main page is filmed."
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -481,6 +668,10 @@
         "dblclick": {
           "$ref": "common.schema.json#/$defs/locator",
           "description": "The element to double-click."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -577,6 +768,10 @@
           "$ref": "common.schema.json#/$defs/locator",
           "description": "The element to right-click."
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -672,6 +867,10 @@
           "$ref": "common.schema.json#/$defs/locator",
           "description": "The element to hover."
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -766,6 +965,10 @@
         "point": {
           "$ref": "common.schema.json#/$defs/locator",
           "description": "The element to point at."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -869,6 +1072,10 @@
         "secret": {
           "type": "boolean",
           "description": "The value is a credential: set without typing, never logged, scrubbed from reports."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -986,6 +1193,10 @@
             }
           ]
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -1082,6 +1293,10 @@
           "$ref": "common.schema.json#/$defs/locator",
           "description": "The field."
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -1176,6 +1391,10 @@
         "focus": {
           "$ref": "common.schema.json#/$defs/locator",
           "description": "The element."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -1276,6 +1495,10 @@
           "$ref": "common.schema.json#/$defs/locator",
           "description": "Focus this element first."
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -1371,6 +1594,10 @@
           "$ref": "common.schema.json#/$defs/locator",
           "description": "The checkbox, radio or switch."
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -1465,6 +1692,10 @@
         "uncheck": {
           "$ref": "common.schema.json#/$defs/locator",
           "description": "The checkbox or switch."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -1591,6 +1822,10 @@
             }
           ]
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -1702,6 +1937,10 @@
             }
           ]
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -1801,6 +2040,10 @@
         "to": {
           "$ref": "common.schema.json#/$defs/locator",
           "description": "Where to drop it."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -1904,6 +2147,10 @@
               "$ref": "common.schema.json#/$defs/locator"
             }
           ]
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -2009,6 +2256,10 @@
           ],
           "description": "The state to wait for (default visible)."
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -2100,6 +2351,10 @@
       "type": "object",
       "description": "Wait for a network response (when it was triggered by something other than a step; otherwise put \"waitForResponse\" on that step).",
       "properties": {
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -2264,6 +2519,10 @@
           ],
           "description": "The element's state. selected: aria-selected=\"true\" (a tab, an option). checked on something that is not a checkbox, radio or switch reads its aria-selected / aria-checked / aria-pressed."
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -2389,6 +2648,10 @@
           "type": "string",
           "description": "A regex (with or without /…/flags): keep its first group, or the whole match. No match is a SCRIPT failure."
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -2477,6 +2740,208 @@
       ],
       "additionalProperties": false
     },
+    "action_pin": {
+      "type": "object",
+      "description": "Pin what the run just created (an account, a case) as a named artifact: a group of values read from the page, with a role and an undo. Later steps, scenes, teardown and cleanup use \"{artifact.<pin>.<field>}\" (or \"{artifact[<role>].<field>}\", the latest of that role). Its \"cleanup\" joins the run's ledger as soon as it is pinned, so `aft cleanup` can remove it after a crash.",
+      "properties": {
+        "pin": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "The artifact's name."
+        },
+        "role": {
+          "type": "string",
+          "description": "What kind of thing it is (account, case, order…)."
+        },
+        "fields": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Field name → where its value comes from: a locator (an element's value or text, like capture), { \"capture\": <locator | { \"url\": true }>, \"attribute\", \"pattern\" }, or { \"value\": \"<text, may use {vars.x}>\" }.",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "common.schema.json#/$defs/locator"
+              },
+              {
+                "type": "object",
+                "description": "Read like a capture step.",
+                "properties": {
+                  "capture": {
+                    "anyOf": [
+                      {
+                        "$ref": "common.schema.json#/$defs/locator"
+                      },
+                      {
+                        "type": "object",
+                        "description": "The page URL.",
+                        "properties": {
+                          "url": {
+                            "const": true
+                          }
+                        },
+                        "additionalProperties": false,
+                        "required": [
+                          "url"
+                        ]
+                      }
+                    ]
+                  },
+                  "attribute": {
+                    "type": "string",
+                    "description": "Read this attribute."
+                  },
+                  "pattern": {
+                    "type": "string",
+                    "description": "Regex: keep its first group, or the whole match."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "capture"
+                ]
+              },
+              {
+                "type": "object",
+                "description": "A value as is.",
+                "properties": {
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "value"
+                ]
+              }
+            ]
+          }
+        },
+        "secret": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Fields that are secrets: shown as ●●● and redacted from every report, bundle and caption."
+        },
+        "cleanup": {
+          "description": "How to remove it: browser steps (run off camera after the last scene, or by aft cleanup in a signed-in session), or hooks. \"{artifact.<pin>.<field>}\" works here.",
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/steps"
+            },
+            {
+              "description": "A hook, or a list of hooks run in order.",
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/hook"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "common.schema.json#/$defs/hook"
+                  },
+                  "minItems": 1
+                }
+              ]
+            }
+          ]
+        },
+        "readOnly": {
+          "type": "boolean",
+          "description": "It isn't created by this run (it was looked up): no cleanup expected, even on a shared environment."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "pin",
+        "fields"
+      ],
+      "additionalProperties": false
+    },
     "action_wait": {
       "type": "object",
       "description": "Pause for a number of seconds (prefer \"at\" or waitFor).",
@@ -2492,6 +2957,10 @@
               "$ref": "common.schema.json#/$defs/placeholder"
             }
           ]
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -2596,6 +3065,10 @@
               "$ref": "common.schema.json#/$defs/placeholder"
             }
           ]
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -2703,6 +3176,10 @@
           "type": "string",
           "description": "The dialog's message must contain this (or match /regex/), else CRITERION failure when it appears."
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -2801,6 +3278,10 @@
             "last"
           ],
           "description": "Which page."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -2904,6 +3385,10 @@
         "expect": {
           "type": "string",
           "description": "The suggested file name must contain this (or match /regex/), else CRITERION failure."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",
@@ -3023,6 +3508,10 @@
             }
           ]
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -3122,6 +3611,10 @@
           "type": "object",
           "description": "Arguments, as args in the function."
         },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
         "optional": {
           "type": "boolean",
           "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
@@ -3220,6 +3713,10 @@
         "with": {
           "type": "object",
           "description": "Fragment parameters, available to it as {args.<name>}."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
         },
         "optional": {
           "type": "boolean",

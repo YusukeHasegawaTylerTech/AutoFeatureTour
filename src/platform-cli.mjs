@@ -100,6 +100,7 @@ async function check(name, args, { toolRoot, commands, appSettings, UsageError, 
   console.log(ok ? `\n${name} is ready${envOf(args) ? ` in ${envOf(args)}` : app?.env ? ` in ${app.env}` : ''}.` : `\n${name} is not ready.`);
   // A failed smoke run keeps its own class and exit code (LOGIN 6, UNREACHABLE 3, SCRIPT 2...).
   if (!ok && lastError && lastError.constructor !== Error) throw lastError;
-  if (!ok) process.exitCode = process.exitCode || 1;
+  // Not ready is a failed command (exit 1, "ok": false in --json), with the stages as its data.
+  if (!ok) { const bad = results.find(r => !r.ok); throw Object.assign(new UsageError(`${name} is not ready: ${bad?.label ?? 'check'}: ${bad?.detail ?? 'failed'}`), { data: { ok, results } }); }
   return { ok, results };
 }

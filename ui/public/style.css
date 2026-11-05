@@ -58,3 +58,13 @@ table.runs td:not(:last-child) { white-space: nowrap; }
 .ai-fix .diff { display: grid; gap: 4px; margin: 8px 0; } .ai-fix .diff code { display: block; white-space: pre-wrap; padding: 6px; border-radius: 4px; }
 .ai-fix .before code { background: color-mix(in srgb, var(--bad) 10%, transparent); } .ai-fix .after code { background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .saved { margin-top: 8px; color: var(--ok); }
+/* storyboard: setup/teardown strips, off-camera scenes and steps, pins; the artifacts board */
+.board-strip { grid-template-columns: 1fr; border-style: dashed; }
+.board-off { opacity: .85; } .board-off .board-shot img { filter: grayscale(.6); }
+.badge.offcam { color: var(--muted); border-style: dashed; } .badge.pin { color: var(--accent); }
+.fx-items { margin: 6px 0 0; padding-left: 18px; } .fx-items li { margin: 3px 0; }
+.artifacts { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.artifact { display: grid; grid-template-columns: 120px 1fr; gap: 10px; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.artifact img { width: 120px; max-height: 90px; object-fit: contain; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+.artifact table.fields { border: none; margin: 4px 0; } .artifact table.fields td { padding: 1px 6px 1px 0; border: none; }
+.finding.kind-leftover { border-left-color: var(--bad); }

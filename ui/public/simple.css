@@ -123,3 +123,11 @@ details.raw pre { margin-top: 6px; max-height: 200px; }
 .group-link { font-size: 14px; font-weight: 600; margin-left: 12px; }
 
 [hidden] { display: none !important; }
+/* 🎥 on/off camera toggles, off-camera scenes and steps, the artifact (📌) picker */
+.cam { filter: none; } .cam.cam-off { filter: grayscale(1); opacity: .45; position: relative; }
+.cam.cam-off::after { content: ''; position: absolute; left: 4px; right: 4px; top: 50%; border-top: 2px solid #c62828; transform: rotate(-30deg); }
+.scene-card.offcam { border-style: dashed; background: repeating-linear-gradient(135deg, transparent 0 12px, rgba(128,128,128,.05) 12px 24px), var(--card); }
+.offcam-note { margin: 8px 0; padding: 8px 12px; border-radius: 10px; background: rgba(128,128,128,.1); color: var(--muted); }
+.step-row.offcam { border-style: dashed; opacity: .8; }
+.in-wrap { display: inline-flex; align-items: center; gap: 2px; }
+.art-pick { width: 2.6em; padding: 2px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); cursor: pointer; }

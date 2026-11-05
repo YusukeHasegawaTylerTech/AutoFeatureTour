@@ -11,7 +11,7 @@ npm run ui                                  # or: node ui/server.mjs [--port 477
 It opens the browser with a one-time token in the URL (kept as a cookie). The server listens on 127.0.0.1 only.
 
 - **NEW SCRIPT** (per app) / **NEW APP** ( name, web address, how its sign-in page looks, test username/password,
-  TEST THE CONNECTION), name the script, then write scenes: title, narration, and steps picked from six picture buttons
+  TEST THE CONNECTION), name the script, then write scenes: title, narration, and steps picked from six picture buttons (🎥 on a scene or step turns it off camera; 📌 next to a field inserts a value an earlier pin step made, `{artifact.x.field}`)
   (open a page, click, type, press a key, check it shows, wait). **GENERATE** writes the scenes from a pasted story
   (`aft generate --llm claude`: sends the story and the app's screens to Claude).
 - **Script list** (the start page, also `#/browse`): every script as a tile (works / needs fixing / not tried); a script's page has CHECK IT (dry run), MAKE
@@ -28,14 +28,17 @@ It opens the browser with a one-time token in the URL (kept as a cookie). The se
   failed · failed: app issue), evidence per criterion with the reasons, and every finding with buttons: ✏️ FIX THE
   SCRIPT, ✨ AI FIX (`aft suggest-fix`: a proposed step or workaround, shown before/after; USE or DISCARD), 🩹 REAL
   ISSUE: WORK AROUND IT FOR NOW (a story workaround) or EXPECT IT TO FAIL FOR NOW (a check's `knownIssue`), 🐞 REAL
-  ISSUE: LEAVE IT FAILING, ✔ GOOD ENOUGH / EXPECTED HERE, ↩ UNDO. Decisions are written into the tour that ran
+  ISSUE: LEAVE IT FAILING, ✔ GOOD ENOUGH / EXPECTED HERE, ↩ UNDO; leftover test data: 🧹 CLEAN UP NOW (`aft cleanup <run>`); "pin it?": 📌 PIN IT (adds the proposed `pin` step after the step that made the record). Decisions are written into the tour that ran
   (`review.decisions`); the platform is never edited from here.
 - **Runs**: every `out/<name>/<run>/run.json`; a run shows a **Scenes** storyboard (per scene: its still, title,
   narration, "open in the app ↗" for its URL, every step with ✔/✘, errors and "did you mean", ✏️ to that step in the
-  editor; validation.md stays below, collapsed) and the video with captions, or the failure: summary, first
+  editor; validation.md stays below, collapsed; a **Setup** strip before scene 1 and a **Teardown** strip after the
+  last show each fixture item: already in place, set up, undone, undo failed; off-camera scenes and steps are marked 🎥;
+  an **Artifacts** board lists what the run pinned: role, fields with secrets as ●●●, "created in scene 2, step 4"
+  linking to that step, a cropped still, cleanup status) and the video with captions, or the failure: summary, first
   cause, steps with "did you mean", `report.md`, the ARIA tree at the failure, every file. Re-validate / re-run / replay headed.
 - **Tours**: validate, render or run any platform tour, per environment, with silent speech if wanted.
-- **Platforms**: `platform init`; per platform every definition file (platform, environments, login, tours,
+- **Platforms**: each environment shown as shared or own, and whether it can be reset (↺ reset environment: `aft reset`); 🧹 CLEAN UP (`aft cleanup --platform`) with the runs that left test data behind; `platform init`; per platform every definition file (platform, environments, login, tours,
   fragments, fixtures, mocks, and support files) to open, create from a schema-valid template and edit; `platform check`,
   `doctor --platform`, `login` (fresh / manual), `discover` per environment and role; the `{env:…}` credentials its files
   reference and whether each is set (names only: the UI never shows values); saved sign-ins.

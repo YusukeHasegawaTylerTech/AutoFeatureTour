@@ -45,8 +45,11 @@ async function storyboard(id, d, input) {
   }
   const scenes = tour?.scenes ?? [];
   const ids = [...new Set([...scenes.map((_, i) => `scene-${String(i + 1).padStart(2, '0')}`),
-    ...steps.map(s => String(s.scene ?? '').replace(/\s.*$/, '')).filter(Boolean)])];
+    ...steps.map(s => String(s.scene ?? '').replace(/\s.*$/, '')).filter(x => /^scene-\d+$/.test(x))])];
   if (!ids.length) return '';
+  // Test data: what each fixture item and cleanup did (ledger.json), before scene 1 and after the last scene.
+  const items = d.ledger?.items ?? d.report?.fixtures ?? [];
+  const strip = which => fixtureStrip(which, items, steps.filter(x => (which === 'setup' ? /^fixtures/ : /^cleanup/).test(x.scene ?? '')));
   const base = d.timings?.baseUrl ?? null;
   const pageUrl = u => { try { return base && u ? new URL(u, base.endsWith('/') ? base : base + '/').href : null; } catch { return null; } };
   const shot = sid => has(`screens/${sid}.png`) ? fileUrl(id, `screens/${sid}.png`) : null;
@@ -55,16 +58,18 @@ async function storyboard(id, d, input) {
     const v = sp[k]; const t = typeof v === 'string' ? v : v && typeof v === 'object' ? (v.name ?? v.text ?? v.label ?? v.css ?? v.url ?? v.use ?? JSON.stringify(v)) : String(v);
     const extra = sp.text && k !== 'text' && typeof sp.text === 'string' ? ` "${sp.text.slice(0, 40)}"` : sp.state ? ` (${sp.state})` : '';
     return `${k} ${String(t).slice(0, 80)}${extra}`; };
-  return `<div class="card"><h3>Scenes</h3>${ids.map(sid => {
+  return `<div class="card"><h3>Scenes</h3>${strip('setup')}${ids.map(sid => {
     const n = Number(sid.slice(6)), sc = scenes[n - 1] ?? {};
     const own = steps.filter(s => String(s.scene ?? '').replace(/\s.*$/, '') === sid);
     const bad = own.some(s => s.ok === false && !s.optional);
+    const offScene = sc.camera === false;
     const url = pageUrl(sc.url), img = shot(sid);
-    return `<div class="board ${bad ? 'board-bad' : ''}" id="board-${sid}">
+    return `<div class="board ${bad ? 'board-bad' : ''} ${offScene ? 'board-off' : ''}" id="board-${sid}">
       <div class="board-shot">${img ? `<a href="${img}" target="_blank" title="Open the full screenshot"><img src="${img}" loading="lazy" alt="${h(sid)} at its end"></a>` : '<div class="noshot muted">no screenshot</div>'}</div>
       <div class="board-body">
         <div class="board-head"><span class="board-num ${bad ? 'bad' : own.length ? 'ok' : ''}">${n}</span><b>${h(sc.title ?? sid)}</b>
           ${sc.criteria?.length ? `<span class="badge muted">AC ${h(sc.criteria.join(', '))}</span>` : ''}
+          ${offScene ? '<span class="badge offcam" title="Runs and is checked, but is not in the video">🎥 off camera</span>' : ''}
           ${url ? `<a class="board-link" href="${h(url)}" target="_blank" title="${h(url)}">open in the app ↗</a>` : ''}
           ${tourPath ? `<a class="board-link" href="#/write/${encodeURIComponent(tourPath)}?scene=${n}">edit scene ✏️</a>` : ''}</div>
         ${sc.narration ? `<p class="board-narr">“${h(sc.narration)}”</p>` : ''}
@@ -72,9 +77,44 @@ async function storyboard(id, d, input) {
           const isUrl = /\(url\)/.test(s.scene ?? '');
           const edit = tourPath && !isUrl ? `<a href="#/write/${encodeURIComponent(tourPath)}?scene=${n}&step=${s.scriptStep ?? s.step}" title="Edit this step">✏️</a>` : '';
           return `<li class="${s.ok === false ? (s.optional ? 'warn' : 'bad') : ''}"><span class="${s.ok === false ? 'bad' : s.ok ? 'ok' : 'muted'}">${s.ok === false ? '✘' : s.ok ? '✔' : '·'}</span>
-            <code>${h(isUrl ? `open ${s.spec?.goto ?? sc.url ?? ''}` : what(s.spec ?? s.action))}</code>${s.from ? ` <span class="muted">(${h(s.from)})</span>` : ''} ${edit}
+            <code>${h(isUrl ? `open ${s.spec?.goto ?? sc.url ?? ''}` : what(s.spec ?? s.action))}</code>${s.from ? ` <span class="muted">(${h(s.from)})</span>` : ''}${s.offCamera && !offScene ? ' <span class="badge offcam" title="Cut from the video">🎥 off camera</span>' : ''}${s.spec?.pin ? ` <span class="badge pin" title="Pinned as an artifact">📌 ${h(s.spec.pin)}</span>` : ''} ${edit}
             ${s.error ? `<div class="bad">${h(s.error)}</div>` : ''}${s.suggestions?.length ? `<div class="muted">did you mean: ${h(s.suggestions.join(', '))}</div>` : ''}</li>`; }).join('')
-          || '<li class="muted">no steps ran</li>'}</ol></div></div>`; }).join('')}</div>`;
+          || '<li class="muted">no steps ran</li>'}</ol></div></div>`; }).join('')}${strip('teardown')}</div>${artifactsBoard(id, d.artifacts?.length ? d.artifacts : d.report?.artifacts ?? [], tourPath)}`;
+}
+
+const FX_SETUP = { 'in-place': ['ok', 'already in place'], done: ['ok', 'set up'], undone: ['ok', 'set up'], 'undo-failed': ['ok', 'set up'], pending: ['warn', 'started, never finished'], failed: ['bad', 'setup failed'] };
+const FX_UNDO = { undone: ['ok', 'undone'], 'undo-failed': ['bad', 'undo failed: data left behind'], 'in-place': ['muted', 'nothing to undo (it was already there)'], failed: ['muted', 'not undone (its setup failed)'] };
+
+/** Scene 0 (before scene 1, off camera) and the strip after the last scene: each fixture item and what happened to it. */
+function fixtureStrip(which, items, steps) {
+  const undoable = i => i.undo || i.toUndo || ['undone', 'undo-failed'].includes(i.status);
+  const list = which === 'setup' ? items.filter(i => i.kind !== 'artifact') : items.filter(undoable);
+  if (!list.length && !steps.length) return '';
+  const row = i => {
+    const [c, w] = which === 'setup' ? FX_SETUP[i.status] ?? ['muted', i.status]
+      : FX_UNDO[i.status] ?? (['done', 'pending'].includes(i.status) ? ['warn', 'not undone yet (CLEAN UP)'] : ['muted', 'nothing to undo']);
+    const err = which === 'setup' ? i.error : i.undoError;
+    return `<li><span class="badge ${c}">${h(w)}</span> ${h(i.name)} <span class="muted">${i.kind === 'artifact' ? 'artifact cleanup' : i.kind === 'steps' ? 'browser steps' : 'hooks'}</span>${err ? `<div class="bad">${h(err)}</div>` : ''}</li>`;
+  };
+  const bad = list.some(i => (which === 'setup' ? i.status === 'failed' : i.status === 'undo-failed' || (undoable(i) && ['done', 'pending'].includes(i.status)))) || steps.some(x => x.ok === false);
+  return `<div class="board board-strip ${bad ? 'board-bad' : ''}"><div class="board-body"><div class="board-head"><span class="board-num ${bad ? 'bad' : 'ok'}">${which === 'setup' ? '0' : '⏹'}</span>
+    <b>${which === 'setup' ? 'Setup' : 'Teardown'}</b> <span class="badge offcam">🎥 off camera · ${which === 'setup' ? 'before scene 1' : 'after the last scene'}</span></div>
+    <ul class="fx-items">${list.map(row).join('')}${steps.length ? `<li class="muted">${steps.length} browser step(s)${steps.some(x => x.ok === false) ? ', some failed' : ''}</li>` : ''}</ul></div></div>`;
+}
+
+/** What the run created: each pinned artifact, its fields (secrets as ●●●), where it was made, a still, its cleanup. */
+function artifactsBoard(id, artifacts, tourPath) {
+  if (!artifacts.length) return '';
+  const CL = { undone: ['ok', 'cleaned up'], 'to undo': ['warn', 'not cleaned up yet'], 'undo-failed': ['bad', 'cleanup failed'], none: ['muted', 'no cleanup'], 'read-only': ['muted', 'read only'] };
+  return `<div class="card"><h3>Artifacts <span class="muted">what this run created</span></h3><div class="artifacts">${artifacts.map(a => {
+    const n = Number(String(a.scene ?? '').slice(6)) || null, at = a.scriptStep ?? a.step;
+    const where = a.scene === 'setup' ? 'created by setup' : n ? `created in scene ${n}${at ? `, step ${at}` : ''}` : '';
+    const link = tourPath && n ? `<a href="#/write/${encodeURIComponent(tourPath)}?scene=${n}&step=${at ?? ''}">${h(where)}</a>` : h(where);
+    const [c, w] = CL[a.cleanup] ?? ['muted', a.cleanup];
+    return `<div class="artifact">${a.shot ? `<a href="${fileUrl(id, a.shot)}" target="_blank"><img src="${fileUrl(id, a.shot)}" alt="where ${h(a.name)} came from"></a>` : '<div class="noshot muted">no still</div>'}
+      <div><div><b>${h(a.name)}</b>${a.role ? ` <span class="badge">${h(a.role)}</span>` : ''} <span class="badge ${c}" title="${h(a.cleanupError ?? '')}">${h(w)}</span></div>
+        <table class="fields">${Object.entries(a.fields ?? {}).map(([k, v]) => `<tr><td class="muted">${h(k)}</td><td>${(a.secret ?? []).includes(k) ? '●●●' : `<code>${h(v)}</code>`}</td></tr>`).join('')}</table>
+        <div class="muted">${link}${a.cleanupError ? ` · <span class="bad">${h(a.cleanupError)}</span>` : ''}</div></div></div>`; }).join('')}</div></div>`;
 }
 
 const views = {
@@ -261,7 +301,17 @@ const views = {
         <button data-a="doctor">doctor --platform</button>
         ${hasLogin ? '<button data-a="login">login</button><button data-a="loginFresh">login (fresh)</button><button data-a="loginManual">login --manual</button>' : ''}
         <button data-a="discover">discover</button>
+        <button data-a="cleanup" title="aft cleanup --platform ${h(name)}: finish the undo of runs that left test data behind">🧹 CLEAN UP${d.cleanup?.items ? ` (${d.cleanup.items})` : ''}</button>
+        ${Object.values(d.envInfo ?? {}).some(e => e.reset) ? '<button data-a="reset" title="aft reset: the environment\'s reset hooks (never a shared environment)">↺ reset environment</button>' : ''}
       </div>
+      <div class="card"><h3>Environments</h3><table>${Object.entries(d.envInfo ?? {}).map(([e, i]) => `<tr><td><b>${h(e)}</b>${e === d.default ? ' <span class="muted">(default)</span>' : ''}</td>
+        <td class="muted">${h(i.baseUrl ?? '')}</td>
+        <td>${i.shared ? '<span class="badge warn" title="Other people and runs use it: data a run creates must carry {run.tag}; never reset">shared</span>' : '<span class="badge muted">own</span>'}</td>
+        <td>${i.reset ? (i.shared ? '<span class="badge bad">reset (refused: shared)</span>' : '<span class="badge ok" title="aft reset / --reset runs its hooks">can be reset</span>') : '<span class="muted">no reset</span>'}</td></tr>`).join('')}</table></div>
+      ${d.cleanup?.runs?.length ? `<div class="card"><h3>Test data left behind <span class="muted">${d.cleanup.items} item(s) in ${d.cleanup.runs.length} run(s)</span></h3>
+        <table>${d.cleanup.runs.map(r => `<tr><td><a href="#/run/${h(r.id)}">${h(r.id)}</a> <span class="muted">${h(r.env ?? '')} ${h(r.tag ?? '')}</span></td>
+          <td>${r.items.map(i => `<div>${i.status === 'undo-failed' ? '<span class="bad">undo failed</span>' : '<span class="badge warn">not undone</span>'} ${h(i.name)}${i.error ? ` <span class="muted">${h(i.error)}</span>` : ''}</div>`).join('')}</td></tr>`).join('')}</table>
+        <p class="muted">CLEAN UP runs each item's undo again (hooks, or browser steps in a signed-in session).</p></div>` : ''}
       <div class="grid"><div>
         ${groups.map(([k, title]) => {
           const list = d.files.filter(f => f.kind === k);
@@ -287,6 +337,8 @@ const views = {
       loginFresh: () => ['login', '--platform', name, ...t(), '--fresh-login'],
       loginManual: () => ['login', '--platform', name, ...t(), '--manual'],
       discover: () => ['platform', 'discover', name, ...t()],
+      cleanup: () => ['cleanup', '--platform', name, ...(env() ? ['--target', env()] : [])],
+      reset: () => ['reset', '--platform', name, ...(env() ? ['--target', env()] : [])],
     };
     $app.querySelectorAll('button[data-a]').forEach(b => (b.onclick = () => startJob(actions[b.dataset.a]())));
     $app.querySelectorAll('button[data-new]').forEach(b => (b.onclick = () => newFile(name, b.dataset.new, b)));

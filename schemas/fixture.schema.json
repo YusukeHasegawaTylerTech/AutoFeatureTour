@@ -18,10 +18,70 @@
       "type": "object",
       "description": "Values, as {data.<key>} in tours and steps."
     },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "One piece of test data: how to see it is there, set it up and undo it.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Shown in reports and the ledger."
+          },
+          "comment": {
+            "type": "string",
+            "description": "A note for people."
+          },
+          "check": {
+            "$ref": "common.schema.json#/$defs/hook",
+            "description": "A hook that succeeds when the data is already there: setup is skipped (\"already in place\") and nothing is undone. Run again after setup: still failing is a SCRIPT failure (the setup didn't do its job)."
+          },
+          "setup": {
+            "description": "Creates it.",
+            "anyOf": [
+              {
+                "$ref": "common.schema.json#/$defs/hook"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "common.schema.json#/$defs/hook"
+                },
+                "minItems": 1
+              }
+            ]
+          },
+          "teardown": {
+            "description": "Removes it ({artifact.x.y} and {run.tag} allowed). Runs only if setup ran.",
+            "anyOf": [
+              {
+                "$ref": "common.schema.json#/$defs/hook"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "common.schema.json#/$defs/hook"
+                },
+                "minItems": 1
+              }
+            ]
+          },
+          "readOnly": {
+            "type": "boolean",
+            "description": "Nothing is created (a lookup): no teardown expected, even on a shared environment."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ]
+      },
+      "description": "Paired setup/teardown items, run in order before the browser starts; undone in reverse after it closes, and only the ones that ran. Each is recorded in the run's ledger.json before it runs, so `aft cleanup` can finish the undo after a crash."
+    },
     "setup": {
       "type": "array",
       "items": {
-        "description": "A setup/teardown hook, run off camera with BASE_URL and RUN_DIR set.",
+        "description": "A setup/teardown hook, run off camera with BASE_URL, RUN_DIR and RUN_TAG set.",
         "anyOf": [
           {
             "type": "object",
@@ -50,6 +110,22 @@
                 "type": "string",
                 "pattern": "^[A-Za-z0-9_-]+$",
                 "description": "With \"output\": \"text\": the data key ({data.<as>})."
+              },
+              "pin": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "description": "With \"output\": pin what it created as an artifact of this name ({artifact.<pin>.<field>}; fields: the JSON object, or { <as>: text }), shown as \"created by setup\"."
+              },
+              "role": {
+                "type": "string",
+                "description": "With \"pin\": what kind of thing it is (account, case…); {artifact[<role>].<field>} is the latest of that role."
+              },
+              "secret": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "With \"pin\": fields that are secrets (redacted everywhere)."
               }
             },
             "additionalProperties": false,
@@ -86,6 +162,22 @@
                 "type": "string",
                 "pattern": "^[A-Za-z0-9_-]+$",
                 "description": "With \"output\": \"text\": the data key ({data.<as>})."
+              },
+              "pin": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "description": "With \"output\": pin what it created as an artifact of this name ({artifact.<pin>.<field>}; fields: the JSON object, or { <as>: text }), shown as \"created by setup\"."
+              },
+              "role": {
+                "type": "string",
+                "description": "With \"pin\": what kind of thing it is (account, case…); {artifact[<role>].<field>} is the latest of that role."
+              },
+              "secret": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "With \"pin\": fields that are secrets (redacted everywhere)."
               }
             },
             "additionalProperties": false,
@@ -139,6 +231,22 @@
                 "type": "string",
                 "pattern": "^[A-Za-z0-9_-]+$",
                 "description": "With \"output\": \"text\": the data key ({data.<as>})."
+              },
+              "pin": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "description": "With \"output\": pin what it created as an artifact of this name ({artifact.<pin>.<field>}; fields: the JSON object, or { <as>: text }), shown as \"created by setup\"."
+              },
+              "role": {
+                "type": "string",
+                "description": "With \"pin\": what kind of thing it is (account, case…); {artifact[<role>].<field>} is the latest of that role."
+              },
+              "secret": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "With \"pin\": fields that are secrets (redacted everywhere)."
               }
             },
             "additionalProperties": false,
@@ -148,12 +256,12 @@
           }
         ]
       },
-      "description": "Before the browser starts (run from fixtures/)."
+      "description": "Before the browser starts (run from fixtures/). Older form: prefer \"items\"."
     },
     "teardown": {
       "type": "array",
       "items": {
-        "description": "A setup/teardown hook, run off camera with BASE_URL and RUN_DIR set.",
+        "description": "A setup/teardown hook, run off camera with BASE_URL, RUN_DIR and RUN_TAG set.",
         "anyOf": [
           {
             "type": "object",
@@ -182,6 +290,22 @@
                 "type": "string",
                 "pattern": "^[A-Za-z0-9_-]+$",
                 "description": "With \"output\": \"text\": the data key ({data.<as>})."
+              },
+              "pin": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "description": "With \"output\": pin what it created as an artifact of this name ({artifact.<pin>.<field>}; fields: the JSON object, or { <as>: text }), shown as \"created by setup\"."
+              },
+              "role": {
+                "type": "string",
+                "description": "With \"pin\": what kind of thing it is (account, case…); {artifact[<role>].<field>} is the latest of that role."
+              },
+              "secret": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "With \"pin\": fields that are secrets (redacted everywhere)."
               }
             },
             "additionalProperties": false,
@@ -218,6 +342,22 @@
                 "type": "string",
                 "pattern": "^[A-Za-z0-9_-]+$",
                 "description": "With \"output\": \"text\": the data key ({data.<as>})."
+              },
+              "pin": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "description": "With \"output\": pin what it created as an artifact of this name ({artifact.<pin>.<field>}; fields: the JSON object, or { <as>: text }), shown as \"created by setup\"."
+              },
+              "role": {
+                "type": "string",
+                "description": "With \"pin\": what kind of thing it is (account, case…); {artifact[<role>].<field>} is the latest of that role."
+              },
+              "secret": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "With \"pin\": fields that are secrets (redacted everywhere)."
               }
             },
             "additionalProperties": false,
@@ -271,6 +411,22 @@
                 "type": "string",
                 "pattern": "^[A-Za-z0-9_-]+$",
                 "description": "With \"output\": \"text\": the data key ({data.<as>})."
+              },
+              "pin": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "description": "With \"output\": pin what it created as an artifact of this name ({artifact.<pin>.<field>}; fields: the JSON object, or { <as>: text }), shown as \"created by setup\"."
+              },
+              "role": {
+                "type": "string",
+                "description": "With \"pin\": what kind of thing it is (account, case…); {artifact[<role>].<field>} is the latest of that role."
+              },
+              "secret": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "With \"pin\": fields that are secrets (redacted everywhere)."
               }
             },
             "additionalProperties": false,
@@ -280,10 +436,23 @@
           }
         ]
       },
-      "description": "After the browser closes."
+      "description": "After the browser closes, if every setup hook ran. Older form: prefer \"items\"."
+    },
+    "checkSteps": {
+      "$ref": "common.schema.json#/$defs/steps",
+      "description": "Browser checks, off camera before \"steps\": if they all pass, the data is already in place and \"steps\" are skipped."
     },
     "steps": {
-      "$ref": "common.schema.json#/$defs/steps"
+      "$ref": "common.schema.json#/$defs/steps",
+      "description": "Browser steps, off camera before the first scene."
+    },
+    "cleanupSteps": {
+      "$ref": "common.schema.json#/$defs/steps",
+      "description": "Browser steps that undo \"steps\", off camera after the last scene, before the browser closes (also when a scene failed). Skipped when \"checkSteps\" found the data already in place."
+    },
+    "readOnly": {
+      "type": "boolean",
+      "description": "This fixture only reads existing data (nothing to clean up), even on a shared environment."
     }
   }
 }
