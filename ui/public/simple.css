@@ -131,3 +131,30 @@ details.raw pre { margin-top: 6px; max-height: 200px; }
 .step-row.offcam { border-style: dashed; opacity: .8; }
 .in-wrap { display: inline-flex; align-items: center; gap: 2px; }
 .art-pick { width: 2.6em; padding: 2px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); cursor: pointer; }
+
+/* ---- scene markers under a video ---- */
+.markers { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.marker { font-size: 13px; padding: 4px 10px; border-radius: 999px; border: 2px solid var(--line); background: var(--card); cursor: pointer; max-width: 260px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.marker.now { border-color: #2f7de1; background: #e8f1fd; }
+
+/* ---- editor: timing, {data.x} values, pick from the page, pin editor ---- */
+.ok-text { color: #2fb34a; } .bad-text { color: #e0443a; } .warn-text { color: #b8730a; font-size: 15px; margin-top: 2px; }
+.timing { margin: 4px 0 6px; }
+.data-hints { flex-basis: 100%; } .data-hint { display: block; font-size: 13px; color: var(--muted); margin: 2px 0 0 34px; }
+.step-row { flex-wrap: wrap; }
+.pick-panel { border: 2px solid #2f7de1; border-radius: 16px; padding: 12px 14px; margin-top: 12px; background: var(--card); }
+.pick-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.pick-head .mid-input { width: 280px; margin: 0; font-size: 15px; padding: 6px 10px; }
+.pick-body { display: grid; grid-template-columns: minmax(0, 3fr) minmax(220px, 2fr); gap: 12px; }
+.pick-shot img { width: 100%; border: 1px solid var(--line); border-radius: 8px; }
+.pick-names { max-height: 360px; overflow: auto; display: flex; flex-direction: column; gap: 3px; margin: 6px 0; }
+.pick-name { text-align: left; font-size: 14px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; }
+.pick-name.on { border-color: #2f7de1; background: #e8f1fd; }
+.pick-do { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.pick-do .mid-input { width: 180px; margin: 0; font-size: 15px; padding: 6px 10px; }
+.edit-pin { border: 0; background: none; cursor: pointer; font-size: 15px; }
+.pin-editor { border: 2px dashed var(--line); border-radius: 12px; padding: 10px 14px; margin: 4px 0 10px 34px; }
+.pin-field { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.pin-field .mid-input { width: 220px; margin: 0; font-size: 15px; padding: 6px 10px; }
+.pin-cleanup { width: 100%; font: 13px/1.4 ui-monospace, monospace; border: 2px solid var(--line); border-radius: 10px; }

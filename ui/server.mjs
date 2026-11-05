@@ -113,6 +113,70 @@ function platformDetail(name) {
   return { name, files, env, logins, default: envs.default, environments: envNames(envs), envInfo, baseUrl: envs[envs.default]?.baseUrl, cleanup: pendingCleanup(name) };
 }
 
+/**
+ * The {data.<key>} values a tour's steps can use, and where each comes from: platform.json "data" < the environment's
+ * "data" < the tour's fixtures (later wins, as the engine merges them). Values that are {env:NAME} references stay as
+ * the reference, and keys that look like credentials are masked: the UI shows names, never secrets.
+ */
+const SECRET_KEY = /pass|secret|token|key|pwd|credential/i;
+function tourData(rel) {
+  const f = platformFile(rel);
+  if (!f || !/\.tour\.json$/.test(f)) return null;
+  const tour = readJson(f);
+  const pname = path.relative(platformsDir, f).split(path.sep)[0], dir = path.join(platformsDir, pname);
+  const envs = envFile(dir), env = tour?.env ?? envs.default;
+  const out = {};
+  const add = (data, source) => { for (const [k, v] of Object.entries(data ?? {})) {
+    const s = typeof v === 'string' ? v : JSON.stringify(v);
+    out[k] = { value: SECRET_KEY.test(k) && !/^\{env:\w+\}$/.test(s) ? '●●●' : s, source };
+  } };
+  add(readJson(path.join(dir, 'platform.json'))?.data, 'platform');
+  if (env) add(envs[env]?.data, `environment ${env}`);
+  for (const fx of tour?.fixtures ?? []) add(readJson(path.join(dir, 'fixtures', `${fx}.json`))?.data, `fixture ${fx}`);
+  return { platform: pname, env: env ?? null, data: out };
+}
+
+// ---- trash: deleted items live under out/.trash/<stamp>/<path relative to the checkout>; restore moves them back ----
+const trashDir = path.join(outDir, '.trash');
+/**
+ * Each trashed item: its stamp, where it came from, what kind it is, and whether its old place is free again. Every
+ * delete has its own stamp, so a stamp holds one item; item.json (written by delete) names it. Older stamps without
+ * it: out/<name>/<run> is a run; under platforms/, a single file is a file, anything else the platform.
+ */
+function listTrash() {
+  if (!isDir(trashDir)) return [];
+  const leaves = (d, rel = '') => fs.readdirSync(d).flatMap(e => { const p = path.join(d, e), r = rel ? `${rel}/${e}` : e; return isDir(p) ? leaves(p, r) : [r]; });
+  const items = [];
+  for (const stamp of fs.readdirSync(trashDir).sort().reverse()) {
+    const base = path.join(trashDir, stamp);
+    if (!isDir(base)) continue;
+    let item = readJson(path.join(base, 'item.json'));
+    if (!item?.path) {
+      const files = leaves(base).filter(r => r !== 'item.json');
+      if (!files.length) continue;
+      const parts = files[0].split('/');
+      item = parts[0] === 'out' ? { kind: 'run', path: parts.slice(0, 3).join('/') }
+        : parts[0] === 'platforms' && files.length === 1 && parts.length > 2 ? { kind: 'file', path: files[0] }
+        : parts[0] === 'platforms' ? { kind: 'platform', path: parts.slice(0, 2).join('/') } : null;
+    }
+    if (!item || !fs.existsSync(path.join(base, ...item.path.split('/')))) continue;
+    items.push({ id: stamp, stamp, path: item.path, kind: item.kind, deletedAt: stampTime(stamp), exists: fs.existsSync(path.join(root, ...item.path.split('/'))) });
+  }
+  return items;
+}
+const stampTime = s => { const m = /^(\d{4}-\d\d-\d\d)T(\d\d)-(\d\d)-(\d\d)-(\d+)Z$/.exec(s); return m ? `${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z` : null; };
+function restoreTrash(id) {
+  const item = listTrash().find(i => i.id === id);
+  if (!item) return { code: 404, error: 'nothing in the trash by that name' };
+  if (item.exists) return { code: 409, error: `${item.path} exists again; rename or delete that one first` };
+  const base = path.join(trashDir, item.stamp), src = path.join(base, ...item.path.split('/')), dest = within(root, item.path);
+  if (!dest || !(dest.startsWith(platformsDir + path.sep) || dest.startsWith(outDir + path.sep))) return { code: 403, error: 'outside platforms/ and out/' };
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.renameSync(src, dest);
+  fs.rmSync(base, { recursive: true, force: true });   // the stamp held only this item
+  return { code: 200, restored: item.path };
+}
+
 // ---- test data left behind: runs whose ledger.json still has undo pending (src/ledger.mjs; read as files) ----
 const OPEN_UNDO = new Set(['pending', 'done', 'undo-failed']);
 function pendingCleanup(platform) {
@@ -284,7 +348,26 @@ async function api(req, res, url) {
     const dest = path.join(outDir, '.trash', stamp, path.relative(root, target));
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.renameSync(target, dest);
+    const from = path.relative(root, target).replaceAll('\\', '/');
+    fs.writeFileSync(path.join(outDir, '.trash', stamp, 'item.json'), JSON.stringify({ path: from, kind: kind === 'platform' || kind === 'run' ? kind : 'file' }) + '\n');
     return send(res, 200, { trashed: path.relative(root, dest).replaceAll('\\', '/') });
+  }
+  if (m === 'GET' && p === '/api/trash') return send(res, 200, listTrash());
+  if (m === 'POST' && p === '/api/restore') {
+    const { id } = await body(req);
+    if ([...jobs.values()].some(j => !j.done)) return send(res, 409, { error: 'something is still running; try again when it finishes' });
+    const r = restoreTrash(String(id ?? ''));
+    return r.error ? send(res, r.code, { error: r.error }) : send(res, 200, { restored: r.restored });
+  }
+  if (m === 'GET' && p === '/api/tour-data') {
+    const d = tourData(q('path'));
+    return d ? send(res, 200, d) : send(res, 403, { error: 'only platform tours (platforms/<name>/tours/*.tour.json)' });
+  }
+  if (m === 'GET' && p === '/api/schema') {   // a definition file's JSON Schema, for the forms (the same files the CLI checks)
+    const type = q('type');
+    if (!/^[a-z]+$/.test(type)) return send(res, 400, { error: 'type: tour, platform, environments, login, fragment, fixture, mocks' });
+    const s = readJson(path.join(root, 'schemas', `${type}.schema.json`)), common = readJson(path.join(root, 'schemas', 'common.schema.json'));
+    return s ? send(res, 200, { schema: s, common }) : send(res, 404, { error: `no schema "${type}"` });
   }
   if (m === 'PUT' && p === '/api/secret') {
     // Saves one credential the platform references as {env:NAME} into the checkout's .env (git-ignored).

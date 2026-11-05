@@ -1,6 +1,8 @@
 // The simple screens: for someone who has never seen the tool. No JSON, no CLI words, plain-language results.
 // Advanced screens live in app.js behind the ☰ menu.
 
+import { filmedScenes, mountMarkers, sceneStarts } from './media.js';
+
 export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES }) {
   const send = (method, url, data) => api(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
   const pretty = slug => { const s = String(slug).replace(/\.tour\.(json|mjs)$/, '').replace(/[-_]+/g, ' ').trim(); return s.charAt(0).toUpperCase() + s.slice(1); };
@@ -141,6 +143,65 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
     const what = isStr(v) ? v : v && typeof v === 'object' ? (v.name ?? v.text ?? v.label ?? v.placeholder ?? v.testId ?? v.css ?? v.url ?? JSON.stringify(v)) : String(v ?? '');
     const args = s.with ? ` (${Object.entries(s.with).map(([k, x]) => `${k}: ${isStr(x) ? x : JSON.stringify(x)}`).join(', ')})` : '';
     return `${action} ${String(what).slice(0, 60)}${args}`;
+  }
+
+  // ---- scene timing: how long the voice speaks vs. how long the steps take ----
+  // Spoken length as the engine estimates it (src/tts.mjs: words / 2.5, at least 2 s); steps by rough kind (what a
+  // paced run spends: a cursor move and a click, typing, a page load). Paced steps run while the voice speaks; when
+  // they take longer, the scene overruns its narration (the voice stops, the video keeps going).
+  const spokenSeconds = text => { const w = String(text ?? '').split(/\s+/).filter(Boolean).length; return w ? Math.max(2, w / 2.5) : 0; };
+  function stepSeconds(st) {
+    if (st.camera === false) return 0;   // cut from the video
+    if (typeof st.wait === 'number') return st.wait;
+    if (st.goto != null) return 2.5;
+    if (st.fill != null || st.type != null) return 1.2 + String(st.text ?? '').length * 0.06;
+    if (st.verify != null || st.waitFor != null || st.pin != null || st.capture != null || st.at != null) return 0.4;
+    if (st.press != null) return 0.6;
+    if (st.use != null || st.code != null) return 3;
+    return 1.4;   // click, hover, check, select…
+  }
+  const sceneTiming = s => ({ spoken: spokenSeconds(s.narration), steps: (s.steps ?? []).reduce((n, st) => n + stepSeconds(st), s.url ? 2.5 : 0) });
+
+  // ---- gotos the planner wrote: a path from the site root drops the base URL's own path ----
+  /**
+   * goto resolves like new URL(path, baseUrl): with a base of http://host/todomvc/, "/todomvc/#/" stays inside it but
+   * "/#/" leaves it (http://host/#/). Gotos (and scene urls) that repeat the base path are made relative ("#/");
+   * other root paths are reported, since only a person knows which page was meant.
+   */
+  function fixGotos(t, baseUrl) {
+    let basePath = '/'; try { basePath = new URL(baseUrl).pathname; } catch {}
+    const fixed = [], outside = [];
+    if (basePath === '/' ) return { fixed, outside };
+    const fix = (v, where) => {
+      if (!isStr(v) || !v.startsWith('/') || v.startsWith('//')) return v;
+      if (v.startsWith(basePath) || `${v}/` === basePath) { const r = v.slice(basePath.length) || './'; fixed.push(`${where}: ${v} → ${r}`); return r; }
+      outside.push(`${where}: ${v}`); return v;
+    };
+    (t.scenes ?? []).forEach((s, i) => {
+      if (s.url) s.url = fix(s.url, `Scene ${i + 1} page`);
+      (s.steps ?? []).forEach((st, j) => { if (isStr(st.goto)) st.goto = fix(st.goto, `Scene ${i + 1}, step ${j + 1}`); });
+    });
+    return { fixed, outside, basePath };
+  }
+
+  // ---- {data.x}: what a placeholder stands for, from the platform, the environment and the tour's fixtures ----
+  const dataHint = (v, data) => {
+    const keys = [...String(v ?? '').matchAll(/\{data\.([\w.-]+)\}/g)].map(m => m[1]);
+    if (!keys.length) return '';
+    return `<span class="data-hint">${keys.map(k => data?.[k] ? `<span title="from ${h(data[k].source)}">{data.${h(k)}} = <b>${h(data[k].value)}</b></span>`
+      : `<span class="bad-text" title="Nothing gives it a value: add it to a fixture's data, or to the app's or environment's data">{data.${h(k)}} isn't set</span>`).join(' · ')}</span>`;
+  };
+
+  /** Interactive names on the page, from an ARIA snapshot: what a step can target by its words. */
+  function ariaTargets(aria) {
+    const ROLES = { button: 'click', link: 'click', tab: 'click', menuitem: 'click', option: 'click', checkbox: 'click', radio: 'click', switch: 'click',
+      textbox: 'fill', searchbox: 'fill', combobox: 'fill', spinbutton: 'fill', heading: 'verify' };
+    const out = new Map();
+    for (const line of String(aria ?? '').split('\n')) {
+      const m = /^\s*- (\w+) "((?:[^"\\]|\\.)+)"/.exec(line);
+      if (m && ROLES[m[1]]) { const name = m[2].replace(/\\"/g, '"'); out.set(`${m[1]}|${name}`, { role: m[1], name, does: ROLES[m[1]] }); }
+    }
+    return [...out.values()];
   }
 
   // ---- IMPORT: drop (or pick) an exported .aft.json, choose the app, import it into platforms/<app>/tours/ ----
@@ -416,7 +477,11 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         <div id="export-msg"></div>
         <div id="creds"></div>
         ${lastVideo ? `<div class="group-title">Latest video</div><div class="card" style="max-width:900px"><video controls preload="metadata" src="${fileUrl(lastVideo.id, 'tour.mp4')}">
-          <track default kind="captions" src="${fileUrl(lastVideo.id, 'tour.vtt')}"></video></div>` : ''}`;
+          <track default kind="captions" src="${fileUrl(lastVideo.id, 'tour.vtt')}"></video><div id="markers"></div></div>` : ''}`;
+      if (lastVideo) api(`/api/run?id=${encodeURIComponent(lastVideo.id)}`).then(async rd => {
+        let t = null; try { t = rd.files.some(f => f.path === 'tour.json') ? await (await fetch(fileUrl(lastVideo.id, 'tour.json'))).json() : await readTour(p); } catch {}
+        await mountMarkers($app.querySelector('#markers'), $app.querySelector('video'), { vttUrl: fileUrl(lastVideo.id, 'tour.vtt'), scenes: filmedScenes(rd.files, t) });
+      }).catch(() => {});
       if (hasLogin) signInCard(platform, $app.querySelector('#creds'), { open: lastAny && friendly(lastAny).kind === 'login' && lastAny.status === 'failed' });
       let job = null;
       const start = async what => {
@@ -484,6 +549,23 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       const q = query(), flagScene = Number(q.get('scene')) || null, flagStep = Number(q.get('step')) || null;
       let dirty = false, picking = null, genOpen = false, genJob = null, genText = '';
       const platform = p.split('/')[1];
+      // {data.x} values, the app's address (for goto checks), and how long each scene took in the last video
+      const [tourData, pd, runs] = await Promise.all([api(`/api/tour-data?path=${encodeURIComponent(p)}`).catch(() => null),
+        api(`/api/platform?name=${encodeURIComponent(platform)}`).catch(() => ({})), api('/api/runs').catch(() => [])]);
+      const data = tourData?.data ?? {};
+      const lastVideo = runs.find(r => rel(r.input?.[0]) === p && r.command === 'run' && r.status === 'done');
+      const filmedLength = {};   // scene number → seconds in the last video
+      if (lastVideo) try {
+        const vtt = await (await fetch(fileUrl(lastVideo.id, 'tour.vtt'))).text();
+        const rd = await api(`/api/run?id=${encodeURIComponent(lastVideo.id)}`);
+        const ids = filmedScenes(rd.files, tour).map(s => s.n);
+        const starts = sceneStarts(vtt), end = rd.run?.seconds ?? null;
+        ids.forEach((n, k) => { const next = starts[k + 1] ?? end; if (starts[k] != null && next != null) filmedLength[n] = next - starts[k]; });
+      } catch {}
+      // the pick-from-the-page panel: one scene at a time
+      let pick = null;   // { scene, state: 'loading'|'ready'|'error', url, shot, targets, error, chosen }
+      let pickJob = null;
+      let pinOpen = null;  // "i:j" of the pin step being edited
       const genPanel = () => !genOpen ? '' : `<div class="gen-panel">
           <label class="lbl">Paste the story (e.g. from Jira): title, description and acceptance criteria</label>
           <textarea id="story" rows="9" placeholder="RMS-1234 Add a report&#10;As a user I want…&#10;&#10;Acceptance criteria:&#10;1. …">${h(genText)}</textarea>
@@ -506,13 +588,16 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
                 <button class="icon-btn" data-local data-clonescene="${i}" title="Copy this scene" aria-label="Copy this scene">⧉</button>
                 <button class="icon-btn del" data-local data-delscene="${i}" title="Delete this scene" aria-label="Delete this scene">🗑</button></span></div>
             ${s.camera === false ? `<div class="offcam-note">🎥 Off camera: these steps run and are checked, but this scene is not in the video and needs no narration.</div>` : `<label class="lbl">Narration</label>
-            <textarea class="narr" rows="3" data-s="${i}" data-f="narration" placeholder="What should the voice say here?">${h(s.narration ?? '')}</textarea>`}
+            <textarea class="narr" rows="3" data-s="${i}" data-f="narration" placeholder="What should the voice say here?">${h(s.narration ?? '')}</textarea>
+            <div class="timing" data-timing="${i}">${timingHtml(i)}</div>`}
             <label class="lbl">Steps</label>
             <div class="steps">${(s.steps ?? []).map((st, j) => stepRow(st, i, j, flagScene === i + 1 && flagStep === j + 1)).join('')
               || '<div class="hint">No steps yet.</div>'}</div>
             ${picking === i ? `<div class="picker">${Object.entries(KINDS).map(([k, K]) => `<button class="pick" data-pick="${k}" data-s="${i}">
                 <span class="icon">${K.icon}</span><b>${K.label}</b><span class="hint">${K.hint}</span></button>`).join('')}</div>`
-              : `<button class="chunky small c-blue" data-add="${i}">＋ ADD STEP</button>`}
+              : `<button class="chunky small c-blue" data-add="${i}">＋ ADD STEP</button>
+                 <button class="chunky small c-gray" data-pickpage="${i}" title="Open the app at this scene's page and pick what to click or type into">🖱 PICK FROM THE PAGE</button>`}
+            ${pick?.scene === i ? pickPanel(i) : ''}
           </div>`).join('')}
           <div class="actions">
             <button class="chunky mid c-blue" id="addscene"><span class="icon">➕</span>ADD SCENE</button>
@@ -533,6 +618,144 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         }));
         return [...new Map(refs.map(r => [r.ref, r])).values()];
       };
+      /** "🗣 about 9 s spoken · 👣 about 12 s of steps", with a warning when the steps outlast the voice. */
+      function timingHtml(i) {
+        const s = tour.scenes[i], t = sceneTiming(s), r = x => Math.round(x);
+        if (!t.spoken && !t.steps) return '';
+        const filmed = filmedLength[i + 1];
+        const over = t.spoken && t.steps > t.spoken + 1;
+        return `<span class="hint">🗣 about ${r(t.spoken)} s spoken · 👣 about ${r(t.steps)} s of steps${filmed ? ` · 🎬 ${r(filmed)} s in the last video` : ''}</span>
+          ${over ? `<div class="warn-text">⚠ The steps take longer than the voice: the scene runs on silently for about ${r(t.steps - t.spoken)} s. Add a few words, or move some steps to a scene of their own.</div>` : ''}
+          ${!t.spoken && t.steps ? '<div class="hint">No narration yet: the scene lasts as long as its steps.</div>' : ''}`;
+      }
+
+      /** Where the app should open for scene i: its url, else the last page an earlier step opened, else the start page. */
+      function scenePage(i) {
+        for (let k = i; k >= 0; k--) {
+          const s = tour.scenes[k], g = [...(s.steps ?? [])].reverse().find(st => isStr(st.goto))?.goto;
+          if (g) return g;
+          if (s.url) return s.url;
+        }
+        return '';
+      }
+
+      const ROLE_ICON = { button: '🔘', link: '🔗', tab: '🗂', menuitem: '☰', option: '•', checkbox: '☑', radio: '◉', switch: '⏻', textbox: '⌨️', searchbox: '🔎', combobox: '▾', spinbutton: '🔢', heading: '🅷' };
+      /** The live page for scene i: a screenshot and every name on it a step can use, each with what it can do. */
+      function pickPanel(i) {
+        const P = pick;
+        const head = `<div class="pick-head"><b>🖱 Pick from the page</b>
+          <input class="mid-input" id="pick-url" value="${h(P.url ?? '')}" placeholder="page, e.g. #/ or /reports (blank: where it is now)">
+          <button class="chunky small c-blue" id="pick-load">↻ OPEN</button>
+          ${P.live ? `<button class="chunky small c-gray" id="pick-steps" title="Do this scene's steps in the open browser first, then look again">▶ DO THE STEPS SO FAR</button>
+            <button class="chunky small c-gray" id="pick-stop" title="Close the browser kept open for picking">■ CLOSE THE BROWSER</button>`
+            : '<button class="chunky small c-gray" id="pick-live" title="Keep a signed-in browser open: each look takes a second instead of starting over">⚡ KEEP A BROWSER OPEN</button>'}
+          <button class="chunky small c-gray" id="pick-close">✕</button></div>`;
+        if (P.state === 'loading') return `<div class="pick-panel">${head}<div class="verdict wait">⏳ ${h(P.what ?? 'Opening the app')}…<small id="pick-last">${P.live ? '' : 'Without an open browser this starts one and signs in: up to a minute.'}</small></div></div>`;
+        if (P.state === 'error') return `<div class="pick-panel">${head}<div class="verdict bad">✘ ${h(P.error)}</div></div>`;
+        const filter = (P.filter ?? '').toLowerCase();
+        const list = P.targets.filter(t => !filter || t.name.toLowerCase().includes(filter));
+        const chosen = P.chosen != null ? P.targets[P.chosen] : null;
+        return `<div class="pick-panel">${head}
+          <p class="hint">${h(P.title ?? '')} <code>${h(P.pageUrl ?? '')}</code>. ${P.live ? 'The open browser keeps its state between looks.' : 'It opens this page fresh: steps before this point have not been done.'}</p>
+          <div class="pick-body"><div class="pick-shot">${P.shot ? `<a href="${h(P.shot)}" target="_blank"><img src="${h(P.shot)}" alt="the page now"></a>` : '<div class="noshot muted">no screenshot</div>'}</div>
+            <div class="pick-list"><input class="mid-input" id="pick-filter" placeholder="filter names" value="${h(P.filter ?? '')}">
+              <div class="pick-names">${list.map(t => { const n = P.targets.indexOf(t); return `<button class="pick-name ${P.chosen === n ? 'on' : ''}" data-target="${n}" title="${h(t.role)}">
+                <span>${ROLE_ICON[t.role] ?? '•'}</span> ${h(t.name)} <span class="muted">${h(t.role)}</span></button>`; }).join('') || '<span class="hint">Nothing with a name here.</span>'}</div>
+              ${chosen ? `<div class="pick-do"><b>${h(chosen.name)}</b>:
+                <button class="chunky small c-blue" data-addpick="click">👆 Click it</button>
+                ${chosen.does === 'fill' ? `<input class="mid-input" id="pick-text" placeholder="what to type"> <button class="chunky small c-blue" data-addpick="fill">⌨️ Type into it</button>` : ''}
+                <button class="chunky small c-blue" data-addpick="verify">✅ Check it shows</button></div>` : '<p class="hint">Pick a name to add a step for it.</p>'}
+            </div></div></div>`;
+      }
+
+      /** Runs a CLI job for the pick panel; resolves with its result. */
+      const pickRun = (args, what) => new Promise(ok => {
+        pick = { ...pick, state: 'loading', what }; draw();
+        runJob(args, { onLine: l => { const el = $app.querySelector('#pick-last'); if (el && /sign|login|launch|attach|session|browser/i.test(l)) el.textContent = l.slice(0, 140); },
+          onDone: ok }).then(j => (pickJob = j));
+      });
+      async function pickLook(url) {
+        const r = await pickRun(['snapshot', '--platform', platform, '--screenshot', ...(url ? ['--url', url] : [])], url ? `Opening ${url}` : 'Looking at the page');
+        if (!pick) return;
+        if (!r.ok) { pick = { ...pick, state: 'error', error: r.error?.message ?? 'It could not open the page.' }; draw(); return; }
+        const d = r.data ?? {};
+        const shot = d.screenshot ? `/api/file/${rel(d.screenshot).replace(/^out\//, '').split('/').map(encodeURIComponent).join('/')}` : null;
+        pick = { ...pick, state: 'ready', url, pageUrl: d.url, title: d.title, shot, targets: ariaTargets(d.aria), chosen: null };
+        draw();
+      }
+      async function pickLive() {
+        const r = await pickRun(['session', 'start', '--platform', platform], 'Opening a browser to keep');
+        if (!pick) return;
+        pick.live = !!r.ok;
+        if (!r.ok) { pick = { ...pick, state: 'error', error: r.error?.message ?? "Couldn't open a browser." }; draw(); return; }
+        pickLook(pick.url);
+      }
+      async function pickSteps(i) {
+        const s = tour.scenes[i];
+        const steps = [...(s.url ? [{ goto: s.url }] : []), ...(s.steps ?? [])].map(({ camera, ...st }) => st);
+        if (!steps.length) return pickLook(pick.url);
+        const r = await pickRun(['try-step', JSON.stringify(steps), '--platform', platform], `Doing scene ${i + 1}'s ${steps.length} step(s)`);
+        if (!pick) return;
+        if (!r.ok) { pick = { ...pick, state: 'error', error: `A step didn't work: ${r.error?.message ?? r.data?.error ?? ''}` }; draw(); return; }
+        pickLook('');
+      }
+
+      /** The pin step's editor: name, role, each field (from the page, the page address, or a fixed value), secrets, cleanup. */
+      function pinEditor(st, i, j) {
+        const fields = Object.entries(st.fields ?? {});
+        const modeOf = v => isStr(v) ? 'page' : v?.capture?.url ? 'url' : v && 'value' in v ? 'value' : v?.capture ? 'capture' : 'page-adv';
+        const fieldRow = ([k, v], n) => {
+          const mode = modeOf(v);
+          const main = mode === 'page' ? v : mode === 'url' ? v.pattern ?? '' : mode === 'value' ? v.value ?? '' : JSON.stringify(v);
+          return `<div class="pin-field" data-n="${n}">
+            <input class="pin-in" data-pf="name" value="${h(k)}" placeholder="field, e.g. id" size="10">
+            <select class="pin-in" data-pf="mode">
+              <option value="page" ${mode === 'page' ? 'selected' : ''}>from the page: words of the element</option>
+              <option value="url" ${mode === 'url' ? 'selected' : ''}>from the page address (a pattern)</option>
+              <option value="value" ${mode === 'value' ? 'selected' : ''}>a fixed value</option>
+              ${['capture', 'page-adv'].includes(mode) ? `<option value="${mode}" selected>advanced (JSON)</option>` : ''}</select>
+            <input class="pin-in mid-input" data-pf="main" value="${h(main)}" placeholder="${mode === 'url' ? 'e.g. /orders/(\\d+)' : mode === 'value' ? 'value' : 'e.g. Order number'}">
+            <label class="hint"><input type="checkbox" class="pin-in" data-pf="secret" ${(st.secret ?? []).includes(k) ? 'checked' : ''}> secret</label>
+            <button class="del" data-pindel="${n}" title="Remove this field">🗑</button>${dataHint(main, data)}</div>`;
+        };
+        const cleanup = st.cleanup == null ? '' : JSON.stringify(st.cleanup, null, 2);
+        return `<div class="pin-editor" data-pin="${i}:${j}">
+          <label class="lbl">Name it (later steps use {artifact.<i>name</i>.<i>field</i>})</label><input class="mid-input pin-top" data-pk="pin" value="${h(st.pin)}">
+          <label class="lbl">What kind of thing it is (optional; {artifact[<i>kind</i>].field} is the latest one)</label><input class="mid-input pin-top" data-pk="role" value="${h(st.role ?? '')}" placeholder="e.g. order">
+          <label class="lbl">Its fields</label>${fields.map(fieldRow).join('')}
+          <button class="chunky small c-blue" data-pinadd>＋ FIELD</button>
+          <label class="lbl">How to remove it afterwards (cleanup: steps, e.g. [{"click": "Delete"}], or a hook {"run": "…"}; blank: none)</label>
+          <textarea class="pin-cleanup" rows="${Math.min(8, cleanup.split('\n').length + 1)}" spellcheck="false">${h(cleanup)}</textarea>
+          <div class="pin-msg"></div>
+          <button class="chunky small c-gray" data-pindone>✔ DONE</button></div>`;
+      }
+      /** Reads the pin editor back into the step; returns an error message or null. */
+      function readPin(box, st) {
+        const top = k => box.querySelector(`[data-pk="${k}"]`).value.trim();
+        if (!/^[A-Za-z_][\w-]*$/.test(top('pin'))) return 'The name: letters, digits, - and _ (start with a letter).';
+        const fields = {}, secret = [];
+        for (const row of box.querySelectorAll('.pin-field')) {
+          const g = k => row.querySelector(`[data-pf="${k}"]`);
+          const k = g('name').value.trim(), mode = g('mode').value, main = g('main').value;
+          if (!k) continue;
+          if (!/^[A-Za-z_][\w-]*$/.test(k)) return `Field "${k}": letters, digits, - and _.`;
+          if (mode === 'page') fields[k] = main;
+          else if (mode === 'url') fields[k] = { capture: { url: true }, ...(main ? { pattern: main } : {}) };
+          else if (mode === 'value') fields[k] = { value: main };
+          else { try { fields[k] = JSON.parse(main); } catch { return `Field "${k}": that isn't valid JSON.`; } }
+          if (g('secret').checked) secret.push(k);
+        }
+        if (!Object.keys(fields).length) return 'Give it at least one field.';
+        const cl = box.querySelector('.pin-cleanup').value.trim();
+        let cleanup; if (cl) { try { cleanup = JSON.parse(cl); } catch { return "The cleanup isn't valid JSON."; } }
+        st.pin = top('pin');
+        if (top('role')) st.role = top('role'); else delete st.role;
+        st.fields = fields;
+        if (secret.length) st.secret = secret; else delete st.secret;
+        if (cleanup !== undefined) st.cleanup = cleanup; else delete st.cleanup;
+        return null;
+      }
+
       function stepRow(st, i, j, flag) {
         const k = kindOf(st), K = KINDS[k];
         const off = st.camera === false;
@@ -543,22 +766,72 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           <button class="del" data-del="${j}" data-s="${i}" title="Delete this step" aria-label="Delete this step">🗑</button></span>`;
         const cls = `step-row ${flag ? 'flag' : ''} ${off ? 'offcam' : ''}`;
         if (st.pin) return `<div class="${cls} adv"><span class="step-icon">📌</span><span>Pin <b>${h(st.pin)}</b>${st.role ? ` (${h(st.role)})` : ''}: ${h(Object.keys(st.fields ?? {}).join(', '))}
-          ${st.cleanup ? '<span class="badge ok">has cleanup</span>' : '<span class="badge warn" title="Add &quot;cleanup&quot; (edit the raw file) so the run removes it">no cleanup</span>'}</span>${tools}</div>`;
-        if (!K) return `<div class="${cls} adv"><span class="step-icon">⚙</span><span>advanced step: ${h(summary(st))}</span>${tools}</div>`;
+          ${st.cleanup ? '<span class="badge ok">has cleanup</span>' : '<span class="badge warn" title="Say how to remove it (✏️) so the run cleans up after itself">no cleanup</span>'}
+          <button class="edit-pin" data-editpin="${i}:${j}" title="Edit this pin">✏️</button></span>${tools}</div>
+          ${pinOpen === `${i}:${j}` ? pinEditor(st, i, j) : ''}`;
+        if (!K) return `<div class="${cls} adv"><span class="step-icon">⚙</span><span>advanced step: ${h(summary(st))}</span>${tools}<span class="data-hints">${dataHint(JSON.stringify(st), data)}</span></div>`;
         const refs = artifactRefs(i, j);
         const inputs = K.fields.map(([f, ph, type]) => `<span class="in-wrap"><input class="step-in" data-s="${i}" data-j="${j}" data-k="${f}" ${type === 'number' ? 'type="number" min="0" step="0.5"' : ''}
           value="${h(getF(st, f) ?? '')}" placeholder="${h(ph)}">${refs.length && type !== 'number' ? `<select class="art-pick" data-s="${i}" data-j="${j}" data-k="${f}" title="Use a value this run created earlier (a pinned artifact)" aria-label="Insert an artifact value">
             <option value="">📌</option>${refs.map(r => `<option value="${h(r.ref)}">${h(r.label)}</option>`).join('')}</select>` : ''}</span>`);
         const words = K.words.map(w => w ? `<span>${h(w)}</span>` : '');
         const parts = []; for (let n = 0; n < words.length; n++) { parts.push(words[n]); if (inputs[n]) parts.push(inputs[n]); }
-        return `<div class="${cls}"><span class="step-icon">${K.icon}</span>${parts.join('')}${off ? '<span class="badge offcam">off camera</span>' : ''}${tools}</div>`;
+        const hints = K.fields.map(([f]) => dataHint(getF(st, f), data)).join('');
+        return `<div class="${cls}"><span class="step-icon">${K.icon}</span>${parts.join('')}${off ? '<span class="badge offcam">off camera</span>' : ''}${tools}
+          <span class="data-hints" data-hints="${i}:${j}">${hints}</span></div>`;
       }
       function wire() {
         const $$ = s => $app.querySelectorAll(s);
-        $$('[data-f]').forEach(el => (el.oninput = () => { tour.scenes[el.dataset.s][el.dataset.f] = el.value; dirty = true; }));
+        const retime = i => { const el = $app.querySelector(`[data-timing="${i}"]`); if (el) el.innerHTML = timingHtml(Number(i)); };
+        $$('[data-f]').forEach(el => (el.oninput = () => { tour.scenes[el.dataset.s][el.dataset.f] = el.value; dirty = true; if (el.dataset.f === 'narration') retime(el.dataset.s); }));
         $$('.step-in').forEach(el => (el.oninput = () => {
           const st = tour.scenes[el.dataset.s].steps[el.dataset.j];
-          setF(st, el.dataset.k, el.type === 'number' ? Number(el.value) : el.value); dirty = true; }));
+          setF(st, el.dataset.k, el.type === 'number' ? Number(el.value) : el.value); dirty = true;
+          retime(el.dataset.s);
+          const hb = $app.querySelector(`[data-hints="${el.dataset.s}:${el.dataset.j}"]`), K = KINDS[kindOf(st)];
+          if (hb && K) hb.innerHTML = K.fields.map(([f]) => dataHint(getF(st, f), data)).join(''); }));
+        // 🖱 pick from the page
+        $$('[data-pickpage]').forEach(b => (b.onclick = async () => {
+          const i = Number(b.dataset.pickpage);
+          pickJob?.close();
+          pick = { scene: i, url: scenePage(i), live: false, state: 'loading', what: 'Looking for an open browser' }; draw();
+          const st = await new Promise(ok => runJob(['session', 'status'], { onDone: ok }));
+          if (!pick) return;
+          pick.live = !!st.data?.sessions?.some(s => s.platform === platform && s.status === 'ready');
+          pickLook(pick.url);
+        }));
+        if (pick) {
+          const i = pick.scene;
+          $app.querySelector('#pick-close').onclick = () => { pickJob?.stop(); pickJob?.close(); pick = null; draw(); };
+          $app.querySelector('#pick-load').onclick = () => pickLook($app.querySelector('#pick-url').value.trim());
+          $app.querySelector('#pick-url').onkeydown = e => { if (e.key === 'Enter') pickLook(e.target.value.trim()); };
+          $app.querySelector('#pick-live')?.addEventListener('click', pickLive);
+          $app.querySelector('#pick-steps')?.addEventListener('click', () => pickSteps(i));
+          $app.querySelector('#pick-stop')?.addEventListener('click', async () => {
+            await pickRun(['session', 'stop', '--platform', platform], 'Closing the browser');
+            if (pick) { pick.live = false; pick.state = 'ready'; pick.targets ??= []; draw(); }
+          });
+          const f = $app.querySelector('#pick-filter');
+          if (f) f.oninput = () => { pick.filter = f.value; const at = f.selectionStart; draw(); const g = $app.querySelector('#pick-filter'); g.focus(); g.setSelectionRange(at, at); };
+          $$('[data-target]').forEach(b => (b.onclick = () => { pick.chosen = Number(b.dataset.target); draw(); $app.querySelector('#pick-text')?.focus(); }));
+          $$('[data-addpick]').forEach(b => (b.onclick = () => {
+            const t = pick.targets[pick.chosen], steps = (tour.scenes[i].steps ??= []);
+            const step = b.dataset.addpick === 'click' ? { click: t.name }
+              : b.dataset.addpick === 'fill' ? { fill: t.name, text: $app.querySelector('#pick-text')?.value ?? '' }
+              : { verify: { text: t.name } };
+            steps.push(step); dirty = true; pick.chosen = null; draw();
+          }));
+        }
+        // 📌 pin editor
+        $$('[data-editpin]').forEach(b => (b.onclick = () => { pinOpen = pinOpen === b.dataset.editpin ? null : b.dataset.editpin; draw(); }));
+        $$('.pin-editor').forEach(box => {
+          const [i, j] = box.dataset.pin.split(':').map(Number), st = tour.scenes[i].steps[j];
+          const apply = () => { const err = readPin(box, st); box.querySelector('.pin-msg').innerHTML = err ? `<div class="bad-text">${h(err)}</div>` : ''; if (!err) dirty = true; return !err; };
+          box.querySelectorAll('input, select, textarea').forEach(el => (el.onchange = apply));
+          box.querySelector('[data-pinadd]').onclick = () => { if (!apply()) return; let n = Object.keys(st.fields).length + 1; while (`field${n}` in st.fields) n++; st.fields[`field${n}`] = ''; dirty = true; draw(); };
+          box.querySelectorAll('[data-pindel]').forEach(b => (b.onclick = () => { box.querySelector(`.pin-field[data-n="${b.dataset.pindel}"]`).remove(); apply(); draw(); }));
+          box.querySelector('[data-pindone]').onclick = () => { if (apply()) { pinOpen = null; draw(); } };
+        });
         $$('[data-add]').forEach(b => (b.onclick = () => { picking = Number(b.dataset.add); draw(); }));
         $$('[data-pick]').forEach(b => (b.onclick = () => {
           const i = Number(b.dataset.s), steps = (tour.scenes[i].steps ??= []);
@@ -637,9 +910,13 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
               const made = JSON.parse((await api(`/api/tour?path=${encodeURIComponent(rel(r.data.tour))}`)).text);
               tour.scenes = made.scenes ?? [];
               if (made.story) tour.story = made.story;
+              // the planner writes paths from the site root; keep them inside the app's address
+              const g = fixGotos(tour, pd.baseUrl);
               genOpen = false; dirty = true; draw();
               $app.querySelector('#msg').innerHTML = `<div class="verdict ok">✨ ${tour.scenes.length} scene${tour.scenes.length === 1 ? '' : 's'} written
-                <small>Read them through, fix anything that's off, then press SAVE.${made.draft ? ' Some steps still need filling in.' : ''}</small></div>`;
+                <small>Read them through, fix anything that's off, then press SAVE.${made.draft ? ' Some steps still need filling in.' : ''}</small>
+                ${g.fixed.length ? `<small>Pages made relative to the app's address (${h(g.basePath)}): ${h(g.fixed.join('; '))}</small>` : ''}
+                ${g.outside.length ? `<small class="bad-text">⚠ These open a page outside the app's address (${h(g.basePath)}); check them: ${h(g.outside.join('; '))}</small>` : ''}</div>`;
               $app.querySelector('.scene-card')?.scrollIntoView({ block: 'start' });
             } catch (e) { if (box) box.innerHTML = `<div class="verdict bad">✘ Couldn't read what it wrote<small>${h(e.message)}</small></div>`; }
           } });
@@ -662,13 +939,15 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           // unchanged: keep the file as it is (and its hand formatting)
           if (JSON.stringify(tour) !== original) { await saveFile(p, tour); original = JSON.stringify(tour); }
           dirty = false;
-          msg.innerHTML = `<div class="verdict ok">✔ Saved<div class="actions tight"><a class="chunky small c-orange" href="#/tour/${encodeURIComponent(p)}">🔍 GO CHECK IT</a></div></div>`;
+          // a root path leaves the app's address (goto resolves like new URL(path, baseUrl)): say so, don't block
+          const outside = fixGotos(structuredClone(tour), pd.baseUrl).outside;
+          msg.innerHTML = `<div class="verdict ok">✔ Saved${outside.length ? `<small class="bad-text">⚠ Opens a page outside the app's address: ${h(outside.join('; '))}. Start it without "/" (e.g. "#/" or "reports") to stay inside it.</small>` : ''}<div class="actions tight"><a class="chunky small c-orange" href="#/tour/${encodeURIComponent(p)}">🔍 GO CHECK IT</a></div></div>`;
         } catch (e) { msg.innerHTML = `<div class="verdict bad">✘ Couldn't save<small>${h(e.message)}</small></div>`; }
       }
       draw();
       const warn = e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } };
       addEventListener('beforeunload', warn);
-      return () => { removeEventListener('beforeunload', warn); genJob?.close(); };
+      return () => { removeEventListener('beforeunload', warn); genJob?.close(); pickJob?.close(); };
     },
   };
   return views;

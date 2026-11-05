@@ -28,6 +28,7 @@
 //   aft locate   "<target>"                           how a step target resolves: strategy, matches, visible, alternatives
 //   aft try-step '<step | [steps]>' [--url <path>]    perform steps live (fragments too): result per step + ARIA after
 //     (snapshot/locate/try-step use --session, or the only session for --platform, else a one-shot browser)
+//   aft ui       [--port 4777] [--no-open] [--root <checkout>]   the local web UI (ui/server.mjs; Ctrl+C stops it)
 //   aft --list-voices | --help | --version
 //
 // Git Bash rewrites arguments that start with / (a path like #/case/1 or /orders) into Windows paths; aft refuses
@@ -504,6 +505,20 @@ async function withSession(args, fn) {
 // ---- Commands ----------------------------------------------------------------------------------------------------
 
 const commands = {
+  /** The local web UI: runs ui/server.mjs in the foreground with this command's flags, until it is stopped. */
+  async ui() {
+    const server = path.join(toolRoot, 'ui', 'server.mjs');
+    if (!fs.existsSync(server)) throw new UsageError(`no UI in this install (${server})`);
+    const raw = process.argv.slice(process.argv.indexOf('ui') + 1).filter(a => a !== '--json');
+    const { spawn } = await import('node:child_process');
+    const child = spawn(process.execPath, [server, ...raw], { stdio: 'inherit' });
+    let stopping = false;   // stopped on purpose (Ctrl+C, a kill): not an error
+    for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopping = true; child.kill(sig); });
+    const code = await new Promise(ok => child.on('close', (c, sig) => ok(sig ? 0 : c)));
+    if (code && !stopping && code !== 130 && code !== 143) throw new UsageError(`the UI server exited with code ${code}`);
+    return null;
+  },
+
   async doctor(args) {
     const r = await doctor({ toolRoot, platform: args.platform ?? args.target, quiet: !!args.json });
     if (!r.ok) { lastData = r; throw Object.assign(new UsageError(`${r.checks.filter(c => c.required && !c.ok).length} required item(s) missing`), { data: r }); }

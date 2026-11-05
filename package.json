@@ -27,6 +27,7 @@
     "src",
     "examples",
     "README.md",
-    "schemas"
+    "schemas",
+    "ui"
   ]
 }

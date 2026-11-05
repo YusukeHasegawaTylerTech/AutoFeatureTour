@@ -1,5 +1,7 @@
 import { simpleViews } from './simple.js';
 import { mountReview } from './review.js';
+import { filmedScenes, mountMarkers } from './media.js';
+import { mountSchemaForm } from './form.js';
 // AutoFeatureTour UI: hash-routed, no build step.
 const $app = document.getElementById('app');
 const h = (s = '') => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -82,6 +84,21 @@ async function storyboard(id, d, input) {
           || '<li class="muted">no steps ran</li>'}</ol></div></div>`; }).join('')}${strip('teardown')}</div>${artifactsBoard(id, d.artifacts?.length ? d.artifacts : d.report?.artifacts ?? [], tourPath)}`;
 }
 
+/** The tour a run used: its own tour.json, else the platform tour it ran (as it is now), else null. */
+async function runTour(id, d, input) {
+  if (d.files.some(x => x.path === 'tour.json')) try { return await (await fetch(fileUrl(id, 'tour.json'))).json(); } catch {}
+  const r = input ? rel(input) : '';
+  if (/^platforms\/.+\.tour\.json$/.test(r)) try { return JSON.parse((await api(`/api/pfile?path=${encodeURIComponent(r)}`)).text); } catch {}
+  return null;
+}
+
+/** A run's steps: report.json (runs), else validation.json (dry runs). */
+async function runSteps(id, d) {
+  if (d.report?.steps) return d.report.steps;
+  if (d.files.some(x => x.path === 'validation.json')) try { return (await (await fetch(fileUrl(id, 'validation.json'))).json())?.report ?? []; } catch {}
+  return [];
+}
+
 const FX_SETUP = { 'in-place': ['ok', 'already in place'], done: ['ok', 'set up'], undone: ['ok', 'set up'], 'undo-failed': ['ok', 'set up'], pending: ['warn', 'started, never finished'], failed: ['bad', 'setup failed'] };
 const FX_UNDO = { undone: ['ok', 'undone'], 'undo-failed': ['bad', 'undo failed: data left behind'], 'in-place': ['muted', 'nothing to undo (it was already there)'], failed: ['muted', 'not undone (its setup failed)'] };
 
@@ -154,10 +171,10 @@ const views = {
     const fc = rep?.firstCause;
     const cause = fc ? (fc.kind === 'network' ? `${fc.method} ${String(fc.request).replace(/\?.*$/, '')} ${fc.status ?? fc.failure}`
       : fc.kind === 'workaround' ? `known issue "${fc.name}"` : String(fc.text ?? '').split('\n')[0]) + (fc.stepKey ? ` (during ${fc.stepKey})` : '') : '';
-    const scenes = d.timings?.scenes ?? [];
     $app.innerHTML = `<h2>${h(r.name)} <span class="muted">/ ${h(id.split('/')[1])}</span> ${status({ ...r, class: rep?.class ?? r.class })}</h2>
       <div class="toolbar">
         <a href="#/runs?name=${encodeURIComponent(r.name)}">← all runs of ${h(r.name)}</a>
+        <a href="#/compare/${h(id)}" title="What changed since the previous run of this script">⇄ compare with the previous run</a>
         ${input && /tour\.json$/.test(input) ? `${/^(platforms|out)\//.test(rel(input)) ? `<a href="#/edit/${encodeURIComponent(rel(input))}">Edit tour</a>`
             : `<span class="muted" title="${h(input)}">tour outside this checkout</span>`}
           <button data-cmd="validate">Validate again</button><button data-cmd="run" class="primary">Run again</button>` : ''}
@@ -166,7 +183,7 @@ const views = {
       <div class="grid"><div>
         ${has('tour.mp4') ? `<div class="card"><video controls preload="metadata" src="${fileUrl(id, 'tour.mp4')}">
             ${has('tour.vtt') ? `<track default kind="captions" src="${fileUrl(id, 'tour.vtt')}">` : ''}</video>
-            ${scenes.length ? `<div class="scenes">${scenes.map(s => `<span title="${s.start}–${s.end} s in the recording">${h(s.id)}</span>`).join('')}</div>` : ''}</div>`
+            <div id="markers"></div></div>`
           : has('screens/failure.png') ? `<div class="card"><img class="shot" src="${fileUrl(id, 'screens/failure.png')}"></div>` : ''}
         ${r.status !== 'done' || rep ? `<div class="card summary"><h3>Summary</h3>
           <div><b>status</b>${h(r.status)}${rep?.complete === false ? ' (incomplete)' : ''}</div>
@@ -189,11 +206,87 @@ const views = {
       </div></div>`;
     const fill = async (sel, f) => { const el = $app.querySelector(sel); if (el) el.textContent = await (await fetch(fileUrl(id, f))).text(); };
     fill('#val', 'validation.md');
+    const video = $app.querySelector('video');
+    if (video && has('tour.vtt')) runTour(id, d, input).then(tour => mountMarkers($app.querySelector('#markers'), video,
+      { vttUrl: fileUrl(id, 'tour.vtt'), scenes: filmedScenes(d.files, tour) })).catch(() => {});
     mountReview($app.querySelector('#review'), { id, d, input, h, api, rel, fileUrl, onCheckAgain: p => startJob(['validate', p]) }).catch(e => console.error(e));
     storyboard(id, d, input).then(html => { const el = $app.querySelector('#story'); if (el) el.innerHTML = html; }).catch(() => {}); fill('#repmd', 'report.md'); fill('#aria', 'triage/page/aria.yml');
     $app.querySelectorAll('button[data-cmd]').forEach(b => (b.onclick = () =>
       startJob([b.dataset.cmd, rel(input), ...(b.dataset.extra ? b.dataset.extra.split(' ') : [])])));
     if (r.status === 'running') setTimeout(() => location.hash === `#/run/${id}` && render(), 3000);
+  },
+
+  /** Two runs of the same script side by side: outcome, criteria, and every step that changed. */
+  async compare(id) {
+    const runs = await api('/api/runs');
+    const a = runs.find(r => r.id === id);
+    if (!a) throw new Error('no such run');
+    const q = new URLSearchParams(location.hash.split('?')[1]);
+    const same = runs.filter(r => r.name === a.name && r.id !== id && ['validate', 'run', 'render'].includes(r.command));
+    const b = same.find(r => r.id === q.get('with')) ?? same.find(r => String(r.startedAt) < String(a.startedAt)) ?? same[0] ?? null;
+    if (!b) { $app.innerHTML = `<h2>Compare</h2><p class="muted">${h(a.name)} has no other run to compare with.</p><a href="#/run/${h(id)}">← back to the run</a>`; return; }
+    const all = q.get('all') === '1';
+    const pick = `<select id="with">${same.map(r => `<option value="${h(r.id)}" ${b.id === r.id ? 'selected' : ''}>${h(r.id.split('/')[1])} · ${h(r.command)} · ${h(r.verdictLabel ?? r.status)}</option>`).join('')}</select>`;
+    const [da, db] = await Promise.all([api(`/api/run?id=${encodeURIComponent(a.id)}`), api(`/api/run?id=${encodeURIComponent(b.id)}`)]);
+    const [sa, sb] = await Promise.all([runSteps(a.id, da), runSteps(b.id, db)]);
+    // steps match by scene and number (the script's own step number when the report has it)
+    const key = s => `${String(s.scene ?? '').replace(/\s.*$/, '')} · ${/\(url\)/.test(s.scene ?? '') ? 'open page' : `step ${s.scriptStep ?? s.step}`}`;
+    const ma = new Map(sa.map(s => [key(s), s])), mb = new Map(sb.map(s => [key(s), s]));
+    const spec = s => (s ? JSON.stringify(s.spec ?? s.action ?? '') : '');
+    const rows = [...new Set([...mb.keys(), ...ma.keys()])].map(k => {
+      const x = mb.get(k), y = ma.get(k);
+      const changed = !x ? 'only now' : !y ? 'only before' : x.ok !== y.ok ? (y.ok === false ? 'worse' : 'better') : spec(x) !== spec(y) ? 'edited' : '';
+      return { k, x, y, changed };
+    });
+    const shown = all ? rows : rows.filter(r => r.changed);
+    const mark = s => !s ? '<span class="muted">—</span>' : s.ok === false ? `<span class="bad">✘</span>${s.optional ? ' <span class="muted">optional</span>' : ''}` : s.ok ? '<span class="ok">✔</span>' : '·';
+    const ms = s => (s?.ms != null ? ` <span class="muted">${s.ms} ms</span>` : '');
+    const ca = da.report?.criteria ?? {}, cb = db.report?.criteria ?? {};
+    const cv = v => (v == null ? '—' : typeof v === 'object' ? v.status ?? JSON.stringify(v) : String(v));
+    const verdict = r => `${status(r)} ${h(r.verdictLabel ?? '')}`;
+    const runCell = r => `<td><a href="#/run/${h(r.id)}">${h(r.id.split('/')[1])}</a><div class="muted">${h(r.command)} · ${ago(r.startedAt)}</div></td>`;
+    const BADGE = { worse: 'bad', better: 'ok' };
+    $app.innerHTML = `<h2>Compare <span class="muted">${h(a.name)}</span></h2>
+      <div class="toolbar"><a href="#/run/${h(id)}">← back to the run</a> <span>before:</span> ${pick}
+        <label><input type="checkbox" id="all" ${all ? 'checked' : ''}> every step, not just the changes</label></div>
+      <div class="card"><table class="compare"><tr><th></th><th>before</th><th>now</th></tr>
+        <tr><td>run</td>${runCell(b)}${runCell(a)}</tr>
+        <tr><td>result</td><td>${verdict(b)}</td><td>${verdict(a)}</td></tr>
+        <tr><td>took</td><td>${dur(b.startedAt, b.finishedAt)}</td><td>${dur(a.startedAt, a.finishedAt)}</td></tr>
+        <tr><td>video</td><td>${b.seconds ? `${Math.round(b.seconds)} s` : '—'}</td><td>${a.seconds ? `${Math.round(a.seconds)} s` : '—'}</td></tr>
+        <tr><td>open findings</td><td>${b.openFindings ?? '—'}</td><td>${a.openFindings ?? '—'}</td></tr>
+        ${[...new Set([...Object.keys(cb), ...Object.keys(ca)])].map(k => `<tr class="${cv(cb[k]) !== cv(ca[k]) ? 'changed' : ''}"><td>criterion ${h(k)}</td><td>${h(cv(cb[k]))}</td><td>${h(cv(ca[k]))}</td></tr>`).join('')}
+        ${a.error || b.error ? `<tr><td>what failed</td><td class="bad">${h(b.error ?? '')}</td><td class="bad">${h(a.error ?? '')}</td></tr>` : ''}</table></div>
+      <div class="card"><h3>Steps <span class="muted">${rows.filter(r => r.changed).length} changed of ${rows.length}</span></h3>
+        <table class="compare"><tr><th>where</th><th>before</th><th>now</th><th></th><th>step</th></tr>
+        ${shown.map(({ k, x, y, changed }) => `<tr class="${changed ? 'changed' : ''}"><td>${h(k)}</td><td>${mark(x)}${ms(x)}</td><td>${mark(y)}${ms(y)}</td>
+          <td>${changed ? `<span class="badge ${BADGE[changed] ?? 'warn'}">${h(changed)}</span>` : ''}</td>
+          <td><code>${h(spec(y ?? x).slice(0, 120))}</code>${changed === 'edited' ? `<div class="muted">was <code>${h(spec(x).slice(0, 120))}</code></div>` : ''}
+            ${y?.error ? `<div class="bad">${h(y.error)}</div>` : x?.error && y?.ok ? `<div class="muted">was: ${h(x.error)}</div>` : ''}</td></tr>`).join('')
+          || '<tr><td colspan="5" class="muted">no step changed</td></tr>'}</table></div>`;
+    const go = (w, everything) => (location.hash = `#/compare/${id}?with=${encodeURIComponent(w)}${everything ? '&all=1' : ''}`);
+    $app.querySelector('#with').onchange = e => go(e.target.value, all);
+    $app.querySelector('#all').onchange = e => go(b.id, e.target.checked);
+  },
+
+  /** Deleted scripts, apps, files and runs (moved under out/.trash/), each with RESTORE. */
+  async trash() {
+    const items = await api('/api/trash');
+    const KIND = { run: 'run', platform: 'app', file: 'file' };
+    const open = p => /^platforms\/[^/]+\/tours\/.+\.tour\.json$/.test(p) ? `#/tour/${encodeURIComponent(p)}` : /^platforms\/[^/]+$/.test(p) ? `#/platform/${encodeURIComponent(p.split('/')[1])}`
+      : /^platforms\//.test(p) ? `#/edit/${encodeURIComponent(p)}` : /^out\//.test(p) ? `#/run/${p.slice(4)}` : null;
+    $app.innerHTML = `<h2>Trash <span class="muted">deleted items wait in out/.trash/ until that folder is removed</span></h2>
+      <table><tr><th>what</th><th>kind</th><th>deleted</th><th></th></tr>
+      ${items.map(i => `<tr><td><code>${h(i.path)}</code></td><td>${h(KIND[i.kind] ?? i.kind)}</td><td title="${h(i.deletedAt ?? i.stamp)}">${i.deletedAt ? ago(i.deletedAt) : h(i.stamp)}</td>
+        <td>${i.exists ? '<span class="muted" title="Something with that name exists again: delete or rename it first">its place is taken</span>' : `<button data-restore="${h(i.id)}">↩ restore</button>`}</td></tr>`).join('')
+        || '<tr><td colspan="4" class="muted">The trash is empty.</td></tr>'}</table>`;
+    $app.querySelectorAll('[data-restore]').forEach(b => (b.onclick = async () => {
+      try {
+        const r = await api('/api/restore', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: b.dataset.restore }) });
+        const link = open(r.restored);
+        b.outerHTML = `<span class="ok">restored</span>${link ? ` <a href="${h(link)}">open</a>` : ''}`;
+      } catch (e) { b.textContent = '⚠'; b.title = e.message; }
+    }));
   },
 
   async tours() {
@@ -224,13 +317,16 @@ const views = {
     const t = await api(endpoint);
     const isJson = p.endsWith('.json'), isTour = /(^|[./])tour\.json$/.test(p);
     const platform = isPlatform ? p.split('/')[1] : null;
+    // platform.json and environments.json also get a form built from their schema
+    const formType = isPlatform && /^platforms\/[^/]+\/(platform|environments)\.json$/.exec(p)?.[1];
     $app.innerHTML = `<h2>${h(p)}</h2>
       <div class="toolbar">${platform && isTour ? `<a class="back" href="#/tour/${encodeURIComponent(p)}">← back</a>` : platform ? `<a href="#/platform/${encodeURIComponent(platform)}">← ${h(platform)}</a>` : ''}
         <button id="save" class="primary">Save</button>
         ${isTour ? '<button id="saveval">Save + validate (dry run)</button>' : ''}
         ${isJson ? '<button id="schema">Save + schema check</button><button id="fmt">Format</button>' : ''}
+        ${formType ? '<span class="tabs"><button id="tab-form" class="tab on">Form</button><button id="tab-raw" class="tab">Raw</button></span>' : ''}
         <span id="msg" class="muted"></span></div>
-      <div class="${isTour ? 'grid' : ''}"><div><textarea id="src" spellcheck="false"></textarea></div>
+      <div class="${isTour ? 'grid' : ''}"><div>${formType ? '<div id="form" class="card"></div>' : ''}<textarea id="src" spellcheck="false" ${formType ? 'hidden' : ''}></textarea></div>
       ${isTour ? '<div><div class="card"><h3>Scenes</h3><div id="outline"></div></div></div>' : ''}</div>`;
     const src = $app.querySelector('#src'), msg = $app.querySelector('#msg');
     src.value = t.text;
@@ -245,6 +341,27 @@ const views = {
     };
     src.oninput = () => { dirty = true; outline(); };
     outline();
+    if (formType) {
+      const { schema, common } = await api(`/api/schema?type=${formType}`);
+      const box = $app.querySelector('#form');
+      let form = null;
+      // the form edits a parsed copy of the text; every change writes the whole document back into the text
+      const showForm = () => {
+        let doc; try { doc = JSON.parse(src.value); } catch (e) { msg.innerHTML = `<span class="bad">fix the JSON first (Raw): ${h(e.message)}</span>`; return false; }
+        if (form) form.redraw(doc);
+        else form = mountSchemaForm(box, { schema, common, doc, onChange: d => { src.value = JSON.stringify(d, null, 2) + '\n'; dirty = true; outline(); } });
+        return true;
+      };
+      const tab = which => {
+        if (which === 'form' && !showForm()) return;
+        box.hidden = which !== 'form'; src.hidden = which === 'form';
+        $app.querySelector('#tab-form').classList.toggle('on', which === 'form');
+        $app.querySelector('#tab-raw').classList.toggle('on', which !== 'form');
+      };
+      $app.querySelector('#tab-form').onclick = () => tab('form');
+      $app.querySelector('#tab-raw').onclick = () => tab('raw');
+      if (!showForm()) tab('raw');
+    }
     const save = async () => {
       await api(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: src.value }) });
       dirty = false;
@@ -447,7 +564,7 @@ let cleanup = null;
 async function render() {
   cleanup?.(); cleanup = null;
   const [route, ...rest] = (location.hash.replace(/^#\//, '').split('?')[0] || 'home').split('/');
-  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === `#/${({ platform: 'platforms', run: 'runs', job: 'jobs', edit: 'platforms', write: '', tour: '', browse: '', new: '' })[route] ?? route}`));
+  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === `#/${({ platform: 'platforms', run: 'runs', compare: 'runs', job: 'jobs', edit: 'platforms', write: '', tour: '', browse: '', new: '' })[route] ?? route}`));
   const view = views[route] ?? views.home;
   try { cleanup = await view(rest.join('/')); } catch (e) { $app.innerHTML = `<p class="bad">${h(e.message)}</p>`; }
 }

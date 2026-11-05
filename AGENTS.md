@@ -46,6 +46,7 @@ aft run      my.tour.json --target qa                                       # an
 aft run      my.tour.json --base-url http://localhost:3000/                 # a one-off URL (or BASE_URL=...)
 aft run      my.tour.json --speech silent                        # headless/CI: silent audio, captions carry the narration
 aft all      --story story.md --platform todomvc --llm claude                # story → script → dry run → video
+aft ui                                                                       # the local web UI (ui/README.md); Ctrl+C stops it
 ```
 
 Add `--json` to any command for one JSON result on stdout (see "Agent primitives"). Exit codes: 0 ok · 1 usage/config · 2 SCRIPT failure · 3 app unreachable · 4 CRITERION failure · 5 APP error (see

@@ -5,7 +5,7 @@ every app with its scripts, a dashed **NEW SCRIPT** tile closing each app's row 
 (runs, platforms, raw files, jobs, doctor) is in the ☰ menu.
 
 ```
-npm run ui                                  # or: node ui/server.mjs [--port 4777] [--no-open] [--root <checkout>]
+aft ui                                      # or: npm run ui, or node ui/server.mjs [--port 4777] [--no-open] [--root <checkout>]
 ```
 
 It opens the browser with a one-time token in the URL (kept as a cookie). The server listens on 127.0.0.1 only.
@@ -42,10 +42,23 @@ It opens the browser with a one-time token in the URL (kept as a cookie). The se
   fragments, fixtures, mocks, and support files) to open, create from a schema-valid template and edit; `platform check`,
   `doctor --platform`, `login` (fresh / manual), `discover` per environment and role; the `{env:…}` credentials its files
   reference and whether each is set (names only: the UI never shows values); saved sign-ins.
-- **Editor**: Ctrl+S saves; JSON files get Format and "schema check" (`aft validate --schema-only`); tours also a dry
+- **Writing scenes** (the simple editor): under each narration, how long the voice speaks vs. how long the steps take
+  (and the scene's length in the last video), with a warning when the steps outlast the voice; under each step, what its
+  `{data.x}` values are (from the app, the environment and the script's fixtures; credential-like keys shown as ●●●);
+  🖱 PICK FROM THE PAGE opens the app at the scene's page (`aft snapshot --screenshot`) and lists every name on it:
+  pick one, then Click it / Type into it / Check it shows adds the step (⚡ KEEP A BROWSER OPEN starts `aft session`, so
+  looks are fast and ▶ DO THE STEPS SO FAR can run the scene first with `aft try-step`); 📌 pin steps open an editor
+  (name, kind, fields from the page, the page address or a fixed value, secret fields, cleanup). After GENERATE and on
+  SAVE, a `goto` that starts with "/" and so leaves the app's address is flagged (GENERATE makes ones that repeat the
+  base path relative).
+- **Videos** (a run's page and a script's page): scene markers under the player, from `tour.vtt`; click one to jump there.
+- **Compare** (⇄ on a run's page): the run next to an earlier run of the same script: result, time, video length,
+  findings, each criterion, and every step that got better, worse, edited, added or removed.
+- **Trash** (☰ menu): everything deleted (scripts, files, apps, runs), with ↩ restore when its old place is free.
+- **Editor**: platform.json and environments.json open as a form built from their schema (Form / Raw tabs); Ctrl+S saves; JSON files get Format and "schema check" (`aft validate --schema-only`); tours also a dry
   run (`aft validate`) and a scene outline.
 - **Jobs**: every command the UI started, with its live log, a Stop (Ctrl+C) button and the `--json` result.
 
 The UI never imports the engine: it runs `aft … --json` (only validate, render, run, doctor, generate, platform,
-login, session, snapshot, locate, try-step, export, import, suggest-fix) and reads and writes files. It writes only `.env` (sign-in details, only names the platform references) and files under `platforms/<name>/`
-(not dotfiles, auth state or node_modules) `out/**/tour.json` and `out/.imports/`.
+login, session, snapshot, locate, try-step, export, import, suggest-fix, cleanup, reset) and reads and writes files. It writes only `.env` (sign-in details, only names the platform references) and files under `platforms/<name>/`
+(not dotfiles, auth state or node_modules) `out/**/tour.json` `out/.imports/`, and `out/.trash/` (delete moves things there; restore moves them back). Tests: `test/ui-server.test.mjs`.

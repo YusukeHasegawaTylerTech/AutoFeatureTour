@@ -68,3 +68,20 @@ table.runs td:not(:last-child) { white-space: nowrap; }
 .artifact img { width: 120px; max-height: 90px; object-fit: contain; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
 .artifact table.fields { border: none; margin: 4px 0; } .artifact table.fields td { padding: 1px 6px 1px 0; border: none; }
 .finding.kind-leftover { border-left-color: var(--bad); }
+
+/* ---- schema form (platform.json / environments.json) ---- */
+.tabs { display: inline-flex; } .tab { border-radius: 0; } .tab:first-child { border-radius: 6px 0 0 6px; } .tab:last-child { border-radius: 0 6px 6px 0; }
+.tab.on { font-weight: 700; background: #e8f1fd; }
+.schema-form .f-row { display: grid; grid-template-columns: 180px 1fr; gap: 8px; align-items: start; margin: 4px 0; }
+.schema-form .f-label { font-weight: 600; padding-top: 4px; }
+.schema-form .f-help { color: #888; font-weight: 400; cursor: help; }
+.schema-form input, .schema-form select, .schema-form textarea { width: 100%; box-sizing: border-box; }
+.schema-form textarea { font: 12px/1.4 ui-monospace, monospace; height: auto; }
+.schema-form .f-obj { margin: 6px 0; padding: 4px 10px; border-left: 3px solid #ddd; }
+.schema-form .f-obj > summary { cursor: pointer; font-weight: 600; }
+.schema-form .f-extra { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: start; }
+.schema-form .f-add { margin: 6px 0; display: flex; gap: 6px; }
+.schema-form .f-add input { width: 160px; }
+.schema-form .f-bad { outline: 2px solid #e0443a; }
+/* ---- compare runs ---- */
+table.compare tr.changed td { background: #fff7e0; }
