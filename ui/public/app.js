@@ -27,6 +27,55 @@ async function startJob(args) {
 
 
 // ---- views ----
+/**
+ * The run as a storyboard: per scene its title, narration, still (screens/scene-NN.png), a link to the scene's page in
+ * the app, and its steps with results, each linking to that step in the editor. Steps come from report.json (runs) or
+ * validation.json (dry runs); titles and narration from the run's tour.json, else the tour file it ran (as it is now).
+ */
+async function storyboard(id, d, input) {
+  const has = f => d.files.some(x => x.path === f);
+  const getJson = async f => { try { return await (await fetch(fileUrl(id, f))).json(); } catch { return null; } };
+  const steps = d.report?.steps ?? (has('validation.json') ? (await getJson('validation.json'))?.report : null) ?? [];
+  let tour = has('tour.json') ? await getJson('tour.json') : null, tourPath = null;
+  const r = input ? rel(input) : '';
+  if (/^platforms\/.+\.tour\.json$/.test(r)) {
+    tourPath = r;
+    if (!tour) try { tour = JSON.parse((await api(`/api/pfile?path=${encodeURIComponent(r)}`)).text); } catch {}
+  }
+  const scenes = tour?.scenes ?? [];
+  const ids = [...new Set([...scenes.map((_, i) => `scene-${String(i + 1).padStart(2, '0')}`),
+    ...steps.map(s => String(s.scene ?? '').replace(/\s.*$/, '')).filter(Boolean)])];
+  if (!ids.length) return '';
+  const base = d.timings?.baseUrl ?? null;
+  const pageUrl = u => { try { return base && u ? new URL(u, base.endsWith('/') ? base : base + '/').href : null; } catch { return null; } };
+  const shot = sid => has(`screens/${sid}.png`) ? fileUrl(id, `screens/${sid}.png`) : null;
+  const what = sp => { if (!sp || typeof sp !== 'object') return String(sp ?? '');
+    const k = Object.keys(sp).find(x => !['criterion', 'optional', 'timeout', 'retries', 'comment', 'from'].includes(x)) ?? '';
+    const v = sp[k]; const t = typeof v === 'string' ? v : v && typeof v === 'object' ? (v.name ?? v.text ?? v.label ?? v.css ?? v.url ?? v.use ?? JSON.stringify(v)) : String(v);
+    const extra = sp.text && k !== 'text' && typeof sp.text === 'string' ? ` "${sp.text.slice(0, 40)}"` : sp.state ? ` (${sp.state})` : '';
+    return `${k} ${String(t).slice(0, 80)}${extra}`; };
+  return `<div class="card"><h3>Scenes</h3>${ids.map(sid => {
+    const n = Number(sid.slice(6)), sc = scenes[n - 1] ?? {};
+    const own = steps.filter(s => String(s.scene ?? '').replace(/\s.*$/, '') === sid);
+    const bad = own.some(s => s.ok === false && !s.optional);
+    const url = pageUrl(sc.url), img = shot(sid);
+    return `<div class="board ${bad ? 'board-bad' : ''}" id="board-${sid}">
+      <div class="board-shot">${img ? `<a href="${img}" target="_blank" title="Open the full screenshot"><img src="${img}" loading="lazy" alt="${h(sid)} at its end"></a>` : '<div class="noshot muted">no screenshot</div>'}</div>
+      <div class="board-body">
+        <div class="board-head"><span class="board-num ${bad ? 'bad' : own.length ? 'ok' : ''}">${n}</span><b>${h(sc.title ?? sid)}</b>
+          ${sc.criteria?.length ? `<span class="badge muted">AC ${h(sc.criteria.join(', '))}</span>` : ''}
+          ${url ? `<a class="board-link" href="${h(url)}" target="_blank" title="${h(url)}">open in the app ↗</a>` : ''}
+          ${tourPath ? `<a class="board-link" href="#/write/${encodeURIComponent(tourPath)}?scene=${n}">edit scene ✏️</a>` : ''}</div>
+        ${sc.narration ? `<p class="board-narr">“${h(sc.narration)}”</p>` : ''}
+        <ol class="board-steps">${own.map(s => {
+          const isUrl = /\(url\)/.test(s.scene ?? '');
+          const edit = tourPath && !isUrl && !s.from ? `<a href="#/write/${encodeURIComponent(tourPath)}?scene=${n}&step=${s.step}" title="Edit this step">✏️</a>` : '';
+          return `<li class="${s.ok === false ? (s.optional ? 'warn' : 'bad') : ''}"><span class="${s.ok === false ? 'bad' : s.ok ? 'ok' : 'muted'}">${s.ok === false ? '✘' : s.ok ? '✔' : '·'}</span>
+            <code>${h(isUrl ? `open ${s.spec?.goto ?? sc.url ?? ''}` : what(s.spec ?? s.action))}</code>${s.from ? ` <span class="muted">(${h(s.from)})</span>` : ''} ${edit}
+            ${s.error ? `<div class="bad">${h(s.error)}</div>` : ''}${s.suggestions?.length ? `<div class="muted">did you mean: ${h(s.suggestions.join(', '))}</div>` : ''}</li>`; }).join('')
+          || '<li class="muted">no steps ran</li>'}</ol></div></div>`; }).join('')}</div>`;
+}
+
 const views = {
   // ---------- advanced screens ----------
   async runs() {
@@ -89,7 +138,8 @@ const views = {
             <td>${h(s.scene)}</td><td>${h(s.step)}</td><td><code>${h(JSON.stringify(s.spec ?? s.action))}</code>
             ${s.error ? `<div class="bad">${h(s.error)}</div>` : ''}${s.suggestions?.length ? `<div class="muted">did you mean: ${h(s.suggestions.join(', '))}</div>` : ''}</td>
             <td>${s.ms ?? ''}</td></tr>`).join('')}</table></div>` : ''}
-        ${has('validation.md') ? `<div class="card"><h3>validation.md</h3><pre id="val"></pre></div>` : ''}
+        <div id="story"></div>
+        ${has('validation.md') ? `<details class="card"><summary><b>validation.md</b> <span class="muted">(raw)</span></summary><pre id="val"></pre></details>` : ''}
       </div><div>
         ${has('report.md') ? `<div class="card"><h3>report.md</h3><pre id="repmd"></pre></div>` : ''}
         ${has('triage/page/aria.yml') ? `<div class="card"><h3>ARIA at failure</h3><pre id="aria"></pre></div>` : ''}
@@ -97,7 +147,8 @@ const views = {
           <span class="muted">${f.size > 1e6 ? `${(f.size / 1e6).toFixed(1)} MB` : `${Math.ceil(f.size / 1024)} KB`}</span></a>`).join('')}</div>
       </div></div>`;
     const fill = async (sel, f) => { const el = $app.querySelector(sel); if (el) el.textContent = await (await fetch(fileUrl(id, f))).text(); };
-    fill('#val', 'validation.md'); fill('#repmd', 'report.md'); fill('#aria', 'triage/page/aria.yml');
+    fill('#val', 'validation.md');
+    storyboard(id, d, input).then(html => { const el = $app.querySelector('#story'); if (el) el.innerHTML = html; }).catch(() => {}); fill('#repmd', 'report.md'); fill('#aria', 'triage/page/aria.yml');
     $app.querySelectorAll('button[data-cmd]').forEach(b => (b.onclick = () =>
       startJob([b.dataset.cmd, rel(input), ...(b.dataset.extra ? b.dataset.extra.split(' ') : [])])));
     if (r.status === 'running') setTimeout(() => location.hash === `#/run/${id}` && render(), 3000);

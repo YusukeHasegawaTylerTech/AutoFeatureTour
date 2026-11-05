@@ -24,7 +24,9 @@ It opens the browser with a one-time token in the URL (kept as a cookie). The se
   in `out/.imports/<stamp>-<id>/`; `import` only reads files from there.
 - **Sign-in details**: username/password fields write the platform's `{env:…}` names into the checkout's `.env`
   (git-ignored). Values are never sent back to the page.
-- **Runs**: every `out/<name>/<run>/run.json`; a run shows the video with captions, or the failure: summary, first
+- **Runs**: every `out/<name>/<run>/run.json`; a run shows a **Scenes** storyboard (per scene: its still, title,
+  narration, "open in the app ↗" for its URL, every step with ✔/✘, errors and "did you mean", ✏️ to that step in the
+  editor; validation.md stays below, collapsed) and the video with captions, or the failure: summary, first
   cause, steps with "did you mean", `report.md`, the ARIA tree at the failure, every file. Re-validate / re-run / replay headed.
 - **Tours**: validate, render or run any platform tour, per environment, with silent speech if wanted.
 - **Platforms**: `platform init`; per platform every definition file (platform, environments, login, tours,
