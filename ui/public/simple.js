@@ -142,12 +142,83 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
     return `${action} ${String(what).slice(0, 60)}${args}`;
   }
 
+  // ---- IMPORT: drop (or pick) an exported .aft.json, choose the app, import it into platforms/<app>/tours/ ----
+  /** Wires #drop / #drop-file / #import-msg on the current page; returns a cleanup for the running job. */
+  /** The drop zone's HTML; with a target platform it imports straight into that one. */
+  const dropZoneHtml = target => `<div class="dropzone" id="drop" role="button" tabindex="0"
+      aria-label="Import a script${target ? ` into ${h(target)}` : ''}: drop an exported .aft.json file here, or click to choose one">
+      <span class="icon">📥</span><b>IMPORT A SCRIPT${target ? ` INTO ${h(target.toUpperCase())}` : ''}</b>
+      <span class="sub">Drop an exported <code>.aft.json</code> file here, or click to choose one</span>
+      <input type="file" id="drop-file" accept=".json,application/json" hidden></div>
+    <div id="import-msg"></div>`;
+
+  /** fixed: import only into this platform (no app picker). */
+  function importZone(platforms, fixed = null) {
+    const zone = $app.querySelector('#drop'), input = $app.querySelector('#drop-file'), msg = $app.querySelector('#import-msg');
+    let job = null, upload = null;
+    const pick = () => input.click();
+    zone.onclick = pick;
+    zone.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } };
+    zone.ondragover = e => { e.preventDefault(); zone.classList.add('over'); };
+    zone.ondragleave = () => zone.classList.remove('over');
+    zone.ondrop = e => { e.preventDefault(); zone.classList.remove('over'); const f = e.dataTransfer.files?.[0]; if (f) take(f); };
+    input.onchange = () => { const f = input.files?.[0]; input.value = ''; if (f) take(f); };
+
+    async function take(file) {
+      msg.innerHTML = '<div class="verdict wait">⏳ Reading the file…</div>';
+      try { upload = await send('POST', '/api/upload-export', { name: file.name, text: await file.text() }); }
+      catch (e) { msg.innerHTML = `<div class="verdict bad">✘ ${h(e.message)}</div>`; return; }
+      const src = upload.source ?? {}, last = src.last;
+      const choices = fixed ? [fixed] : platforms.map(p => p.name);
+      const preferred = choices.find(n => n !== src.platform && src.platform && n.startsWith(src.platform.split('-')[0])) ?? choices.find(n => n !== src.platform) ?? choices[0];
+      msg.innerHTML = `<div class="card import-card">
+          <div class="import-title">${h(upload.tour ?? file.name)}</div>
+          <p class="hint">Made on <b>${h(src.platform ?? 'another machine')}</b>${src.env ? ` (${h(src.env)})` : ''}.
+            ${last ? `Its last ${last.command === 'run' ? 'video' : 'check'} there: <b class="${last.result === 'PASSED' || last.status === 'done' ? 'ok-text' : 'bad-text'}">${h(last.result ?? last.status)}</b>.`
+              : 'It never passed there.'}</p>
+          ${last?.criteria?.filter(c => c.text).length ? `<ul class="crit">${last.criteria.filter(c => c.text).map(c =>
+            `<li>${c.status === 'met' ? '✔' : '✘'} ${h(c.text)}</li>`).join('')}</ul>` : ''}
+          ${fixed ? `<p class="hint">It goes into <b>${h(fixed)}</b>.</p>` : '<label class="lbl" for="imp-platform">Import it into which app?</label>'}
+          <select class="mid-input" id="imp-platform" ${fixed ? 'hidden' : ''}>${choices.map(n => `<option ${n === preferred ? 'selected' : ''}>${h(n)}</option>`).join('')}</select>
+          <p class="hint">That app's own address, sign-in and test account are used: the script carries none.</p>
+          <div class="actions tight"><button class="chunky small c-green" id="imp-go">📥 IMPORT</button>
+            <button class="chunky small c-gray" id="imp-cancel">CANCEL</button></div>
+          <div id="imp-result"></div></div>`;
+      msg.querySelector('#imp-cancel').onclick = () => { msg.innerHTML = ''; };
+      msg.querySelector('#imp-go').onclick = () => go(false);
+    }
+
+    async function go(force) {
+      const platform = msg.querySelector('#imp-platform').value, out = msg.querySelector('#imp-result');
+      msg.querySelectorAll('button').forEach(b => (b.disabled = true));
+      out.innerHTML = '<div class="verdict wait">⏳ Importing…</div>';
+      job = await runJob(['import', upload.file, '--platform', platform, ...(force ? ['--force'] : [])], { onDone: r => {
+        msg.querySelectorAll('button').forEach(b => (b.disabled = false));
+        if (!r.ok) {
+          const text = r.error?.message ?? '';
+          if (/exists; pass --force/.test(text)) {
+            out.innerHTML = `<div class="verdict bad">✘ ${h(platform)} already has a script called ${h(upload.tour ?? '')}.
+              <div class="actions tight"><button class="chunky small c-orange" id="imp-force">REPLACE IT</button></div></div>`;
+            out.querySelector('#imp-force').onclick = () => go(true);
+          } else out.innerHTML = `<div class="verdict bad">✘ Couldn't import it.<small>${h(text)}</small></div>`;
+          return;
+        }
+        const tour = rel(r.data.tour);
+        const missing = r.data.missing ?? [];
+        out.innerHTML = `<div class="verdict ${missing.length ? 'wait' : 'ok'}">${missing.length ? '⚠ Imported, but it needs more before it can run here' : `✔ Imported into ${h(platform)}`}
+          <small>${missing.length ? `Add to ${h(platform)}: ${h(missing.join('; '))}` : 'Next: open it and press CHECK IT to try every step on this app.'}</small>
+          <div class="actions tight"><a class="chunky small c-green" href="#/tour/${encodeURIComponent(tour)}">➜ OPEN IT</a></div></div>`;
+      } });
+    }
+    return () => job?.close();
+  }
+
+  // Runs that say whether a script works (an export or import says nothing about that).
+  const VERDICT_COMMANDS = new Set(['validate', 'run', 'render']);
+
   const views = {
-    async home() {
-      $app.innerHTML = `<div class="big-choice">
-        <div class="choice"><a class="chunky huge c-green" href="#/new"><span class="icon">✚</span>NEW</a><p class="hint">Make a new video script</p></div>
-        <div class="choice"><a class="chunky huge c-blue" href="#/browse"><span class="icon">📂</span>BROWSE</a><p class="hint">See and run the ones you have</p></div></div>`;
-    },
+    // No separate home page: the start page is the script list (views.browse; #/browse still works).
+    home() { return views.browse(); },
 
     async new(platform) {
       platform = decodeURIComponent(platform ?? '');
@@ -160,11 +231,14 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         wireIcons($app, () => render());
         return;
       }
-      $app.innerHTML = `<a class="back" href="#/new">← back</a><div class="page-title">What will this video show?</div>
+      $app.innerHTML = `<a class="back" href="#/">← back</a><div class="page-title">What will this video show?</div>
         <input class="big-input" id="name" placeholder="e.g. Adding a report">
         <p class="hint" id="as"></p>
         <div class="actions"><button class="chunky mid c-green" id="go"><span class="icon">✚</span>CREATE</button></div>
-        <div id="err"></div>`;
+        <div id="err"></div>
+        <div class="group-title">Or bring in one made elsewhere</div>
+        ${dropZoneHtml(platform)}`;
+      const cleanup = importZone([], platform);
       const input = $app.querySelector('#name'), err = $app.querySelector('#err'), as = $app.querySelector('#as');
       input.focus();
       input.oninput = () => { as.textContent = slugify(input.value) ? `Saved as ${slugify(input.value)}` : ''; };
@@ -179,10 +253,11 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       };
       $app.querySelector('#go').onclick = go;
       input.onkeydown = e => { if (e.key === 'Enter') go(); };
+      return cleanup;
     },
 
     async newapp() {
-      $app.innerHTML = `<a class="back" href="#/new">← back</a><div class="page-title">Set up a new app</div>
+      $app.innerHTML = `<a class="back" href="#/">← back</a><div class="page-title">Set up a new app</div>
         <div class="stepper"><b>1 Name</b> › 2 Sign-in › 3 Test</div>
         <label class="lbl">Its name</label><input class="big-input" id="name" placeholder="e.g. My app">
         <label class="lbl">Its web address</label><input class="big-input" id="url" placeholder="http://localhost:3000/">
@@ -284,23 +359,28 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
     async browse() {
       const [ps, runs] = await Promise.all([api('/api/platforms'), api('/api/runs')]);
       const last = new Map();
-      for (const r of runs) { const k = rel(r.input?.[0]); if (k && !last.has(k)) last.set(k, r); }
-      const withTours = ps.filter(p => p.tours.length);
-      $app.innerHTML = `<a class="back" href="#/">← back</a><div class="page-title">Your scripts</div>
-        ${withTours.map(p => `<div class="group-title">${h(p.name)}</div><div class="tiles">
+      for (const r of runs) { if (!VERDICT_COMMANDS.has(r.command)) continue; const k = rel(r.input?.[0]); if (k && !last.has(k)) last.set(k, r); }
+      // The start page: every app with its scripts, a "new script" tile closing each app's row, and "new app" last.
+      $app.innerHTML = `<div class="page-title">Your scripts</div>
+        ${dropZoneHtml(null)}
+        ${ps.map(p => `<div class="group-title">${h(p.name)} ${icons('platform', p.name)}</div><div class="tiles">
           ${p.tours.map(t => { const r = last.get(t.path); const st = !r || r.status === 'running' ? 'none' : r.status === 'done' ? 'ok' : 'bad';
             return `<a class="tile ${st === 'none' ? '' : st}" href="#/tour/${encodeURIComponent(t.path)}">${h(pretty(t.file))}
               <span class="dot ${st}">${!r ? 'not tried yet' : r.status === 'running' ? '⏳ running' : st === 'ok' ? `✔ ${r.command === 'run' ? 'video made' : 'works'}` : '✘ needs fixing'}</span>
-              <span class="sub">${r ? ago(r.startedAt) : ''}</span>${icons('script', t.path)}</a>`; }).join('')}</div>`).join('')
-        || `<p class="hint">No scripts yet.</p><a class="chunky mid c-green" href="#/new"><span class="icon">✚</span>NEW</a>`}`;
+              <span class="sub">${r ? ago(r.startedAt) : ''}</span>${icons('script', t.path)}</a>`; }).join('')}
+          <a class="tile tile-new" href="#/new/${encodeURIComponent(p.name)}"><span class="plus">✚</span>NEW SCRIPT<span class="sub">write one, or import one</span></a></div>`).join('')}
+        ${ps.length ? '' : '<p class="hint">No apps yet. Set one up first: its address, and how to sign in.</p>'}
+        <div class="group-title">&nbsp;</div><div class="tiles">
+          <a class="tile tile-new" href="#/newapp"><span class="plus">✚</span>NEW APP<span class="sub">set up another app</span></a></div>`;
       wireIcons($app, () => render());
+      return importZone(ps);
     },
 
     async tour(p) {
       p = decodeURIComponent(p);
       const platform = p.split('/')[1];
       const [allRuns, d] = await Promise.all([api('/api/runs'), api(`/api/platform?name=${encodeURIComponent(platform)}`)]);
-      const runs = allRuns.filter(r => rel(r.input?.[0]) === p);
+      const runs = allRuns.filter(r => rel(r.input?.[0]) === p && VERDICT_COMMANDS.has(r.command));
       const lastAny = runs[0], lastVideo = runs.find(r => r.command === 'run' && r.status === 'done');
       let total = null;
       if (p.endsWith('.json')) try { total = (await readTour(p)).scenes?.length ?? null; } catch {}
@@ -323,14 +403,16 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           <img class="shot-small" src="${fileUrl(lastAny.id, 'screens/failure.png')}" onerror="this.remove()">
           <details class="raw"><summary>details</summary><pre>${h(f.raw)}</pre></details></div>`;
       };
-      $app.innerHTML = `<a class="back" href="#/browse">← back</a>
+      $app.innerHTML = `<a class="back" href="#/">← back</a>
         <div class="page-title">${h(pretty(p.split('/').pop()))} <span class="hint">${h(platform)}</span> ${icons('script', p)}</div>
         <div id="verdict">${verdictHtml()}</div>
         <div class="actions" id="main-actions">
           <button class="chunky mid c-orange" data-do="validate"><span class="icon">🔍</span>CHECK IT</button>
           <button class="chunky mid c-green" data-do="run"><span class="icon">🎬</span>MAKE VIDEO</button>
           ${edit ? `<a class="chunky mid c-purple" href="#/write/${encodeURIComponent(p)}"><span class="icon">✏️</span>EDIT</a>` : ''}
+          ${edit ? '<button class="chunky mid c-blue" id="export" title="One file to send to QA or another machine, to import there"><span class="icon">📤</span>EXPORT</button>' : ''}
         </div>
+        <div id="export-msg"></div>
         <div id="creds"></div>
         ${lastVideo ? `<div class="group-title">Latest video</div><div class="card" style="max-width:900px"><video controls preload="metadata" src="${fileUrl(lastVideo.id, 'tour.mp4')}">
           <track default kind="captions" src="${fileUrl(lastVideo.id, 'tour.vtt')}"></video></div>` : ''}`;
@@ -354,7 +436,32 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           } });
       };
       $app.querySelectorAll('[data-do]').forEach(b => (b.onclick = () => start(b.dataset.do)));
-      wireIcons($app, (r, action) => { location.hash = action === 'clone' ? `#/tour/${encodeURIComponent(r.path)}` : '#/browse'; });
+      $app.querySelector('#export')?.addEventListener('click', async e => {
+        const btn = e.currentTarget, msg = $app.querySelector('#export-msg');
+        btn.disabled = true;
+        msg.innerHTML = '<div class="verdict wait">⏳ Exporting…</div>';
+        job = await runJob(['export', p], { onDone: r => {
+          btn.disabled = false;
+          if (!r.ok || !r.data?.file) {
+            const f = friendly(r, d.baseUrl);
+            msg.innerHTML = `<div class="verdict bad">✘ Couldn't export it.<small>${h(f.detail || f.title)}</small>
+              <details class="raw"><summary>details</summary><pre>${h(f.raw ?? '')}</pre></details></div>`;
+            return;
+          }
+          const file = String(r.data.file).replace(/\\/g, '/'), name = file.split('/').pop();
+          const id = rel(file).replace(/^out\//, '').split('/').slice(0, -1).join('/');   // <name>/<run>
+          const last = r.data.source?.last;
+          const proof = last ? `It carries this script's last ${last.command === 'run' ? 'video' : 'check'}: ${last.result ?? last.status}.`
+            : 'It has never passed here, so it carries no proof that it works.';
+          const needs = [...(r.data.requires?.fixtures ?? []), ...(r.data.requires?.mocks ?? [])];
+          msg.innerHTML = `<div class="verdict ok">✔ Exported ${h(name)}
+            <small>Send this file to QA. They drop it on the start page, pick their app, and run it there. ${h(proof)}</small>
+            ${needs.length ? `<small>Their app needs the same test data: ${h(needs.join(', '))}</small>` : ''}
+            <div class="actions tight"><a class="chunky small c-blue" id="dl" href="${fileUrl(id, name)}" download="${h(name)}">⬇ DOWNLOAD</a></div></div>`;
+          msg.querySelector('#dl').click();
+        } });
+      });
+      wireIcons($app, (r, action) => { location.hash = action === 'clone' ? `#/tour/${encodeURIComponent(r.path)}` : '#/'; });
       $app.querySelector('#use')?.addEventListener('click', async () => {
         const f = friendly(lastAny);
         const tour = await readTour(p);

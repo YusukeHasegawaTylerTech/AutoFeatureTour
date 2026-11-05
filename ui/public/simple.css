@@ -1,14 +1,12 @@
 /* The simple screens: home, new, browse, tour. Big, chunky, few choices. */
 header .home { font-size: 20px; font-weight: 800; color: var(--fg); text-decoration: none; }
 
-.big-choice { display: flex; gap: 40px; justify-content: center; align-items: center; min-height: 60vh; flex-wrap: wrap; }
 .chunky { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
   border: none; border-radius: 28px; color: #fff; font-weight: 900; letter-spacing: 1px; cursor: pointer;
   text-decoration: none; box-shadow: 0 8px 0 rgba(0,0,0,.25); transition: transform .08s, box-shadow .08s; }
 .chunky:hover { transform: translateY(-2px); box-shadow: 0 10px 0 rgba(0,0,0,.25); }
 .chunky:active { transform: translateY(6px); box-shadow: 0 2px 0 rgba(0,0,0,.25); }
 .chunky .icon { font-size: 64px; line-height: 1; }
-.chunky.huge { width: 300px; height: 260px; font-size: 44px; }
 .chunky.mid { min-width: 210px; height: 120px; font-size: 24px; padding: 0 24px; }
 .chunky.mid .icon { font-size: 36px; }
 .chunky:disabled { opacity: .45; cursor: default; transform: none; }
@@ -111,3 +109,17 @@ details.raw pre { margin-top: 6px; max-height: 200px; }
 .tile:hover .icons, .tile:focus-within .icons { opacity: 1; }
 .page-title .icons { margin-left: 8px; }
 .scene-head .icons { flex: none; }
+
+/* IMPORT drop zone (BROWSE, and an app's NEW page) */
+.dropzone { display: flex; flex-direction: column; align-items: center; gap: 4px; max-width: 900px; padding: 22px; margin: 8px 0 18px;
+  border: 3px dashed #2f7fe0; border-radius: 18px; color: #1d5fb0; cursor: pointer; text-align: center; transition: background .15s; }
+.dropzone .icon { font-size: 34px; line-height: 1; } .dropzone b { font-size: 20px; letter-spacing: .03em; }
+.dropzone .sub { font-size: 14px; opacity: .8; }
+.dropzone:hover, .dropzone:focus-visible, .dropzone.over { background: #e6f0fd; outline: none; }
+.dropzone.over { border-style: solid; }
+@media (prefers-color-scheme: dark) { .dropzone { color: #8dbcf5; } .dropzone:hover, .dropzone:focus-visible, .dropzone.over { background: #15283f; } }
+.import-card { max-width: 900px; margin-bottom: 18px; } .import-title { font-size: 24px; font-weight: 900; }
+.import-card .crit { margin: 6px 0 12px; padding-left: 20px; } .ok-text { color: #1a7f37; } .bad-text { color: #b3261e; }
+.group-link { font-size: 14px; font-weight: 600; margin-left: 12px; }
+
+[hidden] { display: none !important; }

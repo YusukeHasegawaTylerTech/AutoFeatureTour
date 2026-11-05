@@ -49,10 +49,18 @@ function exportTourImpl(source, { toolRoot, outRoot = path.join(toolRoot, 'out')
   const raw = readTourJson(file);
   const dir = path.dirname(file);
   if (!run) {
-    // A tour file: its newest successful run, if that run was of this file.
-    const latest = readMaybe(path.join(outRoot, raw.name, 'latest.json'));
-    const r = latest && readMaybe(path.join(latest.dir, 'run.json'));
-    if (r && (r.input ?? []).some(f => path.resolve(f) === file)) { run = r; runDir = latest.dir; }
+    // A tour file: its newest successful run or validation of this file. Not latest.json: an export is a successful
+    // command too, so a second export would otherwise carry the first export as its evidence.
+    const base = path.join(outRoot, raw.name);
+    let dirs = []; try { dirs = fs.readdirSync(base, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name).sort().reverse(); } catch {}
+    for (const d of dirs) {
+      const r = readMaybe(path.join(base, d, 'run.json'));
+      if (!r || r.status !== 'done' || !['run', 'validate'].includes(r.command)) continue;
+      if (!(r.input ?? []).some(f => path.resolve(f) === file)) continue;
+      // validate's run.json says "done" even when steps failed; its verdict is in validation.json
+      if (r.command === 'validate' && (readMaybe(path.join(base, d, 'validation.json'))?.blocking ?? 0) > 0) continue;
+      run = r; runDir = path.join(base, d); break;
+    }
   }
   const report = runDir ? readMaybe(path.join(runDir, 'report.json')) : null;
 

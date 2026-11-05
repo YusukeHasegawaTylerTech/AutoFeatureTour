@@ -20,7 +20,8 @@ const port = Number(opt('--port') ?? 4777);
 const cli = path.join(root, 'src', 'cli.mjs');
 const outDir = path.join(root, 'out');
 const platformsDir = path.join(root, 'platforms');
-const token = crypto.randomBytes(16).toString('hex');
+// AFT_UI_TOKEN fixes the token (for scripted use, e.g. recording a tour of the UI); default: random per start.
+const token = process.env.AFT_UI_TOKEN || crypto.randomBytes(16).toString('hex');
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
   '.md': 'text/plain; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.yml': 'text/plain; charset=utf-8',
@@ -153,7 +154,9 @@ function runDetail(id) {
 
 // ---- jobs: CLI child processes, output streamed over SSE ----
 const jobs = new Map();
-const ALLOWED = new Set(['validate', 'render', 'run', 'doctor', 'generate', 'platform', 'login', 'session', 'snapshot', 'locate', 'try-step']);
+const ALLOWED = new Set(['validate', 'render', 'run', 'doctor', 'generate', 'platform', 'login', 'session', 'snapshot', 'locate', 'try-step', 'export', 'import']);
+// import only reads files the UI saved itself (POST /api/upload-export), each in its own folder under out/.imports/
+const importsDir = path.join(outDir, '.imports');
 function startJob(args) {
   const id = crypto.randomBytes(6).toString('hex');
   const job = { id, args, lines: [], done: false, result: null, listeners: new Set(), startedAt: new Date().toISOString() };
@@ -293,11 +296,25 @@ async function api(req, res, url) {
     const f = within(outDir, decodeURIComponent(p.slice('/api/file/'.length)));
     return f ? serveFile(req, res, f) : send(res, 403, { error: 'outside out/' });
   }
+  if (m === 'POST' && p === '/api/upload-export') {
+    // an .aft.json dropped on the page: checked to be an export, then saved under out/.imports/<stamp>-<id>/ (never overwrites)
+    const { name, text } = await body(req);
+    let doc; try { doc = JSON.parse(text); } catch { return send(res, 400, { error: "That file isn't an exported script (it isn't JSON)." }); }
+    if (doc?.schema !== 'aft-export/1') return send(res, 400, { error: "That file isn't an exported script (made with EXPORT, a .aft.json file)." });
+    const base = String(name ?? 'script.aft.json').replace(/[^\w.-]+/g, '-').replace(/^\.+/, '') || 'script.aft.json';
+    const dir = path.join(importsDir, `${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}-${crypto.randomBytes(3).toString('hex')}`);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, base.endsWith('.json') ? base : `${base}.json`);
+    fs.writeFileSync(file, text);
+    return send(res, 200, { file: path.relative(root, file), tour: doc.tour?.name ?? null, source: doc.source ?? {} });
+  }
   if (m === 'GET' && p === '/api/jobs') return send(res, 200, [...jobs.values()].map(jobView).reverse());
   if (m === 'POST' && p === '/api/jobs') {
     const { args } = await body(req);
     if (!Array.isArray(args) || !args.every(a => typeof a === 'string') || !ALLOWED.has(args[0]))
       return send(res, 400, { error: `allowed commands: ${[...ALLOWED].join(', ')}` });
+    if (args[0] === 'import' && !path.resolve(root, args[1] ?? '').startsWith(importsDir + path.sep))
+      return send(res, 400, { error: 'import takes a file uploaded through /api/upload-export' });
     return send(res, 200, jobView(startJob(args)));
   }
   const jm = /^\/api\/jobs\/([a-f0-9]+)(\/events|\/stop)?$/.exec(p);

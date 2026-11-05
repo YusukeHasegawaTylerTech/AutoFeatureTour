@@ -1,7 +1,8 @@
 # AutoFeatureTour UI
 
-A local web UI over the files and the CLI. It opens on two big buttons, **NEW** and **BROWSE**, made for someone who
-has never used the tool; everything else (runs, platforms, raw files, jobs, doctor) is in the ☰ menu.
+A local web UI over the files and the CLI. It opens on the script list, made for someone who has never used the tool:
+every app with its scripts, a dashed **NEW SCRIPT** tile closing each app's row and **NEW APP** last; everything else
+(runs, platforms, raw files, jobs, doctor) is in the ☰ menu.
 
 ```
 npm run ui                                  # or: node ui/server.mjs [--port 4777] [--no-open] [--root <checkout>]
@@ -9,12 +10,18 @@ npm run ui                                  # or: node ui/server.mjs [--port 477
 
 It opens the browser with a one-time token in the URL (kept as a cookie). The server listens on 127.0.0.1 only.
 
-- **NEW**: pick the app (or **NEW APP**: name, web address, how its sign-in page looks, test username/password,
+- **NEW SCRIPT** (per app) / **NEW APP** ( name, web address, how its sign-in page looks, test username/password,
   TEST THE CONNECTION), name the script, then write scenes: title, narration, and steps picked from six picture buttons
   (open a page, click, type, press a key, check it shows, wait). **GENERATE** writes the scenes from a pasted story
   (`aft generate --llm claude`: sends the story and the app's screens to Claude).
-- **BROWSE**: every script as a tile (works / needs fixing / not tried); a script's page has CHECK IT (dry run), MAKE
+- **Script list** (the start page, also `#/browse`): every script as a tile (works / needs fixing / not tried); a script's page has CHECK IT (dry run), MAKE
   VIDEO and EDIT, and explains a failure in plain words with one next step (USE the suggested name, FIX IT, …).
+- **EXPORT / IMPORT** (dev to QA): EXPORT on a script's page runs `aft export` and downloads its `.aft.json`
+  (fragments inlined, the script's last passing run or check as evidence). IMPORT is a drop zone (drag the file in, or
+  click to choose it): on the start page it asks which app to import into; on an app's NEW SCRIPT page it imports
+  into that app. It shows where the script came from and its criteria, runs `aft import`,
+  offers REPLACE IT when the app already has a script of that name, and lists missing fixtures. Dropped files are kept
+  in `out/.imports/<stamp>-<id>/`; `import` only reads files from there.
 - **Sign-in details**: username/password fields write the platform's `{env:…}` names into the checkout's `.env`
   (git-ignored). Values are never sent back to the page.
 - **Runs**: every `out/<name>/<run>/run.json`; a run shows the video with captions, or the failure: summary, first
@@ -30,4 +37,4 @@ It opens the browser with a one-time token in the URL (kept as a cookie). The se
 
 The UI never imports the engine: it runs `aft … --json` (only validate, render, run, doctor, generate, platform,
 login, session, snapshot, locate, try-step) and reads and writes files. It writes only `.env` (sign-in details, only names the platform references) and files under `platforms/<name>/`
-(not dotfiles, auth state or node_modules) and `out/**/tour.json`.
+(not dotfiles, auth state or node_modules) `out/**/tour.json` and `out/.imports/`.
