@@ -1,0 +1,358 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autofeaturetour.local/schemas/v1/conversation.schema.json",
+  "title": "AutoFeatureTour conversation (out/<story>/<run>/conversation.json)",
+  "description": "The state of \"generate as a conversation\": the turns, the questions and answers, the per-scene state. The draft tour is tour.json next to it.",
+  "type": "object",
+  "required": [
+    "schema",
+    "state",
+    "turns",
+    "scenes"
+  ],
+  "properties": {
+    "schema": {
+      "const": "aft-conversation/1"
+    },
+    "name": {
+      "type": "string",
+      "description": "The tour name (the story id)."
+    },
+    "story": {
+      "type": "object",
+      "description": "The user story the tour verifies.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Ticket id, e.g. RMS-6142 (used in the run folder name)."
+        },
+        "title": {
+          "type": "string",
+          "description": "Story title."
+        },
+        "description": {
+          "type": "string",
+          "description": "Story text."
+        },
+        "acceptanceCriteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Numbered from 1 in scenes' \"criteria\"."
+        },
+        "text": {
+          "type": "string",
+          "description": "The story as pasted."
+        }
+      },
+      "additionalProperties": false
+    },
+    "platform": {
+      "type": "string",
+      "description": "The platform."
+    },
+    "env": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "style": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stageName": {
+      "type": "string",
+      "description": "The stage the probes run on (stage-conv-…)."
+    },
+    "claudeSessionId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The Claude session resumed each turn."
+    },
+    "state": {
+      "enum": [
+        "exploring",
+        "waiting",
+        "recording",
+        "done",
+        "failed"
+      ],
+      "description": "waiting: on the person (questions, or nothing more to probe); done: the agent has nothing left (finished: true once --finish wrote the tour)."
+    },
+    "finished": {
+      "type": "boolean",
+      "description": "--finish validated the draft and wrote the tour; the stage was ended."
+    },
+    "error": {
+      "type": "string",
+      "description": "Why the last turn failed."
+    },
+    "turns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "One turn.",
+        "properties": {
+          "who": {
+            "enum": [
+              "agent",
+              "person",
+              "tool"
+            ]
+          },
+          "at": {
+            "type": "string",
+            "description": "When."
+          },
+          "text": {
+            "type": "string",
+            "description": "The message."
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "answers": {
+            "type": "object"
+          },
+          "probes": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "sceneUpdates": {
+            "type": "array"
+          },
+          "proposals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recorded": {
+            "type": "object"
+          },
+          "validation": {
+            "type": "object"
+          },
+          "probesDropped": {
+            "description": "Probes asked for after the budget ran out.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "$ref": "common.schema.json#/$defs/placeholder"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "who",
+          "text"
+        ]
+      }
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "A question to the person.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "q1, q2, …"
+          },
+          "type": {
+            "enum": [
+              "choose-target",
+              "criterion-ambiguous",
+              "missing-data",
+              "role",
+              "blocked",
+              "confirm-destructive",
+              "record-this",
+              "free-text"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "description": "The question."
+          },
+          "scene": {
+            "description": "The scene it is about.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "$ref": "common.schema.json#/$defs/placeholder"
+              }
+            ]
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "evidence": {
+            "type": "string",
+            "description": "What the agent saw."
+          },
+          "open": {
+            "type": "boolean",
+            "description": "Not answered yet."
+          },
+          "answer": {
+            "type": "string",
+            "description": "The answer."
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "type",
+          "text"
+        ]
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Every answer, in order."
+    },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "A change that belongs to the review, applied only if accepted.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "p1, …"
+          },
+          "kind": {
+            "enum": [
+              "workaround",
+              "decision"
+            ]
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "accepted",
+              "rejected"
+            ]
+          },
+          "why": {
+            "type": "string",
+            "description": "Why."
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "kind",
+          "status"
+        ]
+      }
+    },
+    "budget": {
+      "type": "object",
+      "description": "Probe budget.",
+      "properties": {
+        "probes": {
+          "description": "Used.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "limit": {
+          "description": "For the whole conversation.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "perTurn": {
+          "description": "Rounds per turn.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "scenes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "A scene of the draft, with its state.",
+        "properties": {
+          "state": {
+            "enum": [
+              "planned",
+              "explored",
+              "recorded",
+              "verified"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "description": "Title."
+          },
+          "todo": {
+            "type": "string",
+            "description": "Work left on it, as the agent sees it."
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "tried": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Steps that passed a try on the stage (normalized JSON)."
+    },
+    "recording": {
+      "type": "object",
+      "description": "While recording by hand: { scene, afterStep, dir }."
+    }
+  },
+  "additionalProperties": true
+}

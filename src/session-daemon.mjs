@@ -2,7 +2,7 @@
 // HTTP port. Started detached by the CLI with AFT_SESSION={ toolRoot, name, args, outDir, stateFile }; writes its
 // state file when ready (or failed) and removes it when it stops. Logs go to <outDir>/session.log.
 //
-// POST / (header x-aft-token) { "op": "status" | "snapshot" | "locate" | "try-step" | "stop", ... } → JSON.
+// POST / (header x-aft-token) { "op": "status" | "snapshot" | "locate" | "try-step" | "record-start" | "record-steps" | "record-stop" | "stop", ... } → JSON.
 // Commands run one at a time (one page): a second command while one is running is refused with HTTP 409 (busy), so
 // two callers can't interleave steps on the same page; status always answers, and a stop waits for the command.
 
@@ -47,6 +47,7 @@ async function main() {
       let msg;
       try { msg = JSON.parse(body || '{}'); } catch { return send(400, { error: 'invalid JSON' }); }
       if (msg.op === 'status') return send(200, { ...base, status: 'ready', ...session.status(), ...(running ? { busy: running } : {}) });
+      if (msg.op === 'record-steps') return send(200, session.recordSteps(msg));
       if (running && msg.op !== 'stop')
         return send(409, { error: `session ${name} is busy: a "${running}" call is still running (one call at a time on a session's page); wait for it, or start another session with --session <name>`, class: 'error' });
       if (msg.op !== 'stop') running = msg.op;
@@ -57,6 +58,8 @@ async function main() {
             case 'snapshot': return send(200, await session.snapshot(msg));
             case 'locate': return send(200, await session.locate(msg.target, msg));
             case 'try-step': return send(200, await session.tryStep(msg.step, msg));
+            case 'record-start': return send(200, await session.recordStart(msg));
+            case 'record-stop': return send(200, await session.recordStop());
             case 'stop': return send(200, { ...base, ...(await shutdown()) });
             default: return send(400, { error: `unknown op ${msg.op}` });
           }

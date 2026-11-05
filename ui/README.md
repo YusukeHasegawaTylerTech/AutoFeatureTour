@@ -13,7 +13,11 @@ It opens the browser with a one-time token in the URL (kept as a cookie). The se
 - **NEW SCRIPT** (per app) / **NEW APP** ( name, web address, how its sign-in page looks, test username/password,
   TEST THE CONNECTION), name the script, then write scenes: title, narration, and steps picked from six picture buttons (🎥 on a scene or step turns it off camera; 📌 next to a field inserts a value an earlier pin step made, `{artifact.x.field}`)
   (open a page, click, type, press a key, check it shows, wait). **GENERATE** writes the scenes from a pasted story
-  (`aft generate --llm claude`: sends the story and the app's screens to Claude).
+  as a conversation (`aft generate --llm claude --converse`, `aft converse`): the AI tries steps in a live browser of
+  the app and asks questions (answer with the buttons or in words); ⏺ RECORD on a scene lets you do it by hand
+  (↶ drop last, ⏹ STOP: the AI writes the narration); any later message refines the scenes; ✔ USE THESE SCENES checks
+  every step and puts them in the editor (then SAVE). Closing the panel keeps the conversation (💬 CONTINUE). "One go,
+  no questions" is the old one-shot generate. It sends the story, the app's screens and what the live pages show to Claude.
 - **Script list** (the start page, also `#/browse`): every script as a tile (works / needs fixing / not tried); a script's page has CHECK IT (dry run), MAKE
   VIDEO and EDIT, and explains a failure in plain words with one next step (USE the suggested name, FIX IT, …).
 - **EXPORT / IMPORT** (dev to QA): EXPORT on a script's page runs `aft export` and downloads its `.aft.json`
@@ -69,5 +73,5 @@ It opens the browser with a one-time token in the URL (kept as a cookie). The se
 - **Jobs**: every command the UI started, with its live log, a Stop (Ctrl+C) button and the `--json` result.
 
 The UI never imports the engine: it runs `aft … --json` (only validate, render, run, doctor, generate, platform,
-login, session, snapshot, locate, try-step, export, import, suggest-fix, cleanup, reset, stage) and reads and writes files. It writes only `.env` (sign-in details, only names the platform references) and files under `platforms/<name>/`
+login, session, snapshot, locate, try-step, export, import, suggest-fix, cleanup, reset, stage, converse) and reads and writes files. It writes only `.env` (sign-in details, only names the platform references) and files under `platforms/<name>/`
 (not dotfiles, auth state or node_modules) `out/**/tour.json` `out/.imports/`, and `out/.trash/` (delete moves things there; restore moves them back). Tests: `test/ui-server.test.mjs`.

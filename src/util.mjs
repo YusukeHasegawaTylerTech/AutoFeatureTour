@@ -79,7 +79,8 @@ export function parseArgs(argv) {
     let v = eq < 0 ? undefined : a.slice(eq + 1);
     k = k.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
     if (v === undefined) v = argv[i + 1] !== undefined && !argv[i + 1].startsWith('--') ? argv[++i] : true;
-    out[k] = v;
+    // --answer may be given more than once (aft converse): a list.
+    out[k] = k === 'answer' && out[k] !== undefined ? [out[k], v].flat() : v;
   }
   return out;
 }

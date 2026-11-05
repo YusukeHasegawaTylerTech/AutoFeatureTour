@@ -381,6 +381,29 @@ export const SCHEMAS = {
     type: 'object', additionalProperties: false, required: ['mocks'],
     properties: { ...$schemaProp, description: str('What it simulates and why.'), mocks: { type: 'array', minItems: 1, items: ref('action_mock'), description: 'mock steps.' } },
   }),
+  // Not a definition file: the state of a conversation (aft generate --converse), written by the engine
+  // (src/converse.mjs) into its run folder. Published so the UI and other tools can read it.
+  conversation: file('conversation', 'AutoFeatureTour conversation (out/<story>/<run>/conversation.json)', 'The state of "generate as a conversation": the turns, the questions and answers, the per-scene state. The draft tour is tour.json next to it.', {
+    type: 'object', required: ['schema', 'state', 'turns', 'scenes'],
+    properties: {
+      schema: { const: 'aft-conversation/1' }, name: str('The tour name (the story id).'), story, platform: str('The platform.'), env: { type: ['string', 'null'] }, role: { type: ['string', 'null'] },
+      style: { type: ['string', 'null'] }, stageName: str('The stage the probes run on (stage-conv-…).'), claudeSessionId: { type: ['string', 'null'], description: 'The Claude session resumed each turn.' },
+      state: { enum: ['exploring', 'waiting', 'recording', 'done', 'failed'], description: 'waiting: on the person (questions, or nothing more to probe); done: the agent has nothing left (finished: true once --finish wrote the tour).' },
+      finished: bool('--finish validated the draft and wrote the tour; the stage was ended.'), error: str('Why the last turn failed.'),
+      turns: { type: 'array', items: obj('One turn.', { who: { enum: ['agent', 'person', 'tool'] }, at: str('When.'), text: str('The message.'),
+        questions: { type: 'array', items: { type: 'string' } }, answers: { type: 'object' }, probes: { type: 'array', items: { type: 'object' } },
+        sceneUpdates: { type: 'array' }, proposals: { type: 'array', items: { type: 'string' } }, recorded: { type: 'object' }, validation: { type: 'object' }, probesDropped: num('Probes asked for after the budget ran out.') }, { required: ['who', 'text'], additionalProperties: true }) },
+      questions: { type: 'array', items: obj('A question to the person.', { id: str('q1, q2, …'), type: { enum: ['choose-target', 'criterion-ambiguous', 'missing-data', 'role', 'blocked', 'confirm-destructive', 'record-this', 'free-text'] },
+        text: str('The question.'), scene: num('The scene it is about.'), options: { type: 'array', items: { type: 'object' } }, evidence: str('What the agent saw.'), open: bool('Not answered yet.'), answer: str('The answer.') }, { required: ['id', 'type', 'text'], additionalProperties: true }) },
+      decisions: { type: 'array', items: { type: 'object' }, description: 'Every answer, in order.' },
+      proposals: { type: 'array', items: obj('A change that belongs to the review, applied only if accepted.', { id: str('p1, …'), kind: { enum: ['workaround', 'decision'] }, status: { enum: ['proposed', 'accepted', 'rejected'] }, why: str('Why.') }, { required: ['id', 'kind', 'status'], additionalProperties: true }) },
+      budget: obj('Probe budget.', { probes: num('Used.'), limit: num('For the whole conversation.'), perTurn: num('Rounds per turn.') }),
+      scenes: { type: 'array', items: obj('A scene of the draft, with its state.', { state: { enum: ['planned', 'explored', 'recorded', 'verified'] }, title: str('Title.'), todo: str('Work left on it, as the agent sees it.') }, { additionalProperties: true }) },
+      tried: { type: 'array', items: { type: 'string' }, description: 'Steps that passed a try on the stage (normalized JSON).' },
+      recording: { type: 'object', description: 'While recording by hand: { scene, afterStep, dir }.' },
+    },
+    additionalProperties: true,
+  }),
 };
 
 export const TYPES = ['tour', 'platform', 'environments', 'login', 'fragment', 'fixture', 'mocks'];

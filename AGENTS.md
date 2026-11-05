@@ -530,6 +530,41 @@ aft stage end <name> [--keep] --json
 6. Example: [platforms/rms/tours/RMS-6142.tour.json](platforms/rms/tours/RMS-6142.tour.json) (generated, then corrected by hand).
 7. Flows you write twice become fragments; data the story needs becomes a fixture (see Platforms).
 
+### Generate as a conversation
+
+Instead of one shot, `--converse` makes generating a conversation: the agent explores the live app (on a stage of the
+platform, `stage-conv-…`), writes steps it has tried, and comes back with questions; you answer, record steps by hand,
+or ask for changes, and it picks up there. The run folder holds it all: `conversation.json` (schema
+`aft-conversation/1`, `schemas/conversation.schema.json`: turns, questions, answers, per-scene state planned |
+explored | recorded | verified), `tour.json` (the draft, always a valid tour: unfinished work is in scene `todo`
+and `unresolved`, which block recording), `stages/` (the stage runs; their ledgers hold what probing created).
+
+```
+aft generate --story story.md --platform todomvc --llm claude --converse --json   # data.state: waiting, data.questions
+aft converse <run> --answer q1=Approve --answer q2=yes --json                      # or --say "scene 3 is too long"
+aft converse <run> --record 2 [--after-step 1]     # do scene 2 by hand in the stage's browser…
+aft converse <run> --steps [--drop-last]           # …the steps so far…
+aft converse <run> --stop                          # …then the agent narrates them and proposes checks
+aft converse <run> --accept p1 | --reject p1       # proposals (a story workaround, a review decision) apply only if accepted
+aft converse <run> --finish [--force]              # validate the draft; all scenes pass: final tour.json, stage ended (data undone)
+aft converse <run> --end [--keep]                  # stop without finishing
+```
+
+- Waiting on the person is **exit 0** with `data.state: "waiting"` (and `data.questions`, each `{ id, type, text,
+  options }`); the agent having nothing left is `"done"` (then `--finish`); `--finish` sets `data.finished`.
+  Failures keep their exit codes. Question types: choose-target, criterion-ambiguous, missing-data, role, blocked,
+  confirm-destructive, record-this, free-text.
+- The engine drives Claude (`claude -p`, no tools, a JSON schema; the session is resumed each turn): it can only ask
+  for probes (snapshot, locate, try-step, stage-to a point), and each turn has a probe budget. Steps that look
+  destructive (delete, remove…) are refused until a confirm-destructive question is answered yes. A step it didn't try
+  stays marked "not tried" in the scene's todo; `--finish` is the real gate (`aft validate`). Checks are never weakened
+  to match what the app shows.
+- Not on a production environment (an env named prod/production/live is refused): probing does real actions, like
+  validate. On a shared environment the agent is told to tag data with `{run.tag}` and pin what it creates.
+- Recording also works on a session started with `aft session start --headed` (daemon ops `record-start`,
+  `record-steps`, `record-stop`; src/capture.mjs): password fields become `"secret": true` steps with `{data.<name>}`,
+  never the value.
+
 ### Dev to QA: export and import
 
 A tour is best written where the code and the data are (a dev's local platform), then run where the change is
@@ -560,7 +595,8 @@ passed on dev, the report says what differs: a SCRIPT failure is usually a label
   `platforms/<name>/`. Tours hold no URLs, credentials, launch commands or app-wide selectors.
 - **Never overwrite a previous run.** Use `newRunDir`; no fixed output paths, no shared temp files, free ports.
 - **Rendering never depends on an LLM.** LLMs may write scripts; scripts are files a person can review.
-- `--llm claude` sends the discovery inventory and story text to Claude; only use it where that's allowed.
+- `--llm claude` sends the discovery inventory and story text to Claude; with `--converse` it also sends the live
+  page's ARIA tree, text and errors from the probes (masked and redacted as reports are). Only use it where that's allowed.
 - Never commit `out/`, `auth/`, `.sessions/` or `.env`.
 
 ## Troubleshooting
@@ -595,7 +631,8 @@ snapshots, the console and network; find the last red action.
 tour.json → a run (platform composition, launch/attach, login, hooks, fixtures) · `platform.mjs` platforms, fragments,
 fixtures, init · `platform-cli.mjs` `aft platform` · `session.mjs` / `session-daemon.mjs` sessions, snapshot, locate,
 try-step · `stage.mjs` / `stage-daemon.mjs` do / redo until here · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
-`plan.mjs` heuristic and Claude planners, stories · `render.mjs` ffmpeg · `tts.mjs` speech · `auth.mjs` saved logins ·
+`plan.mjs` heuristic and Claude planners, stories · `converse.mjs` generate as a conversation · `capture.mjs` recording by hand ·
+`narrate-timing.mjs` scene timing · `render.mjs` ffmpeg · `tts.mjs` speech · `auth.mjs` saved logins ·
 `doctor.mjs` checks · `workarounds.mjs` known issues (merge, checkpoint, matching) · `review.mjs` evidence, findings,
 decisions, verdict · `fix.mjs` AI fix proposals (`suggest-fix`) · `ledger.mjs` ledger.json, run tags · `fixtures.mjs`
 hooks, fixture items, browser fixtures, artifacts, `aft cleanup` / `aft reset`. Tests: `npm test`.

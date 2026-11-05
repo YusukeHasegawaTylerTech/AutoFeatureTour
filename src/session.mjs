@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { makeLogin, materialize, secretsOf, startServices } from './declarative.mjs';
 import { expandSteps } from './platform.mjs';
 import { stopProcess, Tour } from './recorder.mjs';
+import { Capture } from './capture.mjs';
 import { candidates, runSteps, settle, shown, StepError, suggest } from './steps.mjs';
 import { scrub } from './triage.mjs';
 import { sleep } from './util.mjs';
@@ -131,6 +132,26 @@ export class Session {
       after: { url: snap.url, title: snap.title, aria: snap.aria },
     };
     return JSON.parse(scrub(JSON.stringify(out), this.secrets));
+  }
+
+  // ---- Recording by hand (src/capture.mjs): the person acts in this (headed) browser, the steps are collected ----
+
+  async recordStart({ outDir } = {}) {
+    if (this.capture?.active) throw new Error('already recording: record-stop first');
+    this.capture = new Capture(this.tour.page, { outDir: outDir ?? this.outDir, baseUrl: this.vars.baseUrl + '/', mask: this.cfg.mask, log: this.log });
+    return this.capture.start();
+  }
+
+  recordSteps({ dropLast } = {}) {
+    if (!this.capture) return { recording: false, steps: [] };
+    return { recording: this.capture.active, steps: dropLast ? this.capture.dropLast() : this.capture.steps(), url: this.tour.page.url() };
+  }
+
+  async recordStop() {
+    if (!this.capture) throw new Error('not recording: record-start first');
+    const r = await this.capture.stop();
+    this.capture = null;
+    return JSON.parse(scrub(JSON.stringify({ recording: false, ...r }), this.secrets));
   }
 
   async stop() {

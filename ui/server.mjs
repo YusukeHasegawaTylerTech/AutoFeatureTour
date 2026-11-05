@@ -246,7 +246,7 @@ function runDetail(id) {
 
 // ---- jobs: CLI child processes, output streamed over SSE ----
 const jobs = new Map();
-const ALLOWED = new Set(['validate', 'render', 'run', 'doctor', 'generate', 'platform', 'login', 'session', 'snapshot', 'locate', 'try-step', 'export', 'import', 'suggest-fix', 'cleanup', 'reset', 'stage']);
+const ALLOWED = new Set(['validate', 'render', 'run', 'doctor', 'generate', 'platform', 'login', 'session', 'snapshot', 'locate', 'try-step', 'export', 'import', 'suggest-fix', 'cleanup', 'reset', 'stage', 'converse']);
 // import only reads files the UI saved itself (POST /api/upload-export), each in its own folder under out/.imports/
 const importsDir = path.join(outDir, '.imports');
 function startJob(args) {
@@ -413,6 +413,12 @@ async function api(req, res, url) {
     else { if (lines.length && lines.at(-1) === '') lines.pop(); lines.push(`${name}=${quoted}`, ''); }
     writeAtomic(file, lines.join('\n'));
     return send(res, 200, { saved: name });
+  }
+  if (m === 'GET' && p === '/api/conversation') {   // a conversation's state (generate --converse): out/**/conversation.json
+    const f = within(root, path.join(q('run') ?? '', 'conversation.json'));
+    if (!f || !f.startsWith(outDir + path.sep)) return send(res, 403, { error: 'only conversations under out/' });
+    const c = readJson(f);
+    return c ? send(res, 200, { ...c, runDir: path.dirname(f) }) : send(res, 404, { error: 'no conversation there' });
   }
   if (p === '/api/tour') {   // generated tours in run folders (out/**/tour.json)
     const rel = q('path'), f = within(root, rel);

@@ -5,6 +5,11 @@
 //   aft generate --story <file|text> [--platform <name> | --base-url <url>] [--llm claude] [--style verification|demo|training] [--prompt ...]
 //   aft validate <tour.json> | --script <tour.json>   dry run: checks every step resolves, nothing recorded
 //   aft run      <tour.json|tour.mjs>                 record the video (render --record)
+//   aft generate --story <file|text> --platform <name> --llm claude --converse [--target <env>] [--role <r>] [--no-discover] [--headless]
+//                                                    a conversation: the agent explores the live app (on a stage), asks, you decide;
+//                                                    exit 0 with data.state "waiting" (data.questions) or "done"
+//   aft converse <run> [--say "…"] [--answer q3=Approve ...] | --record N [--after-step J] | --steps [--drop-last] | --stop
+//                | --accept p1 | --reject p1 | --finish [--force] | --end [--keep]    continue it (no flag: its state)
 //   aft all      --story <file|text> --base-url <url> [--llm claude]   generate → validate → run, one run folder
 //   aft render   <tour>  [--record]                   narration over clips/title cards, or a recording
 //   aft discover <url>   [--max-pages 12]             crawl screens (used by generate/auto)
@@ -73,7 +78,8 @@ import { describePoint, endStage, listStages, stageName, stagePoint, stageSource
 import { exportTour, importTour } from './exchange.mjs';
 import { discover } from './discover.mjs';
 import { doctor } from './doctor.mjs';
-import { plan, readStory } from './plan.mjs';
+import { claude, inventoryFor, plan, readStory } from './plan.mjs';
+import { applyAnswers, decideProposal, finish, newConversation, openQuestions, parseAnswers, readConversation, recordedSteps, saveConversation, startRecording, stopRecording, turn, view as conversationView, writeDraft } from './converse.mjs';
 import { Tour } from './recorder.mjs';
 import { concat, cutClips, duration, muxScene, requireFfmpeg, trimPlan, writeCaptions } from './render.mjs';
 import { parseScript, spokenText } from './script.mjs';
@@ -508,6 +514,148 @@ async function withSession(args, fn) {
   try { await session.start(); return await fn(session, false); } finally { await session.stop(); }
 }
 
+// ---- Conversations (generate --converse, aft converse: src/converse.mjs) ------------------------------------------
+
+const PRODUCTION = /^(prod|production|live)(\b|[-_])/i;
+
+/** The conversation's one live browser: a stage (src/stage.mjs) built from the draft tour.json in its run folder. */
+function conversationStage(runDir, conv, args) {
+  const name = conv.stageName;
+  const current = () => readSessions(toolRoot).find(s => s.name === name);
+  const undoDead = async dir => commands.cleanup({ _: ['cleanup', dir] }).catch(e => ({ error: e.message.split('\n')[0] }));
+  const start = async point => {
+    const outDir = newRunDir(path.join(runDir, 'stages'));
+    log(`stage ${name}: ${describePoint(point)} (${outDir})`);
+    const s = await startStage({ toolRoot, name, outDir, echo: text => process.stderr.write(text),
+      job: { file: path.join(runDir, 'tour.json'), sourceRun: runDir, point, keep: false,
+        args: { target: conv.env ?? undefined, role: conv.role ?? undefined, headless: !!args.headless, freshLogin: !!args.freshLogin } } });
+    if (s.status === 'failed') fs.rmSync(path.join(sessionsDir(toolRoot), `${name}.json`), { force: true });
+    conv.stageRuns = [...(conv.stageRuns ?? []), outDir];
+    return stageView({ ...s, alive: s.status === 'ready' });
+  };
+  return {
+    alive: () => !!current()?.alive,
+    async ensure() {
+      const s = current();
+      if (s?.alive) return stageView(s);
+      if (s) await endStage(toolRoot, s, { keep: false, undoDead });
+      return start({ setupOnly: true });
+    },
+    async call(op, params) {
+      let s = current();
+      if (!s?.alive) { await this.ensure(); s = current(); }
+      if (!s?.alive || !s.port) throw new Failure('error', `the conversation's stage (${name}) has no browser: it failed to start; see ${conv.stageRuns?.at(-1) ?? runDir}`);
+      return call(s, op, params);
+    },
+    async redo(point) {
+      const s = current();
+      if (s) await endStage(toolRoot, s, { keep: false, undoDead });
+      return start(point);
+    },
+    async end({ keep = false } = {}) {
+      const s = current();
+      return s ? endStage(toolRoot, s, { keep, undoDead }) : null;
+    },
+  };
+}
+
+/** What a conversation needs from outside: Claude (or a scripted agent for tests), the stage, validate. */
+function conversationDeps(runDir, conv, args) {
+  const fake = process.env.AFT_FAKE_AGENT;   // tests: a JSON file with the agent's replies, in order
+  const ask = fake
+    ? async () => {
+      const replies = JSON.parse(fs.readFileSync(fake, 'utf8'));
+      const n = conv.fakeTurn = (conv.fakeTurn ?? 0) + 1;
+      return { output: replies[n - 1] ?? { say: '(no more scripted replies)', done: true }, sessionId: 'fake-session' };
+    }
+    : ({ system, input, schema, resume }) => claude({ system, input, schema, resume, cwd: runDir, model: args.model, session: true });
+  const validateDraft = async file => {
+    const out = newRunDir(path.join(runDir, 'validations'));
+    const { spawn } = await import('node:child_process');
+    const p = spawn(process.execPath, [fileURLToPath(import.meta.url), 'validate', file, '--json', '--out', out, ...(args.headed ? ['--headed'] : [])],
+      { cwd: process.cwd(), env: { ...process.env, MSYS_NO_PATHCONV: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    p.stdout.on('data', d => { stdout += d; });
+    p.stderr.on('data', d => process.stderr.write(d));
+    await new Promise(ok => p.on('close', ok));
+    let doc = null;
+    try { doc = JSON.parse(stdout); } catch { /* below */ }
+    const vj = path.join(out, 'validation.json');
+    const v = fs.existsSync(vj) ? JSON.parse(fs.readFileSync(vj, 'utf8')) : null;
+    if (!v) throw Object.assign(new Error(`validate didn't finish: ${doc?.error?.message ?? 'no validation.json'}`), { failure: doc?.class });
+    return { blocking: v.blocking, report: v.report, runDir: out };
+  };
+  return { ask, stage: conversationStage(runDir, conv, args), validate: validateDraft, log: text => log(text) };
+}
+
+/** One command at a time on a conversation: a lock file with the pid. */
+function lockConversation(runDir) {
+  const f = path.join(runDir, '.converse.lock');
+  if (fs.existsSync(f)) {
+    const pid = Number(fs.readFileSync(f, 'utf8'));
+    let alive = false;
+    try { process.kill(pid, 0); alive = true; } catch (e) { alive = e.code === 'EPERM'; }
+    if (alive && pid !== process.pid) throw new UsageError(`the conversation in ${runDir} is busy (aft converse, pid ${pid}): wait for it`);
+  }
+  fs.writeFileSync(f, String(process.pid));
+  return () => fs.rmSync(f, { force: true });
+}
+
+/** Platform names a conversation can use: fragments (with parameters) and fixtures (with data keys). */
+function platformParts(app) {
+  const dir = app?.platform?.dir;
+  const list = (sub, fn) => (dir && fs.existsSync(path.join(dir, sub)) ? fs.readdirSync(path.join(dir, sub)).filter(f => /\.(json|mjs)$/.test(f)).map(f => fn(f, path.join(dir, sub, f))) : []);
+  const read = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return {}; } };
+  return {
+    fragments: list('fragments', (f, p) => ({ name: f.replace(/\.(json|mjs)$/, ''), ...(f.endsWith('.json') ? { params: read(p).params ?? {}, comment: read(p).comment } : { code: true }) })),
+    fixtures: list('fixtures', (f, p) => (f.endsWith('.json') ? { name: f.replace(/\.json$/, ''), data: Object.keys(read(p).data ?? {}), comment: read(p).comment } : null)).filter(Boolean),
+  };
+}
+
+const printConversation = r => {
+  if (json) return;
+  if (r.say) console.log(`\nagent: ${r.say}`);
+  for (const s of r.scenes ?? []) console.log(`  ${String(s.index).padStart(2)}. [${s.state}] ${s.title} (${s.steps} step(s)${s.untried ? `, ${s.untried} not tried` : ''})${s.todo ? `  todo: ${s.todo.slice(0, 100)}` : ''}`);
+  for (const q of r.questions ?? []) console.log(`  ? ${q.id} (${q.type}${q.scene ? `, scene ${q.scene}` : ''}): ${q.text}${q.options?.length ? `  [${q.options.map(o => o.value).join(' | ')}]` : ''}`);
+  for (const p of r.proposals ?? []) console.log(`  proposal ${p.id} (${p.kind}): ${p.why}  (--accept ${p.id} / --reject ${p.id})`);
+  console.log(`\nstate: ${r.state}${r.finished ? ' (finished)' : ''}  ·  ${r.tour}`);
+  if (r.state === 'waiting' && r.questions?.length) console.log(`answer: aft converse "${r.runDir}" --answer ${r.questions[0].id}=<value>  (or --say "…")`);
+  if (r.state === 'recording') console.log(`recording scene ${r.recording.scene}: act in the browser, then  aft converse "${r.runDir}" --stop`);
+  if (r.state === 'done' && !r.finished) console.log(`next: aft converse "${r.runDir}" --finish  (validates, writes the tour, ends the stage)`);
+};
+
+async function startConversation(args, story) {
+  if (args.llm !== 'claude' && !process.env.AFT_FAKE_AGENT) throw new UsageError('--converse needs --llm claude (the agent that explores the app)');
+  if (!story) throw new UsageError('--converse needs a --story');
+  const app = appSettings(args);
+  if (!app?.platform) throw new UsageError('--converse needs --platform <name>: the conversation stages the platform\'s app to explore it');
+  const env = app.env ?? envOf(args) ?? null;
+  if (env && PRODUCTION.test(env)) throw new UsageError(`--converse probes the app for real (it clicks, types and creates data): not on "${env}"; use a local or test environment`);
+  const name = safeName(args.name ?? storyName(story));
+  return withRun(name, args, 'generate', async runDir => {
+    const conv = Object.assign(newConversation({ story, platform: app.platform.name, env, role: args.role ?? null, style: args.style,
+      stageName: `stage-conv-${safeName(name).slice(0, 30)}-${path.basename(runDir).slice(-4)}`, limit: Number(args.probeBudget ?? 80) }), { name });
+    writeDraft(runDir, conv);
+    saveConversation(runDir, conv);
+    const url = targetUrl(args);
+    const discovery = url && !args.noDiscover
+      ? await discover({ url, outDir: runDir, maxPages: Number(args.maxPages ?? 8), include: args.include, exclude: args.exclude, ...loginStepsFor(args) }).catch(e => { log(`discovery failed (${e.message.split('\n')[0]}); the agent explores without an inventory`); return null; })
+      : null;
+    const deps = conversationDeps(runDir, conv, args);
+    const release = lockConversation(runDir);
+    try {
+      const stage = await deps.stage.ensure();
+      saveConversation(runDir, conv);
+      if (stage.state === 'failed') log(`the stage failed (${stage.error}): the agent is told; the setup may need fixing`);
+      const r = await turn(runDir, conv, { kind: 'start', story, style: args.style ?? null, platform: app.platform.name, env, role: conv.role, ...platformParts(app),
+        inventory: discovery ? inventoryFor(discovery) : [], stage: { state: stage.state, reached: stage.reached, url: stage.url, error: stage.error, warnings: stage.warnings },
+        ask: 'Plan one scene per acceptance criterion. Explore the live app to find each one\'s steps (snapshot, locate, tryStep), write the steps that worked, and ask the person what only they can decide.' }, deps);
+      printConversation(r);
+      return { ...r, conversation: true };
+    } finally { release(); }
+  });
+}
+
 // ---- Commands ----------------------------------------------------------------------------------------------------
 
 const commands = {
@@ -533,6 +681,7 @@ const commands = {
 
   async generate(args) {
     const story = readStory(args.story);
+    if (args.converse) return startConversation(args, story);
     const url = targetUrl(args);
     if (!story && !args.prompt) throw new UsageError('Usage: aft generate --story <file|text> [--base-url <url>] [--llm claude] [--style ...]');
     return withRun(args.name ?? storyName(story, url), args, 'generate', async out => {
@@ -540,6 +689,64 @@ const commands = {
       log(`next: review/edit it, then  aft validate "${tourFile}"  and  aft run "${tourFile}"`);
       return { tour: tourFile, scenes: tour.scenes.length, draft: !!tour.draft };
     });
+  },
+
+  /** Continue a conversation (src/converse.mjs): say, answer, record, accept a proposal, finish, end. */
+  async converse(args) {
+    const runDir = args._[1] && path.resolve(args._[1]);
+    if (!runDir || !fs.existsSync(path.join(runDir, 'conversation.json')))
+      throw new UsageError('Usage: aft converse <conversation run folder> [--say "…"] [--answer q3=Approve ...] | --record N [--after-step J] | --steps [--drop-last] | --stop | --accept p1 | --reject p1 | --finish [--force] | --end [--keep]');
+    lastRunDir = runDir;
+    // The steps recorded so far: read-only, polled while recording, so it never takes the lock (a STOP must get it).
+    if (args.steps) {
+      const conv = readConversation(runDir);
+      if (!conv.recording) return { ...conversationView(runDir, conv), recorded: [] };
+      const r = await recordedSteps(conversationDeps(runDir, conv, args), { dropLast: !!args.dropLast });
+      if (!json) for (const [i, s] of (r.steps ?? []).entries()) console.log(`${String(i + 1).padStart(2)}. ${JSON.stringify(s.step)}${s.weak ? '  (weak)' : ''}`);
+      return { ...conversationView(runDir, conv), recorded: r.steps ?? [] };
+    }
+    const release = lockConversation(runDir);
+    try {
+      const conv = readConversation(runDir);
+      const deps = conversationDeps(runDir, conv, args);
+      const done = r => { saveConversation(runDir, conv); printConversation(r); return r; };
+      if (args.stop) return done(await stopRecording(runDir, conv, deps));
+      if (args.end) {
+        if (conv.recording) await deps.stage.call('record-stop', {}).catch(() => {});
+        delete conv.recording;
+        const ended = await deps.stage.end({ keep: !!args.keep });
+        conv.ended = true;
+        if (conv.state !== 'done') conv.state = 'failed';
+        conv.turns.push({ who: 'person', at: new Date().toISOString(), text: `ended the conversation${args.keep ? ' (data kept)' : ''}` });
+        return done({ ...conversationView(runDir, conv), stageEnded: ended });
+      }
+      for (const id of [args.accept ?? []].flat().filter(x => x !== true)) decideProposal(conv, String(id), true);
+      for (const id of [args.reject ?? []].flat().filter(x => x !== true)) decideProposal(conv, String(id), false);
+      if (args.accept || args.reject) { writeDraft(runDir, conv); if (!args.say && !args.answer && !args.finish) return done(conversationView(runDir, conv)); }
+      if (args.finish) {
+        if (args.say || args.answer) throw new UsageError('--finish goes alone (say or answer first)');
+        return done(await finish(runDir, conv, deps, { force: !!args.force }));
+      }
+      if (args.record !== undefined) {
+        const scene = Number(args.record), afterStep = args.afterStep !== undefined ? Number(args.afterStep) : undefined;
+        try { return done(await startRecording(runDir, conv, { scene, afterStep }, deps)); } catch (e) { if (e.failure) throw e; throw new UsageError(e.message); }
+      }
+      if (!args.say && !args.answer) return done(conversationView(runDir, conv));
+      if (conv.recording) throw new UsageError(`recording scene ${conv.recording.scene}: --stop first`);
+      let answers, effects;
+      try { answers = parseAnswers(args.answer); effects = applyAnswers(conv, answers); } catch (e) { throw new UsageError(e.message); }
+      const say = args.say === true ? '' : String(args.say ?? '');
+      conv.turns.push({ who: 'person', at: new Date().toISOString(), text: say, ...(Object.keys(answers).length ? { answers } : {}) });
+      if (effects.restage) { writeDraft(runDir, conv); await deps.stage.redo({ setupOnly: true }); }
+      if (effects.record) {
+        // The answers reach the agent with the recorded steps.
+        conv.pending = { say, answers };
+        return done(await startRecording(runDir, conv, effects.record, deps));
+      }
+      const earlier = conv.pending;
+      delete conv.pending;
+      return done(await turn(runDir, conv, { kind: 'message', say, answers, ...(earlier ? { earlier } : {}) }, deps));
+    } finally { release(); }
   },
 
   async validate(args) {

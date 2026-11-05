@@ -158,3 +158,21 @@ details.raw pre { margin-top: 6px; max-height: 200px; }
 .pin-field { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
 .pin-field .mid-input { width: 220px; margin: 0; font-size: 15px; padding: 6px 10px; }
 .pin-cleanup { width: 100%; font: 13px/1.4 ui-monospace, monospace; border: 2px solid var(--line); border-radius: 10px; }
+
+/* ✨ GENERATE as a conversation (converse.js) */
+.conv-log { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.conv-turn { display: flex; gap: 10px; align-items: flex-start; font-size: 16px; }
+.conv-turn .who { font-size: 22px; }
+.conv-turn.person > div { background: #e8f0fd; border-radius: 12px; padding: 6px 12px; }
+.conv-turn.tool > div { color: var(--muted); font-size: 14px; }
+.conv-probe { font-size: 14px; color: var(--muted); margin-left: 32px; }
+.conv-probe small { display: block; }
+.conv-q { border: 2px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-top: 8px; }
+.conv-q.open { border-color: #8b4fd8; }
+.conv-q pre, .conv-q details pre { font-size: 12px; white-space: pre-wrap; max-height: 160px; overflow: auto; }
+.conv-scenes { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.conv-scene { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.conv-scene .badge { font-size: 13px; font-weight: 700; padding: 2px 8px; border-radius: 10px; background: var(--line); }
+.conv-recording { border: 2px solid #e0443a; border-radius: 12px; padding: 10px 12px; margin: 10px 0; }
+.conv-say textarea { width: 100%; }
+@media (prefers-color-scheme: dark) { .conv-turn.person > div { background: #1d2d4a; } }

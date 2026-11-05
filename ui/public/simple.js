@@ -3,6 +3,7 @@
 
 import { filmedScenes, mountMarkers, sceneStarts } from './media.js';
 import { mountLiveStages, mountStage, stageButton } from './stage.js';
+import { conversation } from './converse.js';
 
 export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES }) {
   const send = (method, url, data) => api(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
@@ -563,13 +564,16 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       let original = JSON.stringify(tour);
       tour.scenes ??= [];
       const q = query(), flagScene = Number(q.get('scene')) || null, flagStep = Number(q.get('step')) || null;
-      let dirty = false, picking = null, genOpen = false, genJob = null, genText = '';
+      let dirty = false, picking = null, genOpen = false, genJob = null, genText = '', oneGo = false;
       const platform = p.split('/')[1];
       // {data.x} values, the app's address (for goto checks), and how long each scene took in the last video
       const [tourData, pd, runs] = await Promise.all([api(`/api/tour-data?path=${encodeURIComponent(p)}`).catch(() => null),
         api(`/api/platform?name=${encodeURIComponent(platform)}`).catch(() => ({})), api('/api/runs').catch(() => [])]);
       const data = tourData?.data ?? {};
       const stageOpts = await stageOptions(platform, pd, tour);
+      // ✨ GENERATE as a conversation (ui/public/converse.js); kept in its run folder, so it can be continued later.
+      const conv = conversation({ h, api, runJob, platform, tourPath: p, redraw: () => draw(), onUse: made => useScenes(made, true) });
+      await conv.load();
       const lastVideo = runs.find(r => rel(r.input?.[0]) === p && r.command === 'run' && r.status === 'done');
       const filmedLength = {};   // scene number → seconds in the last video
       if (lastVideo) try {
@@ -583,11 +587,16 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       let pick = null;   // { scene, state: 'loading'|'ready'|'error', url, shot, targets, error, chosen }
       let pickJob = null;
       let pinOpen = null;  // "i:j" of the pin step being edited
-      const genPanel = () => !genOpen ? '' : `<div class="gen-panel">
+      const genPanel = () => !genOpen ? (conv.active ? `<div class="gen-panel"><button class="chunky small c-purple" id="conv-continue">💬 CONTINUE THE CONVERSATION</button>
+          <span class="hint">The AI was still working on the scenes with you; pick it up where you left off.</span></div>` : '')
+        : conv.active ? `<div class="gen-panel">${conv.html()}<div class="actions tight"><button class="chunky small c-gray" id="gen-cancel">CLOSE</button>
+          <span class="hint">Closing keeps the conversation (and the live browser); reopen it with ✨ GENERATE.</span></div></div>`
+        : `<div class="gen-panel">
           <label class="lbl">Paste the story (e.g. from Jira): title, description and acceptance criteria</label>
           <textarea id="story" rows="9" placeholder="RMS-1234 Add a report&#10;As a user I want…&#10;&#10;Acceptance criteria:&#10;1. …">${h(genText)}</textarea>
           <p class="hint">The AI (Claude) reads the story and looks at the app's screens to write the scenes. Only use it where that's allowed.
             ${tour.scenes.some(s => s.steps?.length || s.narration) ? '<b>It replaces the scenes below.</b>' : ''}</p>
+          <label class="lbl check"><input type="checkbox" id="gen-onego" ${oneGo ? 'checked' : ''}> one go, no questions (the AI writes everything at once, without trying it in the app)</label>
           <div class="actions tight"><button class="chunky small c-purple" id="gen-go">✨ WRITE THE SCENES</button>
             <button class="chunky small c-gray" id="gen-cancel">CANCEL</button></div>
           <div id="gen-msg"></div></div>`;
@@ -899,9 +908,14 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         };
         $app.querySelector('#save').onclick = save;
         $app.querySelector('#gen').onclick = () => { genOpen = true; draw(); $app.querySelector('#story')?.focus(); };
-        if (genOpen) {
+        if ($app.querySelector('#conv-continue')) $app.querySelector('#conv-continue').onclick = () => { genOpen = true; draw(); };
+        if (genOpen && conv.active) {
+          conv.wire($app.querySelector('.gen-panel'));
+          $app.querySelector('#gen-cancel').onclick = () => { genOpen = false; draw(); };
+        } else if (genOpen) {
           const story = $app.querySelector('#story');
           story.oninput = () => { genText = story.value; };
+          $app.querySelector('#gen-onego').onchange = e => { oneGo = e.target.checked; };
           $app.querySelector('#gen-cancel').onclick = () => { genJob?.stop(); genJob?.close(); genJob = null; genOpen = false; draw(); };
           $app.querySelector('#gen-go').onclick = generate;
         }
@@ -914,6 +928,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       async function generate() {
         const msg = $app.querySelector('#gen-msg');
         if (genText.trim().length < 20) { msg.innerHTML = '<div class="verdict bad">✘ Paste the story first (a title and what it should do).</div>'; return; }
+        if (!oneGo) { conv.start(genText); return; }
         $app.querySelector('#gen-go').disabled = true;
         msg.innerHTML = '<div class="verdict wait">⏳ Writing the scenes… this takes a minute or two.<small id="gen-last">Starting</small></div>';
         genJob = await runJob(['generate', '--story', genText, '--platform', platform, '--llm', 'claude'], {
@@ -929,20 +944,25 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
               $app.querySelector('#gen-go')?.removeAttribute('disabled');
               return;
             }
-            try {
-              const made = JSON.parse((await api(`/api/tour?path=${encodeURIComponent(rel(r.data.tour))}`)).text);
+            try { useScenes(JSON.parse((await api(`/api/tour?path=${encodeURIComponent(rel(r.data.tour))}`)).text)); }
+            catch (e) { if (box) box.innerHTML = `<div class="verdict bad">✘ Couldn't read what it wrote<small>${h(e.message)}</small></div>`; }
+          } });
+      }
+      /** The generated scenes into the editor (dirty: SAVE to keep them). checked: they passed validate in the conversation. */
+      function useScenes(made, checked = false) {
               tour.scenes = made.scenes ?? [];
+              if (checked && made.fixtures?.length) tour.fixtures = made.fixtures;
+              if (checked && made.workarounds?.length) tour.workarounds = made.workarounds;
+              if (checked && made.review) tour.review = made.review;
               if (made.story) tour.story = made.story;
               // the planner writes paths from the site root; keep them inside the app's address
               const g = fixGotos(tour, pd.baseUrl);
               genOpen = false; dirty = true; draw();
               $app.querySelector('#msg').innerHTML = `<div class="verdict ok">✨ ${tour.scenes.length} scene${tour.scenes.length === 1 ? '' : 's'} written
-                <small>Read them through, fix anything that's off, then press SAVE.${made.draft ? ' Some steps still need filling in.' : ''}</small>
+                <small>${checked ? 'Every step was checked against the app. ' : ''}Read them through, fix anything that's off, then press SAVE.${made.draft ? ' Some steps still need filling in.' : ''}</small>
                 ${g.fixed.length ? `<small>Pages made relative to the app's address (${h(g.basePath)}): ${h(g.fixed.join('; '))}</small>` : ''}
                 ${g.outside.length ? `<small class="bad-text">⚠ These open a page outside the app's address (${h(g.basePath)}); check them: ${h(g.outside.join('; '))}</small>` : ''}</div>`;
               $app.querySelector('.scene-card')?.scrollIntoView({ block: 'start' });
-            } catch (e) { if (box) box.innerHTML = `<div class="verdict bad">✘ Couldn't read what it wrote<small>${h(e.message)}</small></div>`; }
-          } });
       }
       async function save() {
         const msg = $app.querySelector('#msg');
@@ -970,7 +990,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       draw();
       const warn = e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } };
       addEventListener('beforeunload', warn);
-      return () => { removeEventListener('beforeunload', warn); genJob?.close(); pickJob?.close(); };
+      return () => { removeEventListener('beforeunload', warn); genJob?.close(); pickJob?.close(); conv.close(); };
     },
   };
   return views;
