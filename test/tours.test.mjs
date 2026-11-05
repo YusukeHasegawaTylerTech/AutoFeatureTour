@@ -32,6 +32,14 @@ test('parseStory finds the id, title and acceptance criteria', () => {
   assert.match(s.acceptanceCriteria[1], /Enterprise Print Designer/);
 });
 
+test('parseStory keeps a pasted Jira criterion of several sentences together', () => {
+  const s = parseStory('RMS-6445 Complete button\n\nAcceptance Criteria\n\nComplete stays clickable. It is not disabled.\n\nThe banner says "Errors below must be resolved before completing".\n');
+  assert.equal(s.id, 'RMS-6445');
+  assert.equal(s.title, 'Complete button');
+  assert.deepEqual(s.acceptanceCriteria, ['Complete stays clickable. It is not disabled.', 'The banner says "Errors below must be resolved before completing".']);
+  assert.equal(parseStory('X-1 t\nAcceptance criteria: First works. Second works.').acceptanceCriteria.length, 2);
+});
+
 test('environments, BASE_URL and --base-url resolve in that order', () => {
   const raw = { name: 'x', baseUrl: 'http://a', timeouts: { action: 1 }, environments: { qa: { baseUrl: 'http://qa', timeouts: { verify: 9 } } }, scenes: [] };
   assert.equal(resolveConfig(raw).baseUrl, 'http://a');

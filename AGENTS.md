@@ -48,6 +48,7 @@ aft run      my.tour.json --speech silent                        # headless/CI: 
 aft all      --story story.md --platform todomvc --llm claude                # story → script → dry run → video
 aft batch    platforms/todomvc/tours/ --reset --speech silent                # several tours in order, one reset first
 aft ui                                                                       # the local web UI (ui/README.md); Ctrl+C stops it
+start.cmd                                                                    # or `node start.mjs`: the UI in its own window, reusing a running server; a server it started stops when the last UI window closes
 ```
 
 Add `--json` to any command for one JSON result on stdout (see "Agent primitives"). Exit codes: 0 ok · 1 usage/config · 2 SCRIPT failure · 3 app unreachable · 4 CRITERION failure · 5 APP error (see
@@ -245,6 +246,7 @@ One action key per step (the schema's `$defs/action_<name>` has every option, wi
 | `{ "verify": { "url": "…" } }` / `{ "verify": { "title": "…" } }` | the page's URL / title contains (or /regex/) | |
 | `{ "capture": L, "as": "code" }` / `{ "capture": { "url": true }, "as": "u" }` | remember a value from the page (a generated id or code, a link) for later steps as `"{vars.code}"`: an element's attribute, else a field's value, else its text; or the page URL. Using a value that was never captured is a SCRIPT failure | `attribute` (e.g. `href`), `pattern` (regex: keeps its first group, or the whole match) |
 | `{ "dialog": "accept" \| "dismiss" }` | how to answer the next alert/confirm/prompt (default accept) | `text` (prompt answer), `expect` (message; CRITERION if different) |
+| `{ "signInAs": "<role>" }` | switch to another login role partway through, in the same browser: cookies and the page's storage cleared, the role's saved login loaded (every role a tour switches to is signed in off camera before the run), its `checkPath` opened until `signedIn` shows; later steps are reported with `"account"` | `url` (open this instead), `keepCookies` (domains to keep, e.g. another site) |
 | `{ "switchTo": "main" \| "popup" \| "last" }` | continue on another tab (see `opensPopup`); only the main tab is filmed | |
 | `{ "download": L }` | click and save the download to `<run>/downloads/` | `saveAs`, `expect` (file name; CRITERION if different) |
 | `{ "waitForResponse": "/api/x" }` | wait for a response; better as an option on the step that triggers it | `status` (else APP), `method` |

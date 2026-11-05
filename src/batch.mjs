@@ -36,7 +36,7 @@ export function childArgs(args) {
 
 function runChild(cliPath, argv, onChild) {
   return new Promise(resolve => {
-    const p = spawn(process.execPath, [cliPath, ...argv], { stdio: ['ignore', 'pipe', 'inherit'], env: process.env });
+    const p = spawn(process.execPath, [cliPath, ...argv], { windowsHide: true, stdio: ['ignore', 'pipe', 'inherit'], env: process.env });
     onChild(p);
     let out = '';
     p.stdout.on('data', d => { out += d; });

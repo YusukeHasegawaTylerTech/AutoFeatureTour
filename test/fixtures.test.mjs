@@ -47,7 +47,7 @@ function makePlatform({ fixtures = {}, env = {} } = {}) {
 
 function cli(args, env = {}) {
   return new Promise(resolve => {
-    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args], { cwd: root, env: { ...process.env, ...env } });
+    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args], { windowsHide: true, cwd: root, env: { ...process.env, ...env } });
     let out = '', err = '';
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { err += d; });
@@ -119,7 +119,7 @@ describe('fixture items and the ledger', { concurrency: 1, timeout: 900000 }, ()
     const name = 'fx-kill';
     const file = path.join(platform.dir, 'app', 'tours', `${name}.tour.json`);
     write(file, { name, platform: 'app', fixtures: ['data'], scenes: okScene([{ wait: 60 }]) });
-    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), 'validate', file], { cwd: root, env: { ...process.env, AFT_OUT_DIR: outRoot, AFT_TEST_STATE: state }, stdio: 'ignore' });
+    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), 'validate', file], { windowsHide: true, cwd: root, env: { ...process.env, AFT_OUT_DIR: outRoot, AFT_TEST_STATE: state }, stdio: 'ignore' });
     const ledgerFile = () => { const b = path.join(outRoot, name); return fs.existsSync(b) ? fs.readdirSync(b).map(d => path.join(b, d, 'ledger.json')).find(f => fs.existsSync(f)) : null; };
     for (let i = 0; i < 120 && !(ledgerFile() && readJson(ledgerFile()).items[0]?.status === 'done'); i++) await new Promise(r => setTimeout(r, 500));
     await new Promise(r => setTimeout(r, 1500));

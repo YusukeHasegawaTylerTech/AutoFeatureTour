@@ -14,7 +14,8 @@
     "tour": "node src/cli.mjs",
     "test": "node --test",
     "schemas": "node src/schema-defs.mjs --write",
-    "ui": "node ui/server.mjs"
+    "ui": "node ui/server.mjs",
+    "start": "node start.mjs"
   },
   "dependencies": {
     "ajv": "^8.20.0",

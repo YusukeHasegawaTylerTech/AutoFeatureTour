@@ -16,7 +16,7 @@ after(() => app?.close());
 
 function aft(args) {
   return new Promise(resolve => {
-    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args, '--json'], { cwd: root, env: { ...process.env, AFT_OUT_DIR: path.join(os.tmpdir(), 'aft-test-out') } });
+    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args, '--json'], { windowsHide: true, cwd: root, env: { ...process.env, AFT_OUT_DIR: path.join(os.tmpdir(), 'aft-test-out') } });
     let out = '', err = '';
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { err += d; });

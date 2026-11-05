@@ -568,7 +568,7 @@ function conversationStage(runDir, conv, args) {
     log(`stage ${name}: ${describePoint(point)} (${outDir})`);
     const s = await startStage({ toolRoot, name, outDir, echo: text => process.stderr.write(text),
       job: { file: path.join(runDir, 'tour.json'), sourceRun: runDir, point, keep: false,
-        args: { target: conv.env ?? undefined, role: conv.role ?? undefined, headless: !!args.headless, freshLogin: !!args.freshLogin } } });
+        args: { target: conv.env ?? undefined, role: conv.role ?? undefined, headless: args.headed ? false : !!(args.headless || conv.headless), freshLogin: !!args.freshLogin } } });
     if (s.status === 'failed') fs.rmSync(path.join(sessionsDir(toolRoot), `${name}.json`), { force: true });
     conv.stageRuns = [...(conv.stageRuns ?? []), outDir];
     return stageView({ ...s, alive: s.status === 'ready' });
@@ -613,7 +613,7 @@ function conversationDeps(runDir, conv, args) {
     const out = newRunDir(path.join(runDir, 'validations'));
     const { spawn } = await import('node:child_process');
     const p = spawn(process.execPath, [fileURLToPath(import.meta.url), 'validate', file, '--json', '--out', out, ...(args.headed ? ['--headed'] : [])],
-      { cwd: process.cwd(), env: { ...process.env, MSYS_NO_PATHCONV: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      { windowsHide: true, cwd: process.cwd(), env: { ...process.env, MSYS_NO_PATHCONV: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     p.stdout.on('data', d => { stdout += d; });
     p.stderr.on('data', d => process.stderr.write(d));
@@ -674,7 +674,7 @@ async function startConversation(args, story) {
   const name = safeName(args.name ?? storyName(story));
   return withRun(name, args, 'generate', async runDir => {
     const conv = Object.assign(newConversation({ story, platform: app.platform.name, env, role: args.role ?? null, style: args.style,
-      stageName: `stage-conv-${safeName(name).slice(0, 30)}-${path.basename(runDir).slice(-4)}`, limit: Number(args.probeBudget ?? 80) }), { name });
+      stageName: `stage-conv-${safeName(name).slice(0, 30)}-${path.basename(runDir).slice(-4)}`, limit: Number(args.probeBudget ?? 80) }), { name, ...(args.headless ? { headless: true } : {}) });
     writeDraft(runDir, conv);
     saveConversation(runDir, conv);
     const url = targetUrl(args);
@@ -705,7 +705,7 @@ const commands = {
     if (!fs.existsSync(server)) throw new UsageError(`no UI in this install (${server})`);
     const raw = process.argv.slice(process.argv.indexOf('ui') + 1).filter(a => a !== '--json');
     const { spawn } = await import('node:child_process');
-    const child = spawn(process.execPath, [server, ...raw], { stdio: 'inherit' });
+    const child = spawn(process.execPath, [server, ...raw], { windowsHide: true, stdio: 'inherit' });
     let stopping = false;   // stopped on purpose (Ctrl+C, a kill): not an error
     for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopping = true; child.kill(sig); });
     const code = await new Promise(ok => child.on('close', (c, sig) => ok(sig ? 0 : c)));

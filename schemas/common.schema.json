@@ -409,6 +409,9 @@
           "$ref": "#/$defs/action_switchTo"
         },
         {
+          "$ref": "#/$defs/action_signInAs"
+        },
+        {
           "$ref": "#/$defs/action_download"
         },
         {
@@ -3376,6 +3379,123 @@
       },
       "required": [
         "switchTo"
+      ],
+      "additionalProperties": false
+    },
+    "action_signInAs": {
+      "type": "object",
+      "description": "Switch to another login role partway through the tour, in the same browser (the video carries on): the cookies and the open page's storage are cleared, the role's saved login (auth/<platform>/<env>/<role>.json, signed in off camera before the run if missing) is loaded, and its checkPath is opened until login.signedIn shows. An expired saved login is renewed once. Later steps are reported with \"account\": <role>.",
+      "properties": {
+        "signInAs": {
+          "type": "string",
+          "description": "A role in the platform's login.json."
+        },
+        "url": {
+          "type": "string",
+          "description": "Open this path after switching instead of the role's checkPath."
+        },
+        "keepCookies": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "Keep the cookies whose domain contains this (another site the tour is signed in to)."
+        },
+        "camera": {
+          "type": "boolean",
+          "description": "false: off camera. The step runs for real and is checked and reported, but it is cut from the video (and not paced to the narration)."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "If it fails, log it and carry on (gives up after timeouts.optional, default 3 s). A check marked optional never fails the run."
+        },
+        "timeout": {
+          "description": "Milliseconds before this step gives up (defaults: timeouts.action / verify / waitFor / navigation).",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "retries": {
+          "description": "Rule-based retries when an action times out or its target is not there yet (default: the tour's \"retries\", 1). Checks are never retried.",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "criterion": {
+          "description": "The acceptance criterion this check covers (e.g. 2 or \"AC2\"); defaults to the scene's \"criteria\".",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "comment": {
+          "type": "string",
+          "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
+        "waitForResponse": {
+          "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
+          "type": "string"
+        },
+        "status": {
+          "description": "With waitForResponse: the HTTP status the response must have; any other status is an APP failure.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "common.schema.json#/$defs/placeholder"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "description": "With waitForResponse (or mock): only requests with this HTTP method."
+        }
+      },
+      "required": [
+        "signInAs"
       ],
       "additionalProperties": false
     },

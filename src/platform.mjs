@@ -110,6 +110,8 @@ export function platformConfig(p, { env, role, platformRulesOnly = false } = {})
     if (!r) throw new PlatformError(`Platform ${p.name} has no login role "${roleName}" (has: ${Object.keys(p.login.roles ?? {}).join(', ') || 'none'})`);
     const { roles, default: _, comment: _c, ...common } = p.login;
     cfg.login = { ...common, ...r, role: roleName };
+    // Every role, for { "signInAs": "<role>" } steps that switch accounts partway through a tour.
+    cfg.loginRoles = Object.fromEntries(Object.entries(p.login.roles ?? {}).map(([n, x]) => [n, { ...common, ...x, role: n }]));
   }
   return { cfg, env: envName };
 }

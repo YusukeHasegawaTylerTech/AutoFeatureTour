@@ -188,6 +188,11 @@ export const ACTIONS = {
     expect: str('The dialog\'s message must contain this (or match /regex/), else CRITERION failure when it appears.'),
   }),
   switchTo: action('switchTo', 'Continue on another page: "main" (the first tab), "popup" / "last" (the newest tab).', { enum: ['main', 'popup', 'last'], description: 'Which page.' }),
+  signInAs: action('signInAs', 'Switch to another login role partway through the tour, in the same browser (the video carries on): the cookies and the open page\'s storage are cleared, the role\'s saved login (auth/<platform>/<env>/<role>.json, signed in off camera before the run if missing) is loaded, and its checkPath is opened until login.signedIn shows. An expired saved login is renewed once. Later steps are reported with "account": <role>.',
+    str('A role in the platform\'s login.json.'), {
+      url: str('Open this path after switching instead of the role\'s checkPath.'),
+      keepCookies: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }], description: 'Keep the cookies whose domain contains this (another site the tour is signed in to).' },
+    }),
   download: action('download', 'Click the element and wait for the download it starts; the file is saved in the run folder under downloads/.', loc('The element that starts the download.'), {
     saveAs: str('File name to save it as (default: the suggested name).'),
     expect: str('The suggested file name must contain this (or match /regex/), else CRITERION failure.'),
@@ -388,7 +393,7 @@ export const SCHEMAS = {
     type: 'object', required: ['schema', 'state', 'turns', 'scenes'],
     properties: {
       schema: { const: 'aft-conversation/1' }, name: str('The tour name (the story id).'), story, platform: str('The platform.'), env: { type: ['string', 'null'] }, role: { type: ['string', 'null'] },
-      style: { type: ['string', 'null'] }, stageName: str('The stage the probes run on (stage-conv-…).'), claudeSessionId: { type: ['string', 'null'], description: 'The Claude session resumed each turn.' },
+      style: { type: ['string', 'null'] }, stageName: str('The stage the probes run on (stage-conv-…).'), headless: bool('Started with --headless: later turns stage headless too (unless --headed).'), claudeSessionId: { type: ['string', 'null'], description: 'The Claude session resumed each turn.' },
       state: { enum: ['exploring', 'waiting', 'recording', 'done', 'failed'], description: 'waiting: on the person (questions, or nothing more to probe); done: the agent has nothing left (finished: true once --finish wrote the tour).' },
       finished: bool('--finish validated the draft and wrote the tour; the stage was ended.'), error: str('Why the last turn failed.'),
       turns: { type: 'array', items: obj('One turn.', { who: { enum: ['agent', 'person', 'tool'] }, at: str('When.'), text: str('The message.'),

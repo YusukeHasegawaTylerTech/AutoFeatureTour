@@ -141,7 +141,11 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
       data,
       scenes: (raw.scenes ?? []).map(s => ({ ...s, steps: expandSceneSteps(s.steps, { dirs, data }) })),
       ...(base.login ? { login: { ...base.login, steps: expandSteps(base.login.steps, { dirs, data }) } } : {}),
+      ...(base.loginRoles ? { loginRoles: Object.fromEntries(Object.entries(base.loginRoles).map(([n, l]) => [n, { ...l, steps: expandSteps(l.steps, { dirs, data }) }])) } : {}),
     };
+    // A signInAs step names a role of the platform's login.json.
+    for (const s of allSteps(cfg)) if (s.signInAs && !cfg.loginRoles?.[s.signInAs])
+      throw new ConfigError(`${file}: { "signInAs": "${s.signInAs}" }: platform ${p.name} has no login role "${s.signInAs}" (has: ${Object.keys(cfg.loginRoles ?? {}).join(', ') || 'none'})`);
     // Known issues: the platform's and environment's, then the story's own (same name refines one; source "story").
     cfg.workarounds = storyWorkarounds(base.workarounds, raw.workarounds);
     const problems = workaroundProblems(cfg.workarounds);
@@ -262,6 +266,9 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
         const looked = await setupItems(items, { ledger, hookCtx, artifacts: () => t.artifacts, log });
         const login = makeLogin(cfg, cfg0, composed, { outDir: ctx.outDir, log, options: ctx.options, baseUrl: vars.baseUrl });
         await login.beforeStart();
+        // Roles the tour switches to (signInAs): signed in now, off camera, so each switch only loads a saved login.
+        t.signInAs = await accountSwitcher(cfg, cfg0, composed, { outDir: ctx.outDir, log, options: ctx.options, baseUrl: vars.baseUrl, main: login });
+        if (t.signInAs) t.account = cfg.login?.role;
         t.policy = cfg.appErrors ?? {};
         // Data for {data.x} left in steps until now: fixture data, plus what setup hooks looked up.
         t.data = { ...cfg.data, ...looked };
@@ -380,6 +387,66 @@ export function missingCredentials(steps = []) {
 }
 
 /**
+ * { "signInAs": "<role>" }: switches the run's browser to another login role partway through, without a new context
+ * (the video carries on). Every role the tour switches to is signed in before the browser starts (a separate browser,
+ * saved as auth/<platform>/<env>/<role>.json, as for the run's own role). A switch clears the cookies (except those
+ * whose domain contains one of "keepCookies") and the open page's storage, loads the role's saved cookies and local
+ * storage, opens its checkPath and waits for login.signedIn; an expired saved login is renewed once, off camera.
+ * Returns undefined when the tour has no signInAs step.
+ */
+export async function accountSwitcher(cfg, cfg0, composed, { outDir, log, options, baseUrl, main }) {
+  const wanted = [...new Set(allSteps(cfg).filter(s => s.signInAs).map(s => s.signInAs))];
+  if (!wanted.length) return undefined;
+  const roles = cfg.loginRoles ?? (cfg.login ? { [cfg.login.role]: cfg.login } : {});
+  const roles0 = cfg0.loginRoles ?? (cfg0.login ? { [cfg0.login.role]: cfg0.login } : {});
+  const logins = {};
+  for (const r of wanted) {
+    if (!roles[r]) throw new ConfigError(`{ "signInAs": "${r}" }: no login role "${r}" (has: ${Object.keys(roles).join(', ') || 'none'})`);
+    logins[r] = r === cfg.login?.role ? main : makeLogin({ ...cfg, login: roles[r] }, { ...cfg0, login: roles0[r] }, composed, { outDir, log, options, baseUrl });
+    if (r !== cfg.login?.role) await logins[r].beforeStart();
+  }
+  let gen = 0;
+  const apply = async (t, file, keep) => {
+    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const context = t.page.context();
+    const kept = keep.length ? (await context.cookies()).filter(c => keep.some(k => c.domain.includes(k))) : [];
+    await context.clearCookies();
+    await context.addCookies([...kept, ...(state.cookies ?? []).filter(c => !kept.some(k => k.name === c.name && k.domain === c.domain && k.path === c.path))]);
+    await t.page.evaluate(() => { try { localStorage.clear(); sessionStorage.clear(); } catch { /* opaque origin */ } }).catch(() => {});
+    // Local storage per origin, applied on the next load of that origin (once per switch: a newer switch wins).
+    const g = ++gen;
+    for (const o of state.origins ?? []) {
+      await context.addInitScript(({ origin, items, g }) => {
+        if (location.origin !== origin || Number(sessionStorage.getItem('aft-signin') ?? 0) >= g) return;
+        localStorage.clear();
+        for (const { name, value } of items) localStorage.setItem(name, value);
+        sessionStorage.setItem('aft-signin', String(g));
+      }, { origin: o.origin, items: o.localStorage ?? [], g });
+    }
+  };
+  return async (t, step, { timeouts = {} } = {}) => {
+    const role = step.signInAs, login = roles[role];
+    const keep = [step.keepCookies ?? []].flat();
+    const startAt = baseUrl + '/' + String(step.url ?? login.checkPath ?? cfg.startPath ?? '').replace(/^\//, '');
+    const signedIn = async () => {
+      await t.page.goto(startAt, { timeout: timeouts.navigation ?? 30000 });
+      await settle(t.page, cfg.ready);
+      return !login.signedIn || t.page.locator(login.signedIn).first().waitFor({ timeout: timeouts.waitFor ?? 15000 }).then(() => true, () => false);
+    };
+    const file = composed.authFile(role);
+    if (!fs.existsSync(file)) await logins[role].renew('no saved login');
+    await apply(t, file, keep);
+    if (!(await signedIn())) {
+      await logins[role].renew('saved login expired');
+      await apply(t, file, keep);
+      if (!(await signedIn())) throw new Failure('login', `signInAs ${role}: signed in, but ${login.signedIn} isn't on ${t.page.url()}: check the role's signedIn / checkPath`);
+    }
+    t.account = role;
+    log(`signed in as ${role}`);
+  };
+}
+
+/**
  * Saved login for the run's role: beforeStart() signs in (off camera, separate browser) when there's no saved state,
  * it's too old or --fresh-login; ensure(t) opens the check page and, if the session has expired, signs in again and
  * restarts the browser context.
@@ -402,6 +469,8 @@ export function makeLogin(cfg, cfg0, composed, { outDir, log, options = {}, base
   return {
     state,
     get fresh() { return fresh; },
+    /** Signs in again now (separate browser), e.g. for a signInAs switch whose saved login expired. */
+    renew: why => signIn(why),
     async beforeStart() {
       if (!cfg.login) return;
       const age = fs.existsSync(state) ? (Date.now() - fs.statSync(state).mtimeMs) / 60000 : null;

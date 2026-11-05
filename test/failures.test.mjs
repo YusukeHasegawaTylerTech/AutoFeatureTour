@@ -21,7 +21,7 @@ const WITH_PAGE = ['screenshot.png', 'page/aria.yml', 'page/text.txt', 'page/dom
 
 function runCli(args, { env = {} } = {}) {
   return new Promise(resolve => {
-    const p = spawn(process.execPath, [cli, ...args], { cwd: root, env: { ...process.env, AFT_OUT_DIR: path.join(os.tmpdir(), 'aft-test-out'), ...env } });
+    const p = spawn(process.execPath, [cli, ...args], { windowsHide: true, cwd: root, env: { ...process.env, AFT_OUT_DIR: path.join(os.tmpdir(), 'aft-test-out'), ...env } });
     let out = '';
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { out += d; });

@@ -38,7 +38,7 @@ before(async () => {
     { id: 2, name: 'seed', kind: 'hooks', status: 'undone', undo: { hooks: [{ run: 'x' }] } }] });
 
   server = spawn(process.execPath, [path.join(repo, 'ui', 'server.mjs'), '--root', root, '--port', '0', '--no-open'],
-    { env: Object.fromEntries(Object.entries({ ...process.env, AFT_UI_TOKEN: TOKEN }).filter(([k]) => !k.startsWith('DEMO_'))), stdio: ['ignore', 'pipe', 'pipe'] });
+    { windowsHide: true, env: Object.fromEntries(Object.entries({ ...process.env, AFT_UI_TOKEN: TOKEN }).filter(([k]) => !k.startsWith('DEMO_'))), stdio: ['ignore', 'pipe', 'pipe'] });
   base = await new Promise((ok, bad) => {
     let out = '';
     server.stdout.on('data', c => { out += c; const m = /http:\/\/127\.0\.0\.1:(\d+)\//.exec(out); if (m) ok(`http://127.0.0.1:${m[1]}`); });

@@ -182,7 +182,7 @@ after(() => app?.close());
 
 function runCli(args, env = {}) {
   return new Promise(resolve => {
-    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args], { cwd: root, env: { ...process.env, AFT_OUT_DIR: path.join(os.tmpdir(), 'aft-test-out'), ...env } });
+    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args], { windowsHide: true, cwd: root, env: { ...process.env, AFT_OUT_DIR: path.join(os.tmpdir(), 'aft-test-out'), ...env } });
     let out = '';
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { out += d; });
@@ -275,5 +275,28 @@ describe('code steps and fragments in a run', { concurrency: 3, timeout: 600000 
     const r = await runCli(['run', file, '--speech', 'silent', '--out', path.join(tmp(), 'run')]);
     assert.equal(r.code, 3, r.out);
     assert.match(r.out, /attach-only/);
+  });
+});
+
+describe('signInAs: switching accounts partway through a tour', { timeout: 600000 }, () => {
+  test('two roles in one run: each switch loads that role\'s saved login, steps report the account', async () => {
+    const { dir } = makePlatform(app.url + '/');
+    const as = user => ({ steps: [{ goto: '/login' }, { fill: '#user', text: user }, { fill: '#pass', text: 'hunter2-fixture', secret: true }, { click: { role: 'button', name: 'Sign in' } }] });
+    write(path.join(dir, 'app', 'login.json'), { default: 'officer', signedIn: '#signed-in', checkPath: '/secure', roles: { officer: as('officer-1'), supervisor: as('super-2') } });
+    // Saved logins are kept per platform/env/role under the tool's auth/: start from none.
+    fs.rmSync(path.join(root, 'auth', 'app', 'local'), { recursive: true, force: true });
+    const file = tourFile(dir, { name: 'switch', scenes: [{ title: 'Write', narration: 'The officer writes.', url: '/secure', steps: [{ verify: '#who', exactText: 'officer-1' }] },
+      { title: 'Approve', narration: 'The supervisor approves.', steps: [{ signInAs: 'supervisor' }, { verify: '#who', exactText: 'super-2' }] },
+      { title: 'Back', narration: 'And back.', steps: [{ signInAs: 'officer' }, { verify: '#who', exactText: 'officer-1' }] }] });
+    const out = path.join(tmp(), 'run');
+    const r = await runCli(['run', file, '--speech', 'silent', '--out', out]);
+    assert.equal(r.code, 0, r.out);
+    const report = JSON.parse(fs.readFileSync(path.join(out, 'report.json'), 'utf8'));
+    const checks = report.steps.filter(s => s.action === 'verify').map(s => s.account);
+    assert.deepEqual(checks, ['officer', 'supervisor', 'officer']);
+    assert.ok(fs.existsSync(path.join(root, 'auth', 'app', 'local', 'supervisor.json')), 'the switched-to role was signed in and saved');
+    const unknown = await runCli(['validate', tourFile(dir, { name: 'bad', scenes: scene([{ signInAs: 'nobody' }]) })]);
+    assert.equal(unknown.code, 1, unknown.out);
+    assert.match(unknown.out, /no login role "nobody"/);
   });
 });

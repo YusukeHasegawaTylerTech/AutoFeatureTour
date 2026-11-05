@@ -74,6 +74,10 @@
       "type": "string",
       "description": "The stage the probes run on (stage-conv-…)."
     },
+    "headless": {
+      "type": "boolean",
+      "description": "Started with --headless: later turns stage headless too (unless --headed)."
+    },
     "claudeSessionId": {
       "type": [
         "string",

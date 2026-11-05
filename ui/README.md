@@ -10,6 +10,11 @@ aft ui                                      # or: npm run ui, or node ui/server.
 
 It opens the browser with a one-time token in the URL (kept as a cookie). The server listens on 127.0.0.1 only.
 
+`start.cmd` (double-click; or `node start.mjs [--port N] [--no-window]`) is the everyday way in: it reuses the UI server
+already running for this checkout (`.sessions/ui.json`: pid, port, URL) or starts one hidden (log: `out/ui-server.log`),
+then opens the UI in an Edge/Chrome app window. A server started that way (`--exit-with-ui`) stops on its own about 20 s
+(`AFT_UI_GRACE_SECONDS`) after the last UI page is closed, but never while a job (a run, a check) is still going.
+
 - **NEW SCRIPT** (per app) / **NEW APP** ( name, web address, how its sign-in page looks, test username/password,
   TEST THE CONNECTION), name the script, then write scenes: title, narration, and steps picked from six picture buttons (🎥 on a scene or step turns it off camera; 📌 next to a field inserts a value an earlier pin step made, `{artifact.x.field}`)
   (open a page, click, type, press a key, check it shows, wait). **GENERATE** writes the scenes from a pasted story

@@ -18,10 +18,19 @@ import { spawn } from 'node:child_process';
 
 /** Pulls an id (RMS-6142), a title and acceptance criteria out of pasted story text. Later: Jira/ADO by key. */
 export function parseStory(text) {
-  const id = text.match(/\b[A-Z][A-Z0-9]+-\d+\b/)?.[0] ?? null;
-  const title = text.match(/"([^"\n]{4,})"/)?.[1] ?? text.split(/\r?\n/).find(l => l.trim())?.trim().slice(0, 120) ?? 'Story';
+  // The id and title come from the first line when it has them (a Jira page also names its parent epic further down,
+  // and quotes text in the criteria).
+  const first = text.split(/\r?\n/).find(l => l.trim())?.trim() ?? '';
+  const KEY = /\b[A-Z][A-Z0-9]+-\d+\b/;
+  const id = first.match(KEY)?.[0] ?? text.match(KEY)?.[0] ?? null;
+  const title = first.match(/"([^"\n]{4,})"/)?.[1]
+    ?? (first.replace(KEY, '').replace(/^[\s:—–-]+/, '').trim().slice(0, 120) || 'Story');
   const ac = text.split(/acceptance criteria\s*:?/i)[1] ?? '';
-  const criteria = ac.split(/\r?\n|(?<=\.)\s+(?=[A-Z])/).map(s => s.replace(/^[-*\d.)\s]+/, '').trim()).filter(s => s.length > 3);
+  // One criterion per line (a list, or Jira's blank-line-separated paragraphs, which may hold several sentences);
+  // only a single line of prose is split into sentences.
+  const lines = ac.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const parts = lines.length === 1 ? lines[0].split(/(?<=\.)\s+(?=[A-Z])/) : lines;
+  const criteria = parts.map(s => s.replace(/^[-*\d.)\s]+/, '').trim()).filter(s => s.length > 3);
   return { id, title, text: text.trim(), acceptanceCriteria: criteria };
 }
 
@@ -214,7 +223,7 @@ export function claude({ system, input, schema, cwd, model, resume, session = fa
     if (model) args.push('--model', model);
     if (resume) args.push('--resume', resume);
     // cwd is this run's own folder, clear of any project's CLAUDE.md; input goes over stdin.
-    const proc = spawn('claude', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], shell: false });
+    const proc = spawn('claude', args, { cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], shell: false });
     let out = '', err = '';
     proc.stdout.on('data', d => { out += d; });
     proc.stderr.on('data', d => { err += d; });

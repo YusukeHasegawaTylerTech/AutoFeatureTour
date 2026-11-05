@@ -15,7 +15,7 @@ import { log, sleep } from './util.mjs';
 const ROLES = ['button', 'link', 'tab', 'menuitem', 'checkbox', 'radio', 'option', 'switch', 'combobox', 'textbox'];
 // Order matters only for waitForResponse, which is also an option on other steps: any other action key wins.
 const ACTIONS = ['goto', 'click', 'dblclick', 'rightClick', 'hover', 'point', 'fill', 'type', 'clear', 'focus', 'press', 'check', 'uncheck', 'select', 'upload',
-  'drag', 'scroll', 'waitFor', 'verify', 'capture', 'pin', 'wait', 'at', 'dialog', 'switchTo', 'download', 'mock', 'code', 'waitForResponse'];
+  'drag', 'scroll', 'waitFor', 'verify', 'capture', 'pin', 'wait', 'at', 'dialog', 'switchTo', 'download', 'mock', 'code', 'signInAs', 'waitForResponse'];
 
 export function actionOf(step) {
   const a = ACTIONS.find(k => k in step);
@@ -553,6 +553,12 @@ export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCf
     case 'wait': await sleep(Number(step.wait) * 1000); break;
     case 'at': await t.at(Number(step.at)); break;
     case 'dialog': t.dialogPlan = { action: step.dialog, text: step.text, expect: step.expect }; break;
+    case 'signInAs': {
+      // Another login role, in the same browser (the run installs t.signInAs; see accountSwitcher in declarative.mjs).
+      if (!t.signInAs) throw new Error(`{ "signInAs": "${step.signInAs}" } needs a run of a tour with login roles (aft run / validate / stage)`);
+      await t.signInAs(t, step, { timeouts });
+      break;
+    }
     case 'switchTo': {
       const pages = page.context().pages().filter(p => !p.isClosed());
       t.mainPage ??= pages[0];
@@ -678,7 +684,7 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
     const started = Date.now();
     const entry = { scene, step: index, action: a, kind, ...(covers.length && kind === 'check' ? { criteria: covers } : {}), spec: shown(step),
       ...(step.from ? { from: step.from } : {}), ...(step.scriptStep ? { scriptStep: step.scriptStep } : {}), ...(step.knownIssue ? { knownIssue: step.knownIssue } : {}),
-      ...(hidden && !unpaced ? { offCamera: true } : {}) };
+      ...(hidden && !unpaced ? { offCamera: true } : {}), ...(t.account ? { account: t.account } : {}) };
     // An off-camera step in a filmed scene: its time is cut from the video, and the narration's pacing skips it.
     const offStart = step.camera === false && !offCamera && t.current ? t.now() : null;
     const warnings = [];
@@ -699,7 +705,7 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
           break;
         } catch (e) {
           // Never retried: checks, code steps, and steps whose effect may already have happened.
-          if (kind === 'check' || ['code', 'mock', 'download', 'dialog'].includes(a) || step.waitForResponse !== undefined || step.opensPopup || e.failure || attempt >= (step.retries ?? retries) || !/Timeout|not found|not visible|detached/i.test(e.message)) throw e;
+          if (kind === 'check' || ['code', 'mock', 'download', 'dialog', 'signInAs'].includes(a) || step.waitForResponse !== undefined || step.opensPopup || e.failure || attempt >= (step.retries ?? retries) || !/Timeout|not found|not visible|detached/i.test(e.message)) throw e;
           log(`${scene ?? 'setup'} step ${index}: retrying (${e.message.split('\n')[0]})`);
           await settle(t.page, ready);
           entry.retried = attempt + 1;

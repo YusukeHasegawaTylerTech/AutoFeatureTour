@@ -21,9 +21,10 @@ App and environment findings are in `platforms/rms-qa/notes/rms-rw-findings.md`;
   (`open-report-writing.mjs`, `sign-out-*.mjs`), because `goto` is relative to one baseUrl and absolute URLs are
   refused. Wanted: a named second site per platform/environment (`"sites": { "rw": "https://…" }`, `{ "goto": "rw:/path" }`),
   and per-site login roles.
-- **Switching accounts mid-tour**: one tour, several users (setup officer, supervisor, reviewer) in the same app.
-  Wanted: a `{ "signInAs": "<role>", "site": "…" }` step that clears that site's session and runs the role's login
-  steps on camera (or off camera with `"offCamera": true`), and reports which account did which scene.
+- **Switching accounts, the rest**: `{ "signInAs": "<role>" }` switches login roles in one browser (saved login per role,
+  steps report `account`). Still open: per-site roles (with multi-site above; today `keepCookies` keeps another site's
+  session), signing in *on camera* when a story wants to show it (use the role's login steps as a fragment), an
+  `account` per scene in report.md, and sessions/try-step (`signInAs` needs a run, validate or stage).
 - **Expected rejections as a step**: "click X; the app is expected to refuse with message M" is a common way to film a
   finding. Wanted as a built-in step (`{ "click": …, "expectMessage": "/…/", "show": 4 }`) instead of a code step,
   reported as the criterion's result.

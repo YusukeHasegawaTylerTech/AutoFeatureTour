@@ -359,7 +359,7 @@ export function startStaticServer({ port, routes = [], spa, proxy }) {
  * command line (for tour.json "launch" commands written by the app's own team).
  */
 export function startProcess(exe, args = [], { env, cwd, logFile, shell = false }) {
-  const proc = spawn(exe, args, { env: { ...process.env, ...env }, cwd, shell, stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(exe, args, { windowsHide: true, env: { ...process.env, ...env }, cwd, shell, stdio: ['ignore', 'pipe', 'pipe'] });
   const out = fs.createWriteStream(logFile);
   proc.stdout.pipe(out);
   proc.stderr.pipe(out);
@@ -395,7 +395,7 @@ export function logTail(file, lines = 12) {
 /** Stops a process and its children (a shell's dev server, say). */
 export function stopProcess(proc) {
   if (!proc || proc.exitCode !== null) return;
-  if (process.platform === 'win32') spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
+  if (process.platform === 'win32') spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
   else proc.kill();
 }
 

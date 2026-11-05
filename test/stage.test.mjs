@@ -31,7 +31,7 @@ after(async () => {
 
 function cli(args, env = {}) {
   return new Promise(resolve => {
-    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args], { cwd: root, env: { ...process.env, ...env } });
+    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args], { windowsHide: true, cwd: root, env: { ...process.env, ...env } });
     let out = '', err = '';
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { err += d; });

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // AutoFeatureTour UI: a local web app over the files and the CLI.
-//   node ui/server.mjs [--port 4777] [--no-open] [--root <checkout>]
+//   node ui/server.mjs [--port 4777] [--no-open] [--root <checkout>] [--exit-with-ui]
+// --exit-with-ui (start.cmd / start.mjs): stop when the last UI page has been closed for a while and no job is running.
+// While it runs, <root>/.sessions/ui.json says where (pid, port, url with the token; git-ignored), so start.mjs can reuse it.
 // --root (or AFT_ROOT) picks the checkout whose platforms/, out/ and CLI are used (default: this one).
 // It never imports engine internals: it reads platforms/ and out/, writes definition files, and runs `aft … --json`
 // as child processes. Bound to 127.0.0.1; every call needs the token printed in the URL (kept in a cookie).
@@ -253,7 +255,7 @@ function startJob(args) {
   const id = crypto.randomBytes(6).toString('hex');
   const job = { id, args, lines: [], done: false, result: null, listeners: new Set(), startedAt: new Date().toISOString() };
   jobs.set(id, job);
-  const child = spawn(process.execPath, [cli, ...args, '--json'], { cwd: root, env: { ...process.env, MSYS_NO_PATHCONV: '1', FORCE_COLOR: '0' } });
+  const child = spawn(process.execPath, [cli, ...args, '--json'], { windowsHide: true, cwd: root, env: { ...process.env, MSYS_NO_PATHCONV: '1', FORCE_COLOR: '0' } });
   job.child = child;
   const emit = (ev, data) => { for (const l of job.listeners) l(ev, data); };
   let stdout = '', partial = '';
@@ -321,6 +323,15 @@ function serveFile(req, res, file) {
 async function api(req, res, url) {
   const p = url.pathname, m = req.method, q = k => url.searchParams.get(k) ?? '';
   if (m === 'GET' && p === '/api/info') return send(res, 200, { root });
+  // Each open UI page holds this stream; with --exit-with-ui the server stops after the last one has gone.
+  if (m === 'GET' && p === '/api/alive') {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+    res.write(': alive\n\n');
+    pages.add(res);
+    const ping = setInterval(() => res.write(': ping\n\n'), 15000);
+    req.on('close', () => { clearInterval(ping); pages.delete(res); lastPageGone = Date.now(); });
+    return;
+  }
   if (m === 'GET' && p === '/api/platforms') return send(res, 200, listPlatforms());
   if (m === 'GET' && p === '/api/platform') {
     const d = platformDetail(q('name'));
@@ -498,9 +509,29 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { if (!res.headersSent) send(res, 500, { error: e.message }); }
 });
 
+// ---- life: the state file, and --exit-with-ui ----
+const pages = new Set();
+let lastPageGone = Date.now();
+const stateFile = path.join(root, '.sessions', 'ui.json');
+const dropState = () => { try { if (JSON.parse(fs.readFileSync(stateFile, 'utf8')).pid === process.pid) fs.rmSync(stateFile); } catch { /* not ours, or gone */ } };
+process.on('exit', dropState);
+if (argv.includes('--exit-with-ui')) {
+  // A reload or a navigation drops the stream for a moment: wait out a grace period; never while a job runs.
+  const GRACE = Number(process.env.AFT_UI_GRACE_SECONDS ?? 20) * 1000;
+  setInterval(() => {
+    if (pages.size || [...jobs.values()].some(j => !j.done) || Date.now() - lastPageGone < GRACE) return;
+    console.log('the last UI window was closed: stopping');
+    process.exit(0);
+  }, 2000).unref();
+  // Nobody ever opened it: give the first window time to come up (lastPageGone starts at launch).
+  lastPageGone = Date.now() + 40000;
+}
+
 server.listen(port, '127.0.0.1', () => {
   const link = `http://127.0.0.1:${server.address().port}/?token=${token}`;
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  fs.writeFileSync(stateFile, JSON.stringify({ pid: process.pid, port: server.address().port, url: link, root, exitWithUi: argv.includes('--exit-with-ui'), startedAt: new Date().toISOString() }, null, 2));
   console.log(`AutoFeatureTour UI: ${link}\n  data and CLI: ${root}`);
-  if (!argv.includes('--no-open') && process.platform === 'win32') spawn('cmd', ['/c', 'start', '', link], { detached: true, stdio: 'ignore' }).unref();
+  if (!argv.includes('--no-open') && process.platform === 'win32') spawn('cmd', ['/c', 'start', '', link], { windowsHide: true, detached: true, stdio: 'ignore' }).unref();
 });
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { for (const j of jobs.values()) j.child?.kill('SIGINT'); process.exit(0); });

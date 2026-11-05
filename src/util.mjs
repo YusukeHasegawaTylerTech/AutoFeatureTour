@@ -13,7 +13,7 @@ export const num = n => String(Math.round(n * 1000) / 1000);
  */
 export function run(exe, args = [], { cwd, env, capture = false, shell = false } = {}) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(exe, args, { cwd, env: env ?? process.env, shell, stdio: ['ignore', capture ? 'pipe' : 'inherit', 'inherit'] });
+    const proc = spawn(exe, args, { cwd, windowsHide: true, env: env ?? process.env, shell, stdio: ['ignore', capture ? 'pipe' : 'inherit', 'inherit'] });
     let out = '';
     proc.stdout?.on('data', d => { out += d; });
     proc.on('error', reject);

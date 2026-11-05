@@ -133,8 +133,9 @@ export function startFixture() {
       let body = '';
       req.on('data', d => { body += d; });
       req.on('end', () => {
-        const ok = new URLSearchParams(body).get('pass') === 'hunter2-fixture';
-        if (ok) { res.writeHead(302, { 'Set-Cookie': 'session=ok; Path=/', Location: '/secure' }); return res.end(); }
+        const form = new URLSearchParams(body);
+        const ok = form.get('pass') === 'hunter2-fixture';
+        if (ok) { res.writeHead(302, { 'Set-Cookie': ['session=ok; Path=/', `who=${encodeURIComponent(form.get('user') ?? '')}; Path=/`], Location: '/secure' }); return res.end(); }
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(PAGES['/login'].replace('__ERROR__', 'Invalid user or password'));
       });
@@ -143,7 +144,7 @@ export function startFixture() {
     if (url.pathname === '/secure') {
       if (!authed) { res.writeHead(302, { Location: '/login' }); return res.end(); }
       res.writeHead(200, { 'Content-Type': 'text/html' });
-      return res.end(page('Secure', `<h1>Welcome</h1><p id="signed-in">signed in</p><button>Save</button>`));
+      return res.end(page('Secure', `<h1>Welcome</h1><p id="signed-in">signed in</p><p id="who">${decodeURIComponent((req.headers.cookie ?? '').match(/who=([^;]*)/)?.[1] ?? '')}</p><button>Save</button>`));
     }
     const html = PAGES[url.pathname === '/' ? '/ok' : url.pathname];
     if (!html) { res.writeHead(404); return res.end('not found'); }

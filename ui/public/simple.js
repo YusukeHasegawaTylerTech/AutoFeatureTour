@@ -955,6 +955,9 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
               if (checked && made.workarounds?.length) tour.workarounds = made.workarounds;
               if (checked && made.review) tour.review = made.review;
               if (made.story) tour.story = made.story;
+              // the conversation's sign-in choice (a role question): without it the script signs in as the default role
+              if (checked && made.role) tour.role = made.role;
+              if (checked && made.env) tour.env = made.env;
               // the planner writes paths from the site root; keep them inside the app's address
               const g = fixGotos(tour, pd.baseUrl);
               genOpen = false; dirty = true; draw();

@@ -187,7 +187,7 @@ after(() => app?.close());
 
 function cli(args, env) {
   return new Promise(resolve => {
-    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args, '--json'], { cwd: root, env: { ...process.env, MSYS_NO_PATHCONV: '1', ...env } });
+    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args, '--json'], { windowsHide: true, cwd: root, env: { ...process.env, MSYS_NO_PATHCONV: '1', ...env } });
     let out = '', err = '';
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { err += d; });
@@ -231,6 +231,8 @@ describe('aft generate --converse / aft converse (fixture app)', { timeout: 3000
     assert.equal(tour.draft, undefined);
     assert.equal(tour.scenes[0].steps.length, 3);
     const list = await cli(['stage', 'list'], env);
-    assert.ok(!list.doc.data.stages.some(s => s.name.startsWith('stage-conv-') && s.alive), 'the stage ended');
+    // This conversation's stage only: a person may have a conversation of their own open on this machine.
+    const own = readJson(path.join(run, 'conversation.json')).stageName;
+    assert.ok(!list.doc.data.stages.some(s => s.name === own && s.alive), 'the stage ended');
   });
 });

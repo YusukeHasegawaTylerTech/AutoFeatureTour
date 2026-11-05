@@ -4,6 +4,8 @@ import { filmedScenes, mountMarkers } from './media.js';
 import { mountSchemaForm } from './form.js';
 import { mountStage, stageButton } from './stage.js';
 // AutoFeatureTour UI: hash-routed, no build step.
+// Held while this page is open: a server started by start.cmd stops once every UI window is closed.
+new EventSource('/api/alive');
 const $app = document.getElementById('app');
 const h = (s = '') => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const api = async (p, opts) => {

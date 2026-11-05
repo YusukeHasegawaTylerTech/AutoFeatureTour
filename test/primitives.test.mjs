@@ -16,7 +16,7 @@ after(() => app?.close());
 /** Runs the CLI with --json; stdout must be exactly one JSON document. */
 function aft(args, env = {}) {
   return new Promise(resolve => {
-    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args, '--json'], { cwd: root,
+    const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), ...args, '--json'], { windowsHide: true, cwd: root,
       env: { ...process.env, AFT_OUT_DIR: path.join(os.tmpdir(), 'aft-test-out'), MSYS_NO_PATHCONV: '1', ...env } });
     let out = '', err = '';
     p.stdout.on('data', d => { out += d; });
