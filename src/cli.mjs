@@ -37,6 +37,10 @@
 //   aft locate   "<target>"                           how a step target resolves: strategy, matches, visible, alternatives
 //   aft try-step '<step | [steps]>' [--url <path>]    perform steps live (fragments too): result per step + ARIA after
 //     (snapshot/locate/try-step use --session, or the only session for --platform, else a one-shot browser)
+//   aft session  wait [<call id>] [--session <name>] [--timeout <s>]
+//                                                    a session (or stage) call the CLI stopped waiting for keeps running:
+//                                                    wait for it (no id: the running one, else the last) and print its
+//                                                    result, same exit code; AFT_CALL_TIMEOUT=<s> caps a call's wait
 //   aft ui       [--port 4777] [--no-open] [--root <checkout>]   the local web UI (ui/server.mjs; Ctrl+C stops it)
 //   aft --list-voices | --help | --version
 //
@@ -72,7 +76,7 @@ import { ConfigError, loadTourJson, materialize, missingCredentials } from './de
 import { check as checkSchema, schemaFor, schemasDir, schemaTypes } from './schema.mjs';
 import { appSettingsFor } from './cli-app.mjs';
 import { platformCommand } from './platform-cli.mjs';
-import { call, parseArg, readSessions, Session, sessionName, sessionsDir, startDaemon } from './session.mjs';
+import { call, parseArg, waitCall, readSessions, Session, sessionName, sessionsDir, startDaemon } from './session.mjs';
 import { loadPlatform } from './platform.mjs';
 import { describePoint, endStage, listStages, stageName, stagePoint, stageSource, stageView, startStage } from './stage.mjs';
 import { exportTour, importTour } from './exchange.mjs';
@@ -987,7 +991,19 @@ const commands = {
       }
       return { stopped };
     }
-    throw new UsageError(`Unknown: aft session ${sub} (start, status, stop)`);
+    if (sub === 'wait') {
+      const s = pickSession(args, { required: true });
+      const id = args._[2];
+      const timeoutMs = args.timeout !== undefined ? Number(args.timeout) * 1000 : undefined;
+      if (timeoutMs !== undefined && !(timeoutMs >= 0)) throw new UsageError('--timeout takes seconds');
+      log(`session ${s.name}: waiting for ${id ? `call ${id}` : 'the running (or last) call'}`);
+      const { record, result } = await waitCall(s, id, { timeoutMs });
+      log(`session ${s.name}: ${record.op} call ${record.callId} finished (${record.finishedAt})`);
+      if (printers[record.op]) return printers[record.op](result, args);
+      if (!args.json) console.log(JSON.stringify(result, null, 2));
+      return result;
+    }
+    throw new UsageError(`Unknown: aft session ${sub} (start, status, stop, wait)`);
   },
 
   /** Do / redo until here: the tour unrecorded up to a point, handed off live (src/stage.mjs). */
@@ -1048,13 +1064,31 @@ const commands = {
 
   async snapshot(args) {
     const r = await withSession(args, (s, live) => (live ? call(s, 'snapshot', { url: args.url, screenshot: !!args.screenshot }) : s.snapshot({ url: args.url, screenshot: !!args.screenshot })));
-    if (!args.json) console.log(`${r.url}  "${r.title}"\n\n${r.aria}`);
-    return r;
+    return printers.snapshot(r, args);
   },
 
   async locate(args) {
     const target = parseArg(args._.slice(1).join(' ') || args.target_, 'target (a string or JSON target)');
     const r = await withSession(args, (s, live) => (live ? call(s, 'locate', { target, url: args.url }) : s.locate(target, { url: args.url })));
+    return printers.locate(r, args);
+  },
+
+  async 'try-step'(args) {
+    const step = parseArg(args._.slice(1).join(' '), 'step (JSON: {"click": "Save"} or [steps])');
+    if (typeof step === 'string') throw new UsageError('try-step takes a JSON step, e.g. \'{"click": "Save"}\'');
+    const r = await withSession(args, (s, live) => (live ? call(s, 'try-step', { step, url: args.url }) : s.tryStep(step, { url: args.url })));
+    return printers['try-step'](r, args);
+  },
+
+};
+
+/** How snapshot, locate and try-step print their result (also aft session wait, which returns one of them). */
+const printers = {
+  snapshot(r, args) {
+    if (!args.json) console.log(`${r.url}  "${r.title}"\n\n${r.aria}`);
+    return r;
+  },
+  locate(r, args) {
     if (!args.json) {
       console.log(r.resolved ? `resolves: ${JSON.stringify(r.strategy)} → element ${r.uses}${r.ambiguous ? ` (ambiguous: ${r.matches.length} visible)` : ''}` : 'does not resolve');
       for (const m of r.matches) console.log(`  [${m.index}] <${m.tag}>${m.role ? ` role=${m.role}` : ''} ${m.text ?? m.name ?? ''}`);
@@ -1062,11 +1096,7 @@ const commands = {
     }
     return r;
   },
-
-  async 'try-step'(args) {
-    const step = parseArg(args._.slice(1).join(' '), 'step (JSON: {"click": "Save"} or [steps])');
-    if (typeof step === 'string') throw new UsageError('try-step takes a JSON step, e.g. \'{"click": "Save"}\'');
-    const r = await withSession(args, (s, live) => (live ? call(s, 'try-step', { step, url: args.url }) : s.tryStep(step, { url: args.url })));
+  'try-step'(r, args) {
     if (!args.json) {
       for (const e of r.steps) console.log(`${e.ok ? 'ok  ' : 'FAIL'} ${e.action} ${JSON.stringify(e.spec[e.action] ?? '').slice(0, 70)}${e.ok ? '' : `: ${e.error}`}`);
       console.log(`\n${r.ok ? 'ok' : r.class.toUpperCase()}; now at ${r.after.url}`);

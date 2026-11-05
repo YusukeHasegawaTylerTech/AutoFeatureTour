@@ -12,6 +12,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { loadTourJson } from './declarative.mjs';
 import { classify, Failure } from './failures.mjs';
+import { CallTracker } from './daemon-calls.mjs';
 import { stopProcess, Tour } from './recorder.mjs';
 import { Session } from './session.mjs';
 import { StopRun } from './steps.mjs';
@@ -25,6 +26,7 @@ const token = crypto.randomBytes(24).toString('hex');
 const writeState = s => { const tmp = `${stateFile}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(s, null, 2)); fs.renameSync(tmp, stateFile); };
 const base = { schema: 'aft-session/1', name, pid: process.pid, outDir, log: path.join(outDir, 'stage.log') };
 
+const calls = new CallTracker();
 let def, t, ctx, session, server, stage = {}, live = {}, queue = Promise.resolve(), running = null, stopping = false, handoff = null;
 
 const state = extra => writeState({ ...base, status: 'ready', ...(server ? { port: server.address().port, token } : {}), ...(session ? session.status() : {}),
@@ -120,18 +122,27 @@ async function stageTour() {
 
 function serve() {
   server = http.createServer((req, res) => {
-    const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    const send = (code, body) => { if (res.writableEnded || res.destroyed) return; res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (req.method !== 'POST' || req.headers['x-aft-token'] !== token) return send(403, { error: 'forbidden' });
     let body = '';
     req.on('data', d => { body += d; });
     req.on('end', () => {
       let msg;
       try { msg = JSON.parse(body || '{}'); } catch { return send(400, { error: 'invalid JSON' }); }
-      if (msg.op === 'status') return send(200, { ...base, status: 'ready', ...(session?.status() ?? {}), stage, ...(running ? { busy: running } : {}) });
+      if (msg.op === 'status') return send(200, { ...base, status: 'ready', ...(session?.status() ?? {}), stage, ...(running ? { busy: running, callId: calls.current } : {}) });
+      if (msg.op === 'wait') return void calls.wait(msg.callId, Number(msg.timeoutMs ?? 60000)).then(([code, b]) => send(code, b));
       if (msg.op === 'record-steps') return send(200, session?.recordSteps(msg) ?? { recording: false, steps: [] });
-      if (running && msg.op !== 'stop') return send(409, { error: `stage ${name} is busy: a "${running}" call is still running`, class: 'error' });
+      if (running && msg.op !== 'stop') return send(409, { error: `stage ${name} is busy: a "${running}" call (${calls.current}) is still running; aft session wait ${calls.current} --session ${name} waits for it`, class: 'error' });
       if (msg.op !== 'stop') running = msg.op;
+      const rec = msg.op !== 'stop' ? calls.begin(msg.op, msg.callId) : null;
+      const reply = send;
       queue = queue.then(async () => {
+        // The result is kept (with its call id) for `aft session wait`, even when the caller stopped listening.
+        const send = (code, body) => {
+          const b = rec && body && typeof body === 'object' && !Array.isArray(body) ? { ...body, callId: rec.callId } : body;
+          if (rec) calls.finish(rec.callId, code, b);
+          reply(code, b);
+        };
         try {
           const need = () => { if (!session || !t.page || t.page.isClosed()) throw new Failure('error', `stage ${name} has no browser (it failed before the browser started)`); };
           switch (msg.op) {
