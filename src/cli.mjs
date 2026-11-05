@@ -26,6 +26,9 @@
 //                                                    finish the undo of runs that left data behind (crash, Ctrl+C, failed teardown);
 //                                                    no run, --all, --platform or --tag: only lists them
 //   aft reset    --platform <name> [--target <env>]  the environment's "reset" hooks (never a shared one); --reset on run/validate
+//   aft batch    <tour.json | folder | glob>... [--target <env>] [--reset] [--validate-only] [--stop-on-fail]
+//                                                    several tours in order, one reset first; each in its own run folder;
+//                                                    out/batch/<run>/batch.json (aft-batch/1) + batch.md; exit: the first failure's
 //   aft doctor   [--platform <name>]                  check this machine (+ platforms' requirements.mjs); exit 1 if missing
 //   aft session  start|status|stop [--platform <name>] [--target <env>] [--role <r>] [--session <name>] [--headed]
 //                                                    a warm, signed-in browser for the commands below (stop: only what it started)
@@ -90,6 +93,7 @@ import { concat, cutClips, duration, muxScene, requireFfmpeg, trimPlan, writeCap
 import { parseScript, spokenText } from './script.mjs';
 import { runSteps, StepError, StopRun } from './steps.mjs';
 import { Ledger, openLedgers, parseAge } from './ledger.mjs';
+import { expandTours, runBatch } from './batch.mjs';
 import { finishUndo, resetEnvironment } from './fixtures.mjs';
 import { CLASSES, classify, exitCode, Failure, summaryLine } from './failures.mjs';
 import { criteriaOf, finalize, progress } from './triage.mjs';
@@ -101,7 +105,7 @@ import { log, newRunDir, num, parseArgs, run, sleep } from './util.mjs';
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 class UsageError extends Error {}
@@ -193,7 +197,11 @@ async function withRun(name, args, command, fn) {
 
 /** Ctrl+C / kill: finalize the report and bundle (marked incomplete), record the run as interrupted, exit 130. */
 let stopping = false;
+let batchState = null;
 async function onSignal(signal) {
+  // A batch: the running tour handles the signal itself; the batch stops after it (a second Ctrl+C quits at once).
+  if (batchState && !batchState.stop) { batchState.stop = true; console.error(`\n${signal}: the batch stops after the current tour (press Ctrl+C again to quit at once)`); return; }
+  if (batchState) { batchState.child?.kill(); process.exit(130); }
   if (stopping) { console.error('\nforced exit'); process.exit(130); }
   stopping = true;
   console.error(`\n${signal}: stopping; writing the partial report and bundle (press Ctrl+C again to quit at once)`);
@@ -922,6 +930,36 @@ const commands = {
     console.log(`\ncleaned ${cleaned.length} run(s): ${cleaned.reduce((n, r) => n + r.undone, 0)} undone, ${failed} still pending`);
     if (failed) throw Object.assign(new UsageError(`${failed} undo step(s) failed or couldn't run; see each run's ledger.json`), { data: { pending, cleaned } });
     return { pending, cleaned };
+  },
+
+  /** Several tours in order, one environment reset first; each tour runs through the normal run path (a child aft). */
+  async batch(args) {
+    if (args.out || args.name) throw new UsageError('aft batch writes to out/batch/<run>/; --out and --name are not supported');
+    const files = (() => { try { return expandTours(args._.slice(1)); } catch (e) { throw e.usage ? new UsageError(e.message) : e; } })();
+    if (!files.length) throw new UsageError('Usage: aft batch <tour.json | folder | glob>... [--target <env>] [--reset] [--validate-only] [--stop-on-fail]');
+    const tours = [];
+    for (const file of files) { const { def } = await loadTour(file, args); tours.push({ file, name: def.name ?? path.basename(file), platform: def.platform, env: envOf(args) ?? def.env }); }
+    let reset = null;
+    if (args.reset) {
+      const keys = [...new Set(tours.map(t => `${t.platform ?? '(no platform)'} / ${t.env ?? '(default)'}`))];
+      if (keys.length > 1 || !tours[0].platform) throw new UsageError(`--reset needs every tour on one platform and environment; these use ${keys.join(', ')}`);
+      const r = await commands.reset({ ...args, _: ['reset'], platform: tours[0].platform, tour: files[0], target: tours[0].env, name: undefined });
+      reset = { platform: tours[0].platform, env: tours[0].env ?? null, result: { runDir: r.runDir } };
+    } else if (new Set(tours.map(t => t.platform)).size === 1) reset = { platform: tours[0].platform, env: tours[0].env ?? null };
+    const dir = newRunDir(path.join(path.resolve(process.env.AFT_OUT_DIR ?? path.join(toolRoot, 'out')), 'batch'));
+    lastRunDir = dir;
+    log(`batch folder: ${dir}`);
+    batchState = { stop: false, child: null };
+    let doc;
+    try { doc = await runBatch({ tours, args, cliPath: fileURLToPath(import.meta.url), dir, reset, log, state: batchState }); } finally { batchState = null; }
+    console.log(fs.readFileSync(path.join(dir, 'batch.md'), 'utf8'));
+    if (doc.exitCode) {
+      const first = doc.tours.find(t => t.exitCode);
+      lastData = doc;
+      throw Object.assign(new Error(doc.exitCode === 130 ? 'batch interrupted' : `${doc.counts.failed} of ${doc.tours.length} tour(s) failed; first: ${first.name} (${first.class}): ${first.error ?? ''}`),
+        { failure: doc.exitCode === 130 ? 'interrupted' : first.class, data: doc });
+    }
+    return doc;
   },
 
   /** An environment's "reset" hooks (local only; never a shared environment). */
