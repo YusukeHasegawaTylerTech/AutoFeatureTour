@@ -27,9 +27,11 @@ export function actionOf(step) {
 export function candidates(page, target) {
   // has / hasNot / hasText / hasNotText narrow every candidate; within / frame are applied by scope() first.
   const f = typeof target === 'object' && target ? target : {};
+  // "/regex/flags" in a name, label, text, alt or hasText is a regular expression (as in text patterns).
+  const rx = v => { const m = typeof v === 'string' && v.match(/^\/(.+)\/([a-z]*)$/s); return m ? new RegExp(m[1], m[2]) : v; };
   const inner = t => { const c = candidates(page, t); return c.slice(1).reduce((a, b) => a.or(b), c[0]); };
   const filter = (f.has || f.hasNot || f.hasText || f.hasNotText)
-    ? { ...(f.has ? { has: inner(f.has) } : {}), ...(f.hasNot ? { hasNot: inner(f.hasNot) } : {}), ...(f.hasText ? { hasText: f.hasText } : {}), ...(f.hasNotText ? { hasNotText: f.hasNotText } : {}) }
+    ? { ...(f.has ? { has: inner(f.has) } : {}), ...(f.hasNot ? { hasNot: inner(f.hasNot) } : {}), ...(f.hasText ? { hasText: rx(f.hasText) } : {}), ...(f.hasNotText ? { hasNotText: rx(f.hasNotText) } : {}) }
     : null;
   const as = (loc, how) => Object.assign(filter ? loc.filter(filter) : loc, { how });
   if (typeof target === 'string') {
@@ -49,11 +51,11 @@ export function candidates(page, target) {
   const how = Object.fromEntries(Object.entries(t).filter(([k]) => !['nth', 'within', 'frame'].includes(k)));
   if (t.css) return [as(page.locator(t.css), how)];
   if (t.testId) return [as(page.getByTestId(t.testId), how)];
-  if (t.role) return [as(page.getByRole(t.role, { name: t.name, exact: t.exact ?? false }), how)];
-  if (t.label) return [as(page.getByLabel(t.label), how)];
+  if (t.role) return [as(page.getByRole(t.role, { name: rx(t.name), exact: t.exact ?? false }), how)];
+  if (t.label) return [as(page.getByLabel(rx(t.label)), how)];
   if (t.placeholder) return [as(page.getByPlaceholder(t.placeholder), how)];
-  if (t.text) return [as(page.getByText(t.text, { exact: t.exact ?? false }), how)];
-  if (t.alt) return [as(page.getByAltText(t.alt, { exact: t.exact ?? false }), how)];
+  if (t.text) return [as(page.getByText(rx(t.text), { exact: t.exact ?? false }), how)];
+  if (t.alt) return [as(page.getByAltText(rx(t.alt), { exact: t.exact ?? false }), how)];
   throw new Error(`Unusable target ${JSON.stringify(target)}`);
 }
 
@@ -233,14 +235,17 @@ async function visibleCount(page, target) {
  * text-transform changes the first but not the second, so "Paused" matches a label shown as "PAUSED". When it fails
  * only on case, "seen" says so, so the fix (the page's case, or /…/i) is obvious.
  */
-async function textCheck(el, test, want) {
+async function textCheck(el, test, want, near = 0) {
   const norm = v => String(v ?? '').replace(/\s+/g, ' ').trim();
-  const [shown, source] = (await el.evaluate(e => [e.innerText, e.textContent])).map(norm);
+  // near: n: the text of the element's n-th parent instead (a label and its value in separate elements).
+  const [shown, source] = (await el.evaluate((e, n) => { for (let i = 0; i < n && e.parentElement; i++) e = e.parentElement; return [e.innerText, e.textContent]; }, near)).map(norm);
   if (test(shown) || test(source)) return { ok: true };
   const lower = want.toLowerCase();
   const caseOnly = !/^\/.+\/[a-z]*$/.test(want) && [shown, source].some(s => s.toLowerCase().includes(lower));
   return { ok: false, seen: `text "${shown.slice(0, 120)}"${caseOnly ? ' (it matches if case is ignored: use the case on the page, or /…/i)' : ''}` };
 }
+
+const nearOf = step => step.near === true ? 1 : Number(step.near ?? 0);
 
 const failCheck = message => { throw Object.assign(new Error(`Verification failed: ${message}`), { failure: 'criterion' }); };
 
@@ -277,8 +282,8 @@ async function verify(t, step, { timeout, warnings, onPoll }) {
   }
   const el = await resolve(page, v, { timeout, warnings, onPoll }).catch(() => failCheck(`${show} is not on the page (${page.url()})`));
   const conditions = [
-    ['text', async () => textCheck(el, s => matches(step.text, s), String(step.text)), `text containing "${step.text}"`],
-    ['exactText', async () => { const want = String(step.exactText).replace(/\s+/g, ' ').trim(); return textCheck(el, s => s === want, want); }, `text "${step.exactText}"`],
+    ['text', async () => textCheck(el, s => matches(step.text, s), String(step.text), nearOf(step)), `text containing "${step.text}"`],
+    ['exactText', async () => { const want = String(step.exactText).replace(/\s+/g, ' ').trim(); return textCheck(el, s => s === want, want, nearOf(step)); }, `text "${step.exactText}"`],
     ['value', async () => { const s = await el.inputValue(); return { ok: s === String(step.value), seen: `value "${s.slice(0, 120)}"` }; }, `value "${step.value}"`],
   ].filter(([k]) => k in step);
   const STATES = {
@@ -586,7 +591,14 @@ export async function runStep(t, step0, { baseUrl, timeouts = {}, ready: readyCf
   if (bare) return;
   // Known issues the step brought up are dealt with (or marked tolerated) before the app's error UI is looked at.
   await t.workarounds?.checkpoint(t, { warnings });
-  const err = await appError(t.page, errors);
+  let err = await appError(t.page, errors);
+  // A known issue that came up after the checkpoint (a slow server answer) is seen here first: give the workarounds
+  // another look, briefly, before calling it the app's error.
+  for (let i = 0; err && t.workarounds?.any && i < 4; i++) {
+    await t.workarounds.checkpoint(t, { warnings });
+    err = await appError(t.page, errors);
+    if (err) await page.waitForTimeout(250);
+  }
   if (err) throw new Error(`the app showed an error: ${err}`);
 }
 

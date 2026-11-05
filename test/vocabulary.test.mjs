@@ -43,6 +43,8 @@ describe('step vocabulary', { concurrency: 3, timeout: 600000 }, () => {
       { click: { role: 'button', name: 'Open', within: { role: 'region', name: 'Panel B' } } },
       { verify: '#which', text: 'opened Panel B' },
       { verify: { role: 'row', hasText: 'Beta' }, count: 1 },
+      { verify: { role: 'tab', name: '/^Review \\(\\d+\\)$/' } }, { verify: { role: 'row', hasText: '/^Bet/' }, count: 1 },
+      { verify: { text: 'Case Report:' }, text: '/Case Report:\\s*Complete/', near: true },
       { verify: { role: 'row', has: { role: 'button', name: 'Edit' } }, count: 2 },
       { verify: { role: 'row', hasNotText: 'Alpha', has: { role: 'button' } }, count: 1 },
       { check: 'I agree' }, { verify: 'I agree', state: 'checked' }, { uncheck: 'I agree' }, { verify: 'I agree', state: 'unchecked' },

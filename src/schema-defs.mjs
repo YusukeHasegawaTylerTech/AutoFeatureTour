@@ -28,7 +28,7 @@ const locatorObject = {
   description: 'An element by what users see. Exactly one of role, label, placeholder, text, testId, alt or css; optionally narrowed (has, hasText, nth) and scoped (within, frame).',
   properties: {
     role: str('ARIA role: button, link, textbox, checkbox, tab, menuitem, combobox, heading, row, cell, dialog…'),
-    name: str('Accessible name, with "role". Substring match unless "exact".'),
+    name: str('Accessible name, with "role". Substring match unless "exact"; "/regex/flags" is a regular expression.'),
     exact: bool('Match name/label/placeholder/text exactly (default false: substring, case-insensitive).'),
     label: str('A form field by its <label> or aria-label.'),
     placeholder: str('A field by its placeholder text.'),
@@ -39,7 +39,7 @@ const locatorObject = {
     nth: num('Pick the n-th match (0-based) instead of the first visible one; also silences the ambiguity warning.', { minimum: 0 }),
     has: { $ref: '#/$defs/locator', description: 'Only elements that contain an element matching this locator.' },
     hasNot: { $ref: '#/$defs/locator', description: 'Only elements that do not contain an element matching this locator.' },
-    hasText: str('Only elements whose text contains this (anywhere inside them).'),
+    hasText: str('Only elements whose text contains this, anywhere inside them, across child elements (or "/regex/flags").'),
     hasNotText: str('Only elements whose text does not contain this.'),
     within: { $ref: '#/$defs/locator', description: 'Search inside the first visible element matching this locator (a dialog, a row, a panel). Nest for chains.' },
     frame: { description: 'Search inside an iframe: its CSS selector, or a list of selectors for nested frames (outermost first).',
@@ -156,6 +156,7 @@ export const ACTIONS = {
     {
       text: str('The element\'s text contains this (or matches /regex/).'),
       exactText: str('The element\'s text is exactly this (whitespace collapsed).'),
+      near: { type: ['boolean', 'integer'], minimum: 0, maximum: 5, description: 'With text / exactText: compare the text of the element\'s parent (true = 1) or n-th parent instead, so a label and its value in separate elements ("Case Report:" + "Complete") are checked together.' },
       value: str('A field\'s value is exactly this.'),
       count: num('Exactly this many visible elements match.', { minimum: 0 }),
       state: { enum: ['visible', 'hidden', 'enabled', 'disabled', 'checked', 'unchecked', 'selected', 'unselected', 'editable', 'focused'],

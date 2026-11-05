@@ -25,17 +25,9 @@ App and environment findings are in `platforms/rms-qa/notes/rms-rw-findings.md`;
 - **Switching accounts mid-tour**: one tour, several users (setup officer, supervisor, reviewer) in the same app.
   Wanted: a `{ "signInAs": "<role>", "site": "…" }` step that clears that site's session and runs the role's login
   steps on camera (or off camera with `"offCamera": true`), and reports which account did which scene.
-- **Late known-issue UI**: a dialog that appears after the step's workaround checkpoint (a slow server answer) is seen
-  by the error-UI check first and fails the step, even when a `tolerate` workaround matches it. Poll the workaround
-  checkpoint again (briefly) right before `appError`, or let a step wait for "settled + no new dialog". Cost two
-  35-minute recordings here; worked around with a code step (`click-and-close-message.mjs`).
 - **Expected rejections as a step**: "click X; the app is expected to refuse with message M" is a common way to film a
   finding. Wanted as a built-in step (`{ "click": …, "expectMessage": "/…/", "show": 4 }`) instead of a code step,
   reported as the criterion's result.
-- **Regex role names**: `{ "role": "tab", "name": "/^Review \(/" }` isn't accepted; counts in names (badges) had to
-  be hard-coded per scene. Allow `/regex/` in `name` like in `text` patterns.
-- **Text split across elements**: `verify` with `text` fails when the label and its value are separate elements
-  ("Case Report: 2026-…" + "Complete"). A `hasText` on a container that matches across children, or a `near` option.
 - **Resume a recording**: `--from-step` plays earlier steps fast, so a fix late in a long tour means a full re-record.
   Wanted: resume from a saved state (storage + vars) and stitch the video, or record scenes as separate clips that can
   be re-shot one at a time.

@@ -47,6 +47,7 @@ const PAGES = {
     <table><tr><td>Alpha</td><td><button>Edit</button></td></tr><tr class="row"><td>Beta</td><td><button>Edit</button></td></tr></table>
     <section aria-label="Panel A"><button>Open</button></section><section aria-label="Panel B"><button>Open</button></section>
     <p id="which"></p>
+    <div class="field"><span>Case Report:</span> <b>Complete</b></div><div role="tablist"><button role="tab">Review (3)</button></div>
     <label><input type="checkbox" id="agree"> I agree</label>
     <label>Color <select id="color"><option>Red</option><option>Green</option></select></label>
     <label>Notes <input id="notes" value="prefilled"></label>
