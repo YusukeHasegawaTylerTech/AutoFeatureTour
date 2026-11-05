@@ -24,3 +24,11 @@
 ## Housekeeping
 - Tests for `ui/server.mjs` (path limits, token, `/api/secret` only writes referenced names, trash).
 - Commit the `ui` worktree; decide whether `aft ui` becomes a CLI command.
+
+## Planned with the engine work (see ../TODO.md)
+- Run page: an **Artifacts** board (each pinned artifact: role, id, fields with secrets as ●●●, "created in scene 2,
+  step 4" linking to the step, a cropped screenshot, cleanup status) and a **Setup / teardown** strip (scene 0 and N+1
+  in the storyboard: each fixture item already in place / set up / undone / undo failed).
+- Review: "leftover data" findings from failed undo steps; "pin it?" suggestions with a button that adds the `pin` step.
+- Editor: a 🎥 on/off-camera toggle per scene and step; a picker for `{artifact.x.field}` references.
+- Platforms: an environment's `shared` / `reset` shown on its page; a CLEAN UP button (`aft cleanup`) per platform.
