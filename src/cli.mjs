@@ -80,6 +80,7 @@ import { call, parseArg, waitCall, readSessions, Session, sessionName, sessionsD
 import { loadPlatform } from './platform.mjs';
 import { describePoint, endStage, listStages, stageName, stagePoint, stageSource, stageView, startStage } from './stage.mjs';
 import { exportTour, importTour } from './exchange.mjs';
+import { notesForPrompt, readNotes, snapshotNotes } from './notes.mjs';
 import { discover } from './discover.mjs';
 import { doctor } from './doctor.mjs';
 import { claude, inventoryFor, plan, readStory } from './plan.mjs';
@@ -124,8 +125,31 @@ function startRun(name, args, command) {
   const info = { name: safeName(name), command, args: Object.fromEntries(Object.entries(args).filter(([k]) => k !== '_')), input: args._.slice(1),
     dir, startedAt: new Date().toISOString(), status: 'running' };
   fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify(info, null, 2));
+  snapshotRunNotes(dir, args);
   log(`run folder: ${dir}`);
   return { dir, info, base };
+}
+
+/** The platform a command is about: --platform, else the tour (or run folder) it was given. */
+function platformOfArgs(args) {
+  if (args.platform) return { name: args.platform, from: undefined };
+  let f = args._?.[1] ?? args.script ?? args.tour;
+  if (!f || typeof f !== 'string' || !fs.existsSync(f)) return null;
+  try {
+    if (fs.statSync(f).isDirectory()) f = path.join(f, 'tour.json');
+    const t = JSON.parse(fs.readFileSync(f, 'utf8'));
+    return t?.platform ? { name: t.platform, from: path.dirname(path.resolve(f)) } : null;
+  } catch { return null; }
+}
+
+/** notes.md: the platform's notes as they were when the run started (nothing when it has none). */
+function snapshotRunNotes(dir, args) {
+  try {
+    const p = platformOfArgs(args);
+    if (!p) return;
+    const pl = loadPlatform(toolRoot, p.name, { from: p.from });
+    snapshotNotes(dir, pl.dir, pl.name);
+  } catch { /* a bad platform name is reported by the command itself */ }
 }
 
 function endRun(r, status, extra = {}) {
@@ -449,8 +473,12 @@ async function generateInto(out, args, { url, story, name }) {
   const discovery = url
     ? await discover({ url, outDir: out, maxPages: Number(args.maxPages ?? 12), include: args.include, exclude: args.exclude, ...loginStepsFor(args) })
     : null;
+  // What was learned about the app before (accounts, setup recipes, findings): context for the planner.
+  const platformDir = appSettings(args)?.platform?.dir;
+  const notes = platformDir ? notesForPrompt(readNotes(platformDir)) : [];
+  if (notes.length && args.llm) log(`platform notes for the planner: ${notes.map(n => n.file).join(', ')}`);
   const tour = await plan({ discovery, outDir: out, name: safeName(name), prompt: args.prompt, story, style: args.style, llm: args.llm, model: args.model,
-    maxScenes: Number(args.maxScenes ?? 6), baseUrl: url ? undefined : args.baseUrl });
+    maxScenes: Number(args.maxScenes ?? 6), baseUrl: url ? undefined : args.baseUrl, notes });
   const tourFile = path.join(out, 'tour.json');
   const app = appSettings(args);
   if (app?.platform) { // a platform tour names its platform and holds no app settings
@@ -916,7 +944,7 @@ const commands = {
       log(`exported ${name} from ${doc.source.platform ?? 'a stand-alone tour'}${doc.source.env ? ` (${doc.source.env})` : ''}${last ? `, last ${last.command} ${last.result ?? last.status}` : ', no run of it found'}: ${file}`);
       if (!last) log('warning: no successful run or validation of this tour was found; the import will carry no evidence that it worked here');
       if (!args.json) console.log(`${file}\n  on the other machine: aft import "${path.basename(file)}" --platform <their platform>`);
-      return { file, name, source: doc.source, requires: doc.requires, files: Object.keys(doc.files) };
+      return { file, name, source: doc.source, requires: doc.requires, files: Object.keys(doc.files), notes: doc.notes.map(n => n.file) };
     });
   },
 
@@ -926,6 +954,9 @@ const commands = {
     const r = importTour(path.resolve(file), { toolRoot, platform: args.platform, name: args.name, force: !!args.force });
     const rel = path.relative(process.cwd(), r.tour);
     for (const m of r.missing) log(`missing on ${args.platform}: ${m}`);
+    for (const f of r.notes.written) log(`notes: ${path.relative(process.cwd(), f)}`);
+    for (const f of r.notes.kept) log(`notes: kept ${path.relative(process.cwd(), f)} (an earlier import; --force replaces it)`);
+    if (r.notes.newFindings.length) log(`findings ${args.platform}'s own notes don't have yet: ${r.notes.newFindings.map(f => `${f.id}${f.title ? ` (${f.title})` : ''}`).join(', ')}`);
     if (!args.json) {
       console.log(`✔ ${rel}${r.files.length ? ` (+ ${r.files.length} file(s))` : ''}`);
       if (r.missing.length) console.log(`  before it can run here, add: ${r.missing.join('; ')}`);

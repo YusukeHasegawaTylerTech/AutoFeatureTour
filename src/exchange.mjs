@@ -17,6 +17,8 @@ import { expandSteps, loadPlatform, PlatformError } from './platform.mjs';
 // Problems are config errors (exit 1, no stack trace).
 const wrap = fn => (...a) => { try { return fn(...a); } catch (e) { throw e instanceof PlatformError ? new ConfigError(e.message) : e; } };
 
+import { findingIds, readNotes } from './notes.mjs';
+
 export const EXPORT_SCHEMA = 'aft-export/1';
 const SAFE = /^[A-Za-z0-9_-]+$/;
 
@@ -97,6 +99,8 @@ function exportTourImpl(source, { toolRoot, outRoot = path.join(toolRoot, 'out')
     requires: { fixtures: raw.fixtures ?? [], mocks: raw.mocks ?? [], role: raw.role ?? null },
     tour,
     files: Object.fromEntries(Object.entries(files).map(([k, v]) => [k, { kind: v.kind, base64: v.base64 }])),
+    // The platform's own notes (accounts, setup recipes, findings), so the target gets what was learned here.
+    notes: p ? readNotes(p.dir).filter(n => !n.file.startsWith('imported/')).map(({ file: f, meta, findings, text }) => ({ file: f, meta, findings, text })) : [],
   };
   return { doc, name: raw.name };
 }
@@ -144,7 +148,25 @@ function importTourImpl(bundleFile, { toolRoot, platform, name, force = false })
     }
   }
   fs.writeFileSync(tourFile, JSON.stringify(tour, null, 2) + '\n');
-  return { tour: tourFile, files: written, missing, source: doc.source };
+
+  // Notes go to notes/imported/<source platform>/, never over the target's own notes; an earlier import of the same
+  // file is kept unless --force. newFindings: ids the target's own notes don't have yet.
+  const notes = { written: [], kept: [], newFindings: [] };
+  if (doc.notes?.length) {
+    const own = findingIds(readNotes(p.dir).filter(n => !n.file.startsWith('imported/')));
+    const srcName = SAFE.test(String(doc.source?.platform ?? '')) ? doc.source.platform : 'standalone';
+    const notesDir = path.join(p.dir, 'notes', 'imported', srcName);
+    for (const n of doc.notes) {
+      const rel = String(n?.file ?? '').replace(/\\/g, '/');
+      if (!rel || rel.split('/').some(x => !x || x === '..' || x === '.') || !/\.md$/i.test(rel) || typeof n.text !== 'string')
+        throw new PlatformError(`${bundleFile}: bad notes file name "${n?.file}"`);
+      const out = path.join(notesDir, ...rel.split('/'));
+      if (fs.existsSync(out) && !force) notes.kept.push(out);
+      else { fs.mkdirSync(path.dirname(out), { recursive: true }); fs.writeFileSync(out, n.text); notes.written.push(out); }
+      for (const f of n.findings ?? []) if (f?.id && !own.has(f.id) && !notes.newFindings.some(x => x.id === f.id)) notes.newFindings.push({ id: f.id, title: f.title ?? '', file: rel });
+    }
+  }
+  return { tour: tourFile, files: written, missing, source: doc.source, notes };
 }
 
 function readMaybe(file) {
