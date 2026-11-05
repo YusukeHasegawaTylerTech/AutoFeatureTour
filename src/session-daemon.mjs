@@ -5,11 +5,14 @@
 // POST / (header x-aft-token) { "op": "status" | "snapshot" | "locate" | "try-step" | "record-start" | "record-steps" | "record-stop" | "stop", ... } → JSON.
 // Commands run one at a time (one page): a second command while one is running is refused with HTTP 409 (busy), so
 // two callers can't interleave steps on the same page; status always answers, and a stop waits for the command.
+// Each command has a call id (msg.callId, else made here; src/daemon-calls.mjs): it keeps running if the caller gives
+// up, and { "op": "wait", "callId"?, "timeoutMs"? } answers its stored result (the running call, else the last one).
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import { classify } from './failures.mjs';
+import { CallTracker } from './daemon-calls.mjs';
 import { Session } from './session.mjs';
 import { log } from './util.mjs';
 
@@ -18,6 +21,7 @@ const token = crypto.randomBytes(24).toString('hex');
 const writeState = s => { const tmp = `${stateFile}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(s, null, 2)); fs.renameSync(tmp, stateFile); };
 const base = { schema: 'aft-session/1', name, pid: process.pid, outDir, log: `${outDir}/session.log` };
 
+const calls = new CallTracker();
 let session, server, queue = Promise.resolve(), stopping = false, running = null;
 
 async function shutdown(code = 0) {
@@ -39,19 +43,28 @@ async function main() {
   writeState({ ...base, status: 'starting', startedAt: new Date().toISOString() });
   const status = await session.start();
   server = http.createServer((req, res) => {
-    const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    const send = (code, body) => { if (res.writableEnded || res.destroyed) return; res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (req.method !== 'POST' || req.headers['x-aft-token'] !== token) return send(403, { error: 'forbidden' });
     let body = '';
     req.on('data', d => { body += d; });
     req.on('end', () => {
       let msg;
       try { msg = JSON.parse(body || '{}'); } catch { return send(400, { error: 'invalid JSON' }); }
-      if (msg.op === 'status') return send(200, { ...base, status: 'ready', ...session.status(), ...(running ? { busy: running } : {}) });
+      if (msg.op === 'status') return send(200, { ...base, status: 'ready', ...session.status(), ...(running ? { busy: running, callId: calls.current } : {}) });
+      if (msg.op === 'wait') return void calls.wait(msg.callId, Number(msg.timeoutMs ?? 60000)).then(([code, b]) => send(code, b));
       if (msg.op === 'record-steps') return send(200, session.recordSteps(msg));
       if (running && msg.op !== 'stop')
-        return send(409, { error: `session ${name} is busy: a "${running}" call is still running (one call at a time on a session's page); wait for it, or start another session with --session <name>`, class: 'error' });
+        return send(409, { error: `session ${name} is busy: a "${running}" call (${calls.current}) is still running (one call at a time on a session's page); aft session wait ${calls.current} --session ${name} waits for it, or start another session with --session <name>`, class: 'error' });
       if (msg.op !== 'stop') running = msg.op;
+      const rec = msg.op !== 'stop' ? calls.begin(msg.op, msg.callId) : null;
+      const reply = send;
       queue = queue.then(async () => {
+        // The result is kept (with its call id) for `aft session wait`, even when the caller stopped listening.
+        const send = (code, body) => {
+          const b = rec && body && typeof body === 'object' && !Array.isArray(body) ? { ...body, callId: rec.callId } : body;
+          if (rec) calls.finish(rec.callId, code, b);
+          reply(code, b);
+        };
         try {
           switch (msg.op) {
             case 'status': return send(200, { ...base, status: 'ready', ...session.status() });

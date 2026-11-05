@@ -24,6 +24,7 @@ import { Capture } from './capture.mjs';
 import { candidates, runSteps, settle, shown, StepError, suggest } from './steps.mjs';
 import { scrub } from './triage.mjs';
 import { sleep } from './util.mjs';
+import { newCallId } from './daemon-calls.mjs';
 import { Workarounds } from './workarounds.mjs';
 
 export const SESSION_SCHEMA = 'aft-session/1';
@@ -213,12 +214,55 @@ export function readSessions(toolRoot) {
   }).filter(Boolean).map(s => ({ ...s, alive: !!s.pid && alive(s.pid) }));
 }
 
-export async function call(s, op, params = {}) {
-  const res = await fetch(`http://127.0.0.1:${s.port}/`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-aft-token': s.token },
-    body: JSON.stringify({ op, ...params }) });
-  const body = await res.json();
-  if (!res.ok) throw Object.assign(new Error(body.error ?? `session ${s.name}: HTTP ${res.status}`), { failure: body.class });
-  return body;
+const post = (s, msg, signal) => fetch(`http://127.0.0.1:${s.port}/`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-aft-token': s.token },
+  body: JSON.stringify(msg), signal });
+
+/** A daemon's answer as a result, or the error it carried (same class). */
+function answer(s, code, body) {
+  if (code >= 200 && code < 300) return body;
+  throw Object.assign(new Error(body?.error ?? `session ${s.name}: HTTP ${code}`), { failure: body?.class, ...(body?.callId ? { callId: body.callId } : {}) });
+}
+
+const UNTRACKED = new Set(['status', 'stop', 'wait', 'record-steps']);
+
+/**
+ * One call on a session or stage daemon. Queued calls get a call id: if this side stops waiting (a timeout:
+ * opts.timeoutMs or AFT_CALL_TIMEOUT seconds, or "fetch failed"), the daemon keeps running it, and the error carries
+ * the id and the `aft session wait` hint (data: { callId, op, session, running: true, hint }).
+ */
+export async function call(s, op, params = {}, { timeoutMs } = {}) {
+  const tracked = !UNTRACKED.has(op);
+  const callId = tracked ? params.callId ?? newCallId() : undefined;
+  const limit = timeoutMs ?? (Number(process.env.AFT_CALL_TIMEOUT) > 0 ? Number(process.env.AFT_CALL_TIMEOUT) * 1000 : undefined);
+  let res;
+  try {
+    res = await post(s, { op, ...params, ...(callId ? { callId } : {}) }, limit ? AbortSignal.timeout(limit) : undefined);
+  } catch (e) {
+    if (!tracked) throw e;
+    const reason = e.name === 'TimeoutError' ? `no answer in ${Math.round(limit / 1000)} s` : e.cause?.code ?? e.message;
+    const hint = `aft session wait ${callId} --session ${s.name}`;
+    throw Object.assign(new Error(`session ${s.name}: stopped waiting for the ${op} call ${callId} (${reason}); it may still be running there: ${hint}`),
+      { failure: 'error', callId, data: { callId, op, session: s.name, running: true, hint } });
+  }
+  return answer(s, res.status, await res.json());
+}
+
+/**
+ * Waits for a call on a daemon (by id, else the running one, else the last finished) and returns its result as call()
+ * would have, or throws its error. Polls in chunks so no single HTTP wait is long. Gives up after timeoutMs (default:
+ * no limit) with an error whose data is { callId, op, running: true }.
+ */
+export async function waitCall(s, callId, { timeoutMs, chunkMs = 30000 } = {}) {
+  const until = timeoutMs !== undefined ? Date.now() + timeoutMs : Infinity;
+  for (;;) {
+    const ms = Math.max(0, Math.min(chunkMs, until - Date.now()));
+    const rec = await call(s, 'wait', { ...(callId ? { callId } : {}), timeoutMs: ms });
+    if (rec.done) return { record: rec, result: answer(s, rec.code, rec.body) };
+    callId = rec.callId;
+    if (Date.now() >= until)
+      throw Object.assign(new Error(`session ${s.name}: the ${rec.op} call ${rec.callId} is still running (since ${rec.startedAt})`),
+        { failure: 'error', callId: rec.callId, data: { callId: rec.callId, op: rec.op, session: s.name, running: true, startedAt: rec.startedAt } });
+  }
 }
 
 /** Starts a session daemon and waits until it's ready (or failed). */

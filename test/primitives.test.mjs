@@ -87,6 +87,48 @@ describe('agent primitives', { concurrency: 3, timeout: 600000 }, () => {
     assert.ok(f.data.steps[0].suggestions.includes('Save'));
   });
 
+  test('a call the CLI stops waiting for keeps running; aft session wait returns its result', async () => {
+    const name = `test-wait-${process.pid}-${Date.now()}`;
+    const start = parsed(await aft(['session', 'start', '--base-url', app.url, '--session', name]));
+    assert.equal(start.ok, true, JSON.stringify(start));
+    try {
+      const slow = '[{"goto":"/ok"},{"wait":10},{"fill":"Name","text":"Di"},{"click":"Save"},{"verify":{"text":"Saved Di"}}]';
+      const gaveUp = parsed(await aft(['try-step', slow, '--session', name], { AFT_CALL_TIMEOUT: '1' }));
+      assert.equal(gaveUp.ok, false);
+      assert.equal(gaveUp.exitCode, 1);
+      const id = gaveUp.data.callId;
+      assert.match(id, /^c-[0-9a-f]+$/);
+      assert.equal(gaveUp.data.running, true);
+      assert.match(gaveUp.data.hint, new RegExp(`aft session wait ${id} --session ${name}`));
+      // Busy while it runs: refused, naming the call.
+      const busy = parsed(await aft(['snapshot', '--session', name]));
+      assert.equal(busy.ok, false);
+      assert.match(busy.error.message, new RegExp(`busy.*${id}`));
+      // A short --timeout while it still runs: not done yet.
+      const early = parsed(await aft(['session', 'wait', '--session', name, '--timeout', '0']));
+      assert.equal(early.ok, false);
+      assert.equal(early.data.callId, id);
+      const done = parsed(await aft(['session', 'wait', id, '--session', name]));
+      assert.equal(done.ok, true, JSON.stringify(done));
+      assert.equal(done.data.schema, 'aft-try-step/1');
+      assert.equal(done.data.callId, id);
+      assert.match(done.data.after.aria, /Saved Di/);
+      // Kept after it finished: without an id, the last call; a failing call keeps its class and exit code.
+      const again = parsed(await aft(['session', 'wait', '--session', name]));
+      assert.equal(again.data.callId, id);
+      const failing = parsed(await aft(['try-step', '{"click":"Svae","timeout":500}', '--session', name]));
+      assert.equal(failing.exitCode, 2);
+      const failed = await aft(['session', 'wait', failing.data.callId, '--session', name]);
+      assert.equal(failed.code, 2);
+      assert.equal(parsed(failed).class, 'script');
+      const unknown = parsed(await aft(['session', 'wait', 'c-nope', '--session', name]));
+      assert.equal(unknown.exitCode, 1);
+      assert.match(unknown.error.message, /no call c-nope/);
+    } finally {
+      parsed(await aft(['session', 'stop', '--session', name]));
+    }
+  });
+
   test('a session keeps one signed-in browser across calls; stop removes it', async () => {
     const name = `test-${process.pid}-${Date.now()}`;
     const start = parsed(await aft(['session', 'start', '--base-url', app.url, '--session', name]));
