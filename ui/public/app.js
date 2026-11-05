@@ -1,4 +1,5 @@
 import { simpleViews } from './simple.js';
+import { mountReview } from './review.js';
 // AutoFeatureTour UI: hash-routed, no build step.
 const $app = document.getElementById('app');
 const h = (s = '') => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -69,7 +70,7 @@ async function storyboard(id, d, input) {
         ${sc.narration ? `<p class="board-narr">“${h(sc.narration)}”</p>` : ''}
         <ol class="board-steps">${own.map(s => {
           const isUrl = /\(url\)/.test(s.scene ?? '');
-          const edit = tourPath && !isUrl && !s.from ? `<a href="#/write/${encodeURIComponent(tourPath)}?scene=${n}&step=${s.step}" title="Edit this step">✏️</a>` : '';
+          const edit = tourPath && !isUrl ? `<a href="#/write/${encodeURIComponent(tourPath)}?scene=${n}&step=${s.scriptStep ?? s.step}" title="Edit this step">✏️</a>` : '';
           return `<li class="${s.ok === false ? (s.optional ? 'warn' : 'bad') : ''}"><span class="${s.ok === false ? 'bad' : s.ok ? 'ok' : 'muted'}">${s.ok === false ? '✘' : s.ok ? '✔' : '·'}</span>
             <code>${h(isUrl ? `open ${s.spec?.goto ?? sc.url ?? ''}` : what(s.spec ?? s.action))}</code>${s.from ? ` <span class="muted">(${h(s.from)})</span>` : ''} ${edit}
             ${s.error ? `<div class="bad">${h(s.error)}</div>` : ''}${s.suggestions?.length ? `<div class="muted">did you mean: ${h(s.suggestions.join(', '))}</div>` : ''}</li>`; }).join('')
@@ -138,7 +139,7 @@ const views = {
             <td>${h(s.scene)}</td><td>${h(s.step)}</td><td><code>${h(JSON.stringify(s.spec ?? s.action))}</code>
             ${s.error ? `<div class="bad">${h(s.error)}</div>` : ''}${s.suggestions?.length ? `<div class="muted">did you mean: ${h(s.suggestions.join(', '))}</div>` : ''}</td>
             <td>${s.ms ?? ''}</td></tr>`).join('')}</table></div>` : ''}
-        <div id="story"></div>
+        <div id="review"></div><div id="story"></div>
         ${has('validation.md') ? `<details class="card"><summary><b>validation.md</b> <span class="muted">(raw)</span></summary><pre id="val"></pre></details>` : ''}
       </div><div>
         ${has('report.md') ? `<div class="card"><h3>report.md</h3><pre id="repmd"></pre></div>` : ''}
@@ -148,6 +149,7 @@ const views = {
       </div></div>`;
     const fill = async (sel, f) => { const el = $app.querySelector(sel); if (el) el.textContent = await (await fetch(fileUrl(id, f))).text(); };
     fill('#val', 'validation.md');
+    mountReview($app.querySelector('#review'), { id, d, input, h, api, rel, fileUrl, onCheckAgain: p => startJob(['validate', p]) }).catch(e => console.error(e));
     storyboard(id, d, input).then(html => { const el = $app.querySelector('#story'); if (el) el.innerHTML = html; }).catch(() => {}); fill('#repmd', 'report.md'); fill('#aria', 'triage/page/aria.yml');
     $app.querySelectorAll('button[data-cmd]').forEach(b => (b.onclick = () =>
       startJob([b.dataset.cmd, rel(input), ...(b.dataset.extra ? b.dataset.extra.split(' ') : [])])));

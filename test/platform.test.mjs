@@ -55,8 +55,8 @@ describe('platforms', () => {
     assert.deepEqual(c.cfg.login.steps.map(s => s.from), ['sign-in', 'sign-in']);
     assert.deepEqual(c.cfg.appErrors.ignore, ['favicon']);
     assert.deepEqual(c.cfg.scenes[0].steps, [
-      { fill: 'Name', text: 'Ann', from: 'save-name' },
-      { click: { role: 'button', name: 'Save' }, from: 'save-name' },
+      { fill: 'Name', text: 'Ann', from: 'save-name', scriptStep: 1 },   // both from the scene's step 1 (the fragment call)
+      { click: { role: 'button', name: 'Save' }, from: 'save-name', scriptStep: 1 },
     ]);
     assert.equal(c.cfg.hooks.setup.length, 1);
     assert.equal(c.authFile('clerk'), path.join(root, 'auth', 'app', 'local', 'clerk.json'));

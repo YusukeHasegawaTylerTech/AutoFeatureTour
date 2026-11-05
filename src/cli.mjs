@@ -12,6 +12,7 @@
 //   aft auto     <url> [--prompt ...]                 discover → plan → run, no story needed
 //   aft export   <tour.json|run folder>             one self-contained <name>.aft.json (fragments inlined, files embedded, the last result)
 //   aft import   <file.aft.json> --platform <name> [--name n] [--force]   into platforms/<name>/tours/ (lists missing fixtures)
+//   aft suggest-fix <run folder> --finding "<id>" [--llm claude]   AI proposal for a failure (a step, or a story workaround); writes nothing to the tour
 //   aft login    --platform <name> | <tour.json> [--target <env>] [--role <name>] [--manual]   save auth/<platform>/<env>/<role>.json
 //   aft platform list | init <name> [--base-url <url>] [--no-login] | discover <name> | check <name>   onboard an app (AGENTS.md, Platforms)
 //   aft schema   [tour|platform|environments|login|fragment|fixture]   print a definition file's JSON Schema (no type: the list)
@@ -68,7 +69,9 @@ import { concat, cutClips, duration, muxScene, requireFfmpeg, trimPlan, writeCap
 import { parseScript, spokenText } from './script.mjs';
 import { StepError, StopRun } from './steps.mjs';
 import { CLASSES, classify, exitCode, Failure, summaryLine } from './failures.mjs';
-import { finalize, progress } from './triage.mjs';
+import { criteriaOf, finalize, progress } from './triage.mjs';
+import { review as reviewOf } from './review.mjs';
+import { suggestFix } from './fix.mjs';
 import { defaultProvider, estimateSeconds, listVoices, speak } from './tts.mjs';
 import { log, newRunDir, num, parseArgs, run, sleep } from './util.mjs';
 
@@ -242,6 +245,9 @@ async function recordWith(def, tourDir, outDir, scenes, args, { dryRun = false }
     throw e;
   } finally {
     active = null;
+    // Known issues that fired and mocks that answered, for the dry run's review (a run's report has them already).
+    ctx.report.firings = tour.workarounds?.firings ?? [];
+    ctx.report.mocks = tour.mocks ?? [];
     await tour.close();
     // A failed run leaves Playwright's partial video under a random name; give it a predictable one.
     for (const f of fs.readdirSync(outDir).filter(f => /^page@.*\.webm$/.test(f))) {
@@ -286,9 +292,10 @@ async function validate(def, tourDir, outDir, args) {
   // Script problems first: they need no app (scenes with nothing to do, steps the generator couldn't ground).
   const issues = def.raw ? scriptIssues(def.raw) : [];
   for (const i of issues) log(`script: ${i.scene}: ${i.error}`);
-  const report = [...issues, ...(await recordWith(def, tourDir, outDir, scenes, args, { dryRun: true }))];
+  const ran = await recordWith(def, tourDir, outDir, scenes, args, { dryRun: true });
+  const report = [...issues, ...ran];
   const failed = report.filter(r => !r.ok);
-  const blocking = failed.filter(r => !r.optional);
+  const blocking = failed.filter(r => !r.optional && !r.knownIssue);
   const lines = [`# Validation: ${def.name}`, '', `${report.length} steps checked: ${report.length - failed.length} resolved, ${failed.length} failed` +
     ` (${blocking.length} blocking, ${failed.length - blocking.length} optional).`, '', '| | scene | step | action | target | result |', '|---|---|---|---|---|---|'];
   for (const r of report) {
@@ -298,7 +305,10 @@ async function validate(def, tourDir, outDir, args) {
     const result = r.ok ? 'ok' : `${r.error}${r.suggestions?.length ? `. Closest: ${r.suggestions.map(s => `"${s}"`).join(', ')}` : ''}`;
     lines.push(`| ${r.ok ? '✔' : r.optional ? '⚠' : '✘'} | ${r.scene} | ${r.step} | ${r.action} | \`${target.replace(/\|/g, '\\|')}\` | ${result.replace(/\|/g, '\\|')} |`);
   }
-  fs.writeFileSync(path.join(outDir, 'validation.json'), JSON.stringify({ steps: report.length, failed: failed.length, blocking: blocking.length, report }, null, 2));
+  // The same review as a run's (src/review.mjs): evidence per criterion, findings, the story's decisions.
+  const review = def.raw ? reviewOf({ raw: def.raw, steps: report, criteria: criteriaOf(def, report), firings: ran.firings ?? [], mocks: ran.mocks ?? [], passed: !blocking.length, complete: !ran.partial }) : null;
+  if (review) lines.splice(3, 0, '', `**${review.label}**${review.open ? ` · ${review.open} finding(s) to decide` : ''}`, ...review.evidence.map(e => `- AC${e.id}: ${e.strength} (${e.reasons.join('; ')})`));
+  fs.writeFileSync(path.join(outDir, 'validation.json'), JSON.stringify({ steps: report.length, failed: failed.length, blocking: blocking.length, report, review }, null, 2));
   fs.writeFileSync(path.join(outDir, 'validation.md'), lines.join('\n') + '\n');
   console.log(lines.slice(2).join('\n'));
   return { steps: report.length, failed: failed.length, blocking: blocking.length, report: path.join(outDir, 'validation.md') };
@@ -588,6 +598,16 @@ const commands = {
     const state = await saveLogin({ baseUrl: cfg.baseUrl, steps: cfg.login?.steps, file: app.authFile(cfg.login?.role), manual: !!args.manual, viewport: cfg.viewport,
       timeouts: cfg.timeouts, ready: cfg.ready, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, signedIn: cfg.login?.signedIn, workarounds: cfg.workarounds });
     return { platform: app.platform?.name ?? null, env: app.env ?? null, role: cfg.login?.role ?? null, state };
+  },
+
+  async 'suggest-fix'(args) {
+    const dir = args._[1];
+    if (!dir || !fs.existsSync(path.join(dir, 'run.json')) || !args.finding)
+      throw new UsageError('Usage: aft suggest-fix <run folder> --finding "<id>" [--llm claude] [--model <m>]  (ids: report.json / validation.json review.findings)');
+    if ((args.llm ?? 'claude') !== 'claude') throw new UsageError('suggest-fix needs --llm claude');
+    const run = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8'));
+    return withRun(run.name ?? path.basename(path.dirname(path.resolve(dir))), args, 'suggest-fix',
+      out => suggestFix({ runDir: path.resolve(dir), finding: String(args.finding), outDir: out, model: args.model }));
   },
 
   async export(args) {

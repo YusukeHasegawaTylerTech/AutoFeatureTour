@@ -460,7 +460,26 @@
           },
           "off": {
             "type": "boolean",
-            "description": "In an environment: turn the platform's rule of this name off there."
+            "description": "In an environment or a story: turn the platform's rule of this name off there."
+          },
+          "issue": {
+            "type": "object",
+            "description": "In a story: this works around a real app issue, for now. A passing run is then \"passed with known issues\", never plain green; a run where it no longer fires says the issue may be fixed.",
+            "properties": {
+              "note": {
+                "type": "string",
+                "description": "What the issue is."
+              },
+              "ticket": {
+                "type": "string",
+                "description": "Where it is tracked (e.g. RMS-1234)."
+              },
+              "since": {
+                "type": "string",
+                "description": "When it was decided (ISO date)."
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false,

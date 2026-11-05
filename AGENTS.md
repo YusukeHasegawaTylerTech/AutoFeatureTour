@@ -112,7 +112,7 @@ the app's error UI (a selector plus text regex); it always fails the step.
 
 A known app or environment issue (a service that isn't there locally, so a popup, an inline error panel, a toast or a
 failing request) is declared once per platform as a **workaround**: what it looks like (`when`), what to do about it
-(`do`), and how to report it (`as`). Tours never mention it; when the issue isn't there, nothing happens. Mocking the
+(`do`), and how to report it (`as`). Tours don't need to mention it; when the issue isn't there, nothing happens. Mocking the
 service instead would hide a real problem.
 
 ```json
@@ -136,6 +136,9 @@ service instead would hide a real problem.
   platform's rule for that environment (partial entries merge over it; `"off": true` disables it), a new name adds one
   there only. A `--base-url` one-off gets the platform's rules only. Typical: `"as": "fail"` in platform.json, `"as":
   "warn"` in `local` (see `platforms/rms`).
+- **Per story**: a tour may list its own `workarounds` too, applied after the platform's and environment's (same name
+  refines one, `"off": true` turns it off for that story; source `story`). Mark a real app issue being worked around
+  for now with `"issue": { "note", "ticket" }`: the run then reads "passed with known issues" (see Review).
 - Checked before every step, on each poll while a step looks for its target or waits on a check, after each step
   (before the error UI), and when a click finds its target covered; in runs, validate, sessions (try-step, snapshot),
   login and discovery. Stacked known dialogs are closed newest first. Playwright's `addLocatorHandler` isn't used: it
@@ -143,6 +146,29 @@ service instead would hide a real problem.
 - Reported in report.json `workarounds` (each firing: name, source `platform` | `env:<name>`, what matched, action, the
   step) and `workaroundRules`, report.md "Known issues", the warnings and PROMPT.md. Matched requests and messages stay in
   network.json / console.json marked `"workaround": "<name>"`.
+
+### Review: true and false results
+
+A run's outcome says what was observed; the **review** (`src/review.mjs`, in report.json and validation.json
+`review`, and report.md "Review") says how far to trust it, and records the person's calls about it, per story:
+
+- **Evidence per criterion** (fixed rules about how easily its checks could pass while the app is wrong):
+  `strong` (a required check of a specific condition, text, value, count, state or URL, on a target found by its name,
+  no mock or known issue in that scene) · `moderate` (only "it's visible", CSS targets, an ambiguous match, or a known
+  issue fired there) · `weak` (only "hidden"/absent checks, only optional ones, a mock answered, or a known issue was
+  hidden) · `none` (shown, not checked) · `failed`. Each has its reasons.
+- **Findings**, each with a stable `id`: failures (`fail|scene|action|target`), weak or missing evidence, known issues
+  that fired, mocks, and story workarounds / known-issue steps that no longer fire ("may be fixed").
+- **Decisions** live in the tour: `"review": { "decisions": [ { "finding", "decision": "script" | "workaround" |
+  "app-issue" | "accept", "note", "ticket" } ] }`. They never change how a run executes, only how its result reads.
+- **A failing check that is a real app issue, for now**: `"knownIssue": { "note", "ticket" }` on the step. It still runs;
+  failing is expected (the run carries on, the criterion reads "known issue"); passing says the issue looks fixed.
+- **Verdict**: `passed` · `passed-with-issues` (a known issue worked around; never plain green) · `needs-review`
+  (an undecided finding) · `failed` · `failed-app-issue` (every failure marked a real app issue). Exit codes are unchanged.
+- **AI fix**: `aft suggest-fix <run> --finding "<id>" --llm claude` proposes a corrected step (the script is wrong), a
+  story workaround (something unrelated got in the way), or says it's the app; it never edits the tour. It is told not
+  to change a check's expected value to match what the app shows. The UI's review card (run page) offers all of this as
+  buttons.
 
 **Redaction:** every text file in the report and bundle has the tour's secret values (`"secret": true` steps and
 credential-like env vars), auth headers, cookies, bearer tokens, JWTs and token-like URL parameters replaced with
@@ -222,7 +248,7 @@ One action key per step (the schema's `$defs/action_<name>` has every option, wi
 | `{ "wait": 1.5 }` / `{ "at": 0.5 }` | pause seconds / wait until that fraction of the narration | |
 | `{ "use": "frag", "with": {…} }` / `{ "code": "x.mjs", "with": {…} }` | a fragment / a code step (see Platforms) | |
 
-On any step: `optional`, `timeout`, `retries`, `criterion`, `comment`, and `waitForResponse` + `status` + `method`
+On any step: `optional`, `timeout`, `retries`, `criterion`, `comment`, `knownIssue` (see Review), and `waitForResponse` + `status` + `method`
 (listen before acting, so the response can't be missed). Steps that may already have had their effect (code, mock,
 download, dialog, a waited-for response, a popup) are never retried. URL and text patterns are substrings, or
 `/regex/flags`. A click whose target sits under a fixed or sticky header, footer or toolbar is scrolled to the middle
@@ -501,4 +527,5 @@ tour.json → a run (platform composition, launch/attach, login, hooks, fixtures
 fixtures, init · `platform-cli.mjs` `aft platform` · `session.mjs` / `session-daemon.mjs` sessions, snapshot, locate,
 try-step · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
 `plan.mjs` heuristic and Claude planners, stories · `render.mjs` ffmpeg · `tts.mjs` speech · `auth.mjs` saved logins ·
-`doctor.mjs` checks · `workarounds.mjs` known issues (merge, checkpoint, matching). Tests: `npm test`.
+`doctor.mjs` checks · `workarounds.mjs` known issues (merge, checkpoint, matching) · `review.mjs` evidence, findings,
+decisions, verdict · `fix.mjs` AI fix proposals (`suggest-fix`). Tests: `npm test`.

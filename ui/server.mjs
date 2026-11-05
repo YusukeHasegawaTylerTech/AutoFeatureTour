@@ -134,6 +134,9 @@ function listRuns() {
           error: `${cls.toUpperCase()} failure: ${f.scene} step ${f.step} ${JSON.stringify(f.spec ?? {})}: ${f.error ?? 'failed'}`
             + (f.suggestions?.length ? ` (did you mean "${f.suggestions[0]}"?)` : '') });
       }
+      // The review's reading of the outcome (src/review.mjs): passed, passed-with-issues, needs-review, failed, failed-app-issue
+      const rv = (v ?? (info.command === 'validate' ? readJson(path.join(base, id, 'validation.json')) : readJson(path.join(base, id, 'report.json'))))?.review;
+      if (rv) Object.assign(run, { verdict: rv.verdict, verdictLabel: rv.label, openFindings: rv.open });
       runs.push(run);
     }
   }
@@ -154,7 +157,7 @@ function runDetail(id) {
 
 // ---- jobs: CLI child processes, output streamed over SSE ----
 const jobs = new Map();
-const ALLOWED = new Set(['validate', 'render', 'run', 'doctor', 'generate', 'platform', 'login', 'session', 'snapshot', 'locate', 'try-step', 'export', 'import']);
+const ALLOWED = new Set(['validate', 'render', 'run', 'doctor', 'generate', 'platform', 'login', 'session', 'snapshot', 'locate', 'try-step', 'export', 'import', 'suggest-fix']);
 // import only reads files the UI saved itself (POST /api/upload-export), each in its own folder under out/.imports/
 const importsDir = path.join(outDir, '.imports');
 function startJob(args) {

@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CLASSES, classify, SCHEMA_REPORT } from './failures.mjs';
 import { log, run } from './util.mjs';
+import { review as reviewOf } from './review.mjs';
 
 /** Resolves to fallback if p takes longer than ms (pages stuck mid-navigation never answer evaluate()). */
 const within = (p, ms, fallback) => Promise.race([Promise.resolve(p).catch(() => fallback), new Promise(r => setTimeout(() => r(fallback), ms))]);
@@ -62,7 +63,7 @@ function write(file, content, secrets) {
 
 // ---- Report ------------------------------------------------------------------------------------------------------
 
-function criteriaOf(def, steps) {
+export function criteriaOf(def, steps) {
   const storyCriteria = def.story?.acceptanceCriteria ?? [];
   const scenes = def.raw?.scenes ?? [];
   const ids = new Set([...storyCriteria.map((_, i) => String(i + 1)), ...steps.flatMap(s => s.criteria ?? [])]);
@@ -70,7 +71,7 @@ function criteriaOf(def, steps) {
   const planned = id => scenes.reduce((n, s) => n + (s.steps ?? []).filter(st => 'verify' in st && [st.criterion ?? s.criteria ?? []].flat().map(String).includes(id)).length, 0);
   return [...ids].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map(id => {
     const checks = steps.filter(s => s.kind === 'check' && s.criteria?.includes(id));
-    const status = checks.some(c => !c.ok) ? 'NOT MET' : checks.length ? (checks.length < planned(id) ? 'met so far' : 'met') : planned(id) ? 'not run' : 'not checked';
+    const status = checks.some(c => !c.ok && !c.knownIssue) ? 'NOT MET' : checks.some(c => !c.ok) ? 'known issue' : checks.length ? (checks.length < planned(id) ? 'met so far' : 'met') : planned(id) ? 'not run' : 'not checked';
     return { id, text: storyCriteria[Number(id) - 1] ?? '', status, checks: checks.length };
   });
 }
@@ -111,11 +112,22 @@ function lead(report, entry, causes) {
   ];
 }
 
+/** report.md "Review": the verdict, evidence per criterion and the open findings. */
+function reviewLines(report, esc) {
+  const r = report.review;
+  if (!r) return [];
+  return ['## Review', '', `**${r.label}**${r.open ? ` · ${r.open} finding(s) to decide` : ''}`, '',
+    ...(r.evidence.length ? ['| criterion | evidence | why |', '|---|---|---|', ...r.evidence.map(e => `| ${esc(e.id)} | ${e.strength} | ${esc(e.reasons.join('; '))} |`), ''] : []),
+    ...r.findings.map(f => `- ${f.decision ? `[${f.decision.decision}${f.decision.note ? `: ${esc(f.decision.note)}` : ''}]` : '[open]'} ${esc(f.title)}${f.detail ? `: ${esc(String(f.detail).slice(0, 160))}` : ''}`),
+    ...(r.findings.length ? [''] : [])];
+}
+
 function markdown(report, entry, causes) {
   const esc = s => String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
   return [
     `# ${report.story ? `${report.story} · ` : ''}${report.tour}: ${report.result}`, '',
     ...lead(report, entry, causes), '',
+    ...reviewLines(report, esc),
     ...(entry ? ['## Failing step', '',
       `- ${entry.scene} step ${entry.step}: \`${entry.action}\` ${esc(JSON.stringify(entry.spec?.[entry.action] ?? ''))} (${entry.kind})`,
       `- Raw Playwright error: \`${esc(entry.error)}\``,
@@ -192,6 +204,8 @@ export async function finalize({ outDir, def = {}, steps = [], tour = null, erro
     workarounds: tour?.workarounds?.firings ?? [], workaroundRules: tour?.workarounds?.summary() ?? [],
     bundle: cls === 'ok' ? null : path.join(outDir, 'triage'),
   };
+  // Evidence per criterion, findings and the story's decisions about them (src/review.mjs).
+  report.review = reviewOf({ raw: def.raw, steps, criteria: report.criteria, firings: report.workarounds, mocks: report.mocks, passed: cls === 'ok', complete });
   const sec = secretValues(secrets);
   write(path.join(outDir, 'report.json'), report, sec);
   write(path.join(outDir, 'report.md'), markdown({ ...report, bundle: null }, entry, causes), sec);

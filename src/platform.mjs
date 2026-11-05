@@ -35,7 +35,7 @@ export class PlatformError extends Error {}
 
 /** Keys that belong to the platform; a platform tour may not set them. */
 export const PLATFORM_KEYS = ['baseUrl', 'environments', 'launch', 'attach', 'login', 'ready', 'errors', 'appErrors', 'ignore', 'mask',
-  'ignoreHTTPSErrors', 'startPath', 'discover', 'target', 'workarounds'];
+  'ignoreHTTPSErrors', 'startPath', 'discover', 'target'];
 
 /** Where platforms live: AFT_PLATFORMS, else the nearest platforms/ above `from`, else the tool's own. */
 export function platformsDir(toolRoot, from) {
@@ -161,6 +161,14 @@ function fragmentFile(dirs, name) {
  * marked with "from": "<fragment>"; code fragments become { "code": file, "with": args }. { "code": "x.mjs" } steps
  * are resolved to a file in the same folders. `dirs`: the platform's fragments/, then the tour's own folder.
  */
+/**
+ * A scene's steps for a run: expanded, each remembering its place in the script ("scriptStep", 1-based; a fragment's
+ * steps all point at the step that called it), so reports can link a step back to the line a person edits.
+ */
+export function expandSceneSteps(steps = [], opts) {
+  return steps.flatMap((step, i) => expandSteps([step], opts).map(s => ({ ...s, scriptStep: i + 1 })));
+}
+
 export function expandSteps(steps = [], { dirs, data = {}, stack = [] } = {}) {
   const out = [];
   for (const step of steps) {

@@ -298,6 +298,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -411,6 +430,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -486,6 +524,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
@@ -563,6 +620,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -639,6 +715,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -714,6 +809,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
@@ -798,6 +912,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
@@ -896,6 +1029,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -973,6 +1125,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -1048,6 +1219,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
@@ -1129,6 +1319,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -1205,6 +1414,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -1280,6 +1508,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
@@ -1387,6 +1634,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -1479,6 +1745,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -1559,6 +1844,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
@@ -1643,6 +1947,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
@@ -1729,6 +2052,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -1800,6 +2142,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "type": "string",
@@ -1946,6 +2307,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -2052,6 +2432,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -2137,6 +2536,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -2221,6 +2639,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
@@ -2309,6 +2746,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -2388,6 +2844,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
@@ -2472,6 +2947,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
@@ -2572,6 +3066,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -2652,6 +3165,25 @@
           "type": "string",
           "description": "A note for people; ignored."
         },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
+        },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",
           "type": "string"
@@ -2731,6 +3263,25 @@
         "comment": {
           "type": "string",
           "description": "A note for people; ignored."
+        },
+        "knownIssue": {
+          "type": "object",
+          "description": "A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on (\"passed with known issues\"); when it passes, the run says the issue looks fixed.",
+          "properties": {
+            "note": {
+              "type": "string",
+              "description": "What the issue is."
+            },
+            "ticket": {
+              "type": "string",
+              "description": "Where it is tracked."
+            },
+            "since": {
+              "type": "string",
+              "description": "When it was decided (ISO date)."
+            }
+          },
+          "additionalProperties": false
         },
         "waitForResponse": {
           "description": "Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can't be missed.",

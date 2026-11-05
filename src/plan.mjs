@@ -193,7 +193,7 @@ function inventoryFor(discovery) {
   }));
 }
 
-function claude({ system, input, schema, cwd, model }) {
+export function claude({ system, input, schema, cwd, model }) {
   return new Promise((resolve, reject) => {
     const args = ['-p', '--output-format', 'json', '--tools', '', '--json-schema', JSON.stringify(schema), '--system-prompt', system];
     if (model) args.push('--model', model);

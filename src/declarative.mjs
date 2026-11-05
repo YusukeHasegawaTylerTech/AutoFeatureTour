@@ -44,7 +44,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { authFile, saveLogin } from './auth.mjs';
 import { assertValid } from './schema.mjs';
-import { checkTour, expandSteps, loadFixtures, loadMocks, loadPlatform, PlatformError, platformAuthFile, platformConfig } from './platform.mjs';
+import { checkTour, expandSceneSteps, expandSteps, loadFixtures, loadMocks, loadPlatform, PlatformError, platformAuthFile, platformConfig } from './platform.mjs';
 import { Workarounds, workaroundProblems } from './workarounds.mjs';
 import { probe, startProcess, stopProcess, waitForHttp } from './recorder.mjs';
 import { Failure } from './failures.mjs';
@@ -148,7 +148,7 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
     const cfg = resolveConfig(raw, { env, baseUrl });
     const dirs = [path.join(dir, 'fragments'), dir];
     wrap(() => {
-      cfg.scenes = (cfg.scenes ?? []).map(s => ({ ...s, steps: expandSteps(s.steps, { dirs }) }));
+      cfg.scenes = (cfg.scenes ?? []).map(s => ({ ...s, steps: expandSceneSteps(s.steps, { dirs }) }));
       if (cfg.login?.steps) cfg.login = { ...cfg.login, steps: expandSteps(cfg.login.steps, { dirs }) };
     });
     wrap(() => finishSteps(cfg, file, [dir]));
@@ -172,14 +172,29 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
       // Mock sets first (they must be in place before anything loads), then the fixtures' own steps.
       fixtureSteps: [...loadMocks(p, raw.mocks), ...expandSteps(fx.steps, { dirs, data })],
       data,
-      scenes: (raw.scenes ?? []).map(s => ({ ...s, steps: expandSteps(s.steps, { dirs, data }) })),
+      scenes: (raw.scenes ?? []).map(s => ({ ...s, steps: expandSceneSteps(s.steps, { dirs, data }) })),
       ...(base.login ? { login: { ...base.login, steps: expandSteps(base.login.steps, { dirs, data }) } } : {}),
     };
+    // Known issues: the platform's and environment's, then the story's own (same name refines one; source "story").
+    cfg.workarounds = storyWorkarounds(base.workarounds, raw.workarounds);
+    const problems = workaroundProblems(cfg.workarounds);
+    if (problems.length) throw new ConfigError(`${file}:\n  ${problems.join('\n  ')}`);
+    if (!cfg.workarounds.length) delete cfg.workarounds;
     if (process.env.BASE_URL) cfg.baseUrl = process.env.BASE_URL;
     if (baseUrl) cfg.baseUrl = baseUrl;
     finishSteps(cfg, file, [dir, path.join(p.dir, 'fixtures')]);
     return { cfg, env: envName, platform: p, authFile: r => platformAuthFile(toolRoot, p.name, envName, r ?? cfg.login?.role) };
   });
+}
+
+/** The story's workarounds over the platform's (by name, like an environment's; "off": true turns one off for it). */
+function storyWorkarounds(base = [], story = []) {
+  const out = [...base];
+  for (const r of story) {
+    const i = out.findIndex(x => x.name === r.name);
+    if (i >= 0) out[i] = { ...out[i], ...r, source: 'story' }; else out.push({ ...r, source: 'story' });
+  }
+  return out.filter(r => !r.off);
 }
 
 export function readTourJson(file) {

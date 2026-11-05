@@ -24,6 +24,12 @@ It opens the browser with a one-time token in the URL (kept as a cookie). The se
   in `out/.imports/<stamp>-<id>/`; `import` only reads files from there.
 - **Sign-in details**: username/password fields write the platform's `{env:…}` names into the checkout's `.env`
   (git-ignored). Values are never sent back to the page.
+- **Review** (on a run's page, above the storyboard): the verdict (passed · passed with known issues · needs review ·
+  failed · failed: app issue), evidence per criterion with the reasons, and every finding with buttons: ✏️ FIX THE
+  SCRIPT, ✨ AI FIX (`aft suggest-fix`: a proposed step or workaround, shown before/after; USE or DISCARD), 🩹 REAL
+  ISSUE: WORK AROUND IT FOR NOW (a story workaround) or EXPECT IT TO FAIL FOR NOW (a check's `knownIssue`), 🐞 REAL
+  ISSUE: LEAVE IT FAILING, ✔ GOOD ENOUGH / EXPECTED HERE, ↩ UNDO. Decisions are written into the tour that ran
+  (`review.decisions`); the platform is never edited from here.
 - **Runs**: every `out/<name>/<run>/run.json`; a run shows a **Scenes** storyboard (per scene: its still, title,
   narration, "open in the app ↗" for its URL, every step with ✔/✘, errors and "did you mean", ✏️ to that step in the
   editor; validation.md stays below, collapsed) and the video with captions, or the failure: summary, first
@@ -38,5 +44,5 @@ It opens the browser with a one-time token in the URL (kept as a cookie). The se
 - **Jobs**: every command the UI started, with its live log, a Stop (Ctrl+C) button and the `--json` result.
 
 The UI never imports the engine: it runs `aft … --json` (only validate, render, run, doctor, generate, platform,
-login, session, snapshot, locate, try-step) and reads and writes files. It writes only `.env` (sign-in details, only names the platform references) and files under `platforms/<name>/`
+login, session, snapshot, locate, try-step, export, import, suggest-fix) and reads and writes files. It writes only `.env` (sign-in details, only names the platform references) and files under `platforms/<name>/`
 (not dotfiles, auth state or node_modules) `out/**/tour.json` and `out/.imports/`.

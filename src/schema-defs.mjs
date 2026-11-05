@@ -70,6 +70,8 @@ const STEP_COMMON = {
   retries: num('Rule-based retries when an action times out or its target is not there yet (default: the tour\'s "retries", 1). Checks are never retried.', { minimum: 0 }),
   criterion: { description: 'The acceptance criterion this check covers (e.g. 2 or "AC2"); defaults to the scene\'s "criteria".', anyOf: [{ type: 'number' }, { type: 'string' }] },
   comment: str('A note for people; ignored.'),
+  knownIssue: obj('A real app issue makes this step fail, for now (from the review). It still runs: a failure is reported as the known issue and the run carries on ("passed with known issues"); when it passes, the run says the issue looks fixed.', {
+    note: str('What the issue is.'), ticket: str('Where it is tracked.'), since: str('When it was decided (ISO date).') }),
   waitForResponse: { description: 'Also wait for a network response whose URL contains this (or matches /regex/), started before the action so it can\'t be missed.', type: 'string' },
   status: num('With waitForResponse: the HTTP status the response must have; any other status is an APP failure.'),
   method: str('With waitForResponse (or mock): only requests with this HTTP method.'),
@@ -235,7 +237,9 @@ const workaround = obj('A known app or environment issue: what it looks like, wh
   times: num('At most this many firings per run; after that it is a normal error again.', { minimum: 1 }),
   noWaitAfter: bool('After its steps, do not wait for the UI to go.'),
   scoped: bool('false: its steps search the whole page, not just inside the matched element.'),
-  off: bool('In an environment: turn the platform\'s rule of this name off there.'),
+  off: bool('In an environment or a story: turn the platform\'s rule of this name off there.'),
+  issue: obj('In a story: this works around a real app issue, for now. A passing run is then "passed with known issues", never plain green; a run where it no longer fires says the issue may be fixed.', {
+    note: str('What the issue is.'), ticket: str('Where it is tracked (e.g. RMS-1234).'), since: str('When it was decided (ISO date).') }),
 }, { required: ['name'] });
 const workarounds = { type: 'array', items: workaround, description: 'Known issues (see the workaround definition). Platform rules apply everywhere; environments refine them by name.' };
 const hooks = obj('Test data, off camera: setup before the browser starts, teardown after it closes (teardown runs whenever setup ran).', { setup: { type: 'array', items: hook }, teardown: { type: 'array', items: hook } });
@@ -271,7 +275,17 @@ const story = obj('The user story the tour verifies.', {
 const PLATFORM_ONLY = { baseUrl: environment.properties.baseUrl, environments: { type: 'object', additionalProperties: environment, description: 'Stand-alone tours only.' },
   launch: environment.properties.launch, login: { description: 'Stand-alone tours only: { "role", "steps", "signedIn", "checkPath", "maxAgeMinutes" }.', type: 'object' },
   ready, errors, appErrors, mask, ignoreHTTPSErrors: bool('Stand-alone tours only.'), startPath: str('Stand-alone tours only.'), target: str('Stand-alone tours only: auth folder name.'),
-  discover: { type: 'object', description: 'Stand-alone tours only.' }, workarounds: { ...workarounds, description: 'Stand-alone tours only.' } };
+  discover: { type: 'object', description: 'Stand-alone tours only.' } };
+
+const decision = obj('A decision about one finding of a run of this story (made in the review, or by hand).', {
+  finding: str('The finding\'s id (report.json / validation.json review.findings[].id).'),
+  decision: { enum: ['script', 'workaround', 'app-issue', 'accept'], description: 'script: the script is wrong (fix the step); workaround: a real issue, worked around for now (with a story workaround); app-issue: a real app issue, the failure stands; accept: expected or good enough (weak evidence, a known issue that is fine here).' },
+  note: str('Why.'), ticket: str('Where it is tracked.'), at: str('When (ISO date).'), by: str('Who proposed it, when not the person ("ai": an accepted AI fix).'),
+  workaround: str('The story workaround this decision added (undoing the decision removes it).'), knownIssue: bool('This decision marked the step "knownIssue" (undoing it removes that).'),
+}, { required: ['finding', 'decision'] });
+const review = obj('The review of this story\'s runs: decisions about findings, carried over to every later run (they change how a result is read, never how the run executes).', {
+  decisions: { type: 'array', items: decision, description: 'One per finding.' },
+});
 
 export const SCHEMAS = {
   common,
@@ -291,6 +305,8 @@ export const SCHEMAS = {
       comment: str('A note for people.'), style: str('Generation hint (verification, demo, training); the engine ignores it.'),
       generatedBy: str('Which planner wrote it.'), plannedAt: str('When it was generated.'), draft: bool('Generated with gaps; recording refuses unless --allow-draft.'),
       needs: { type: 'array', items: { type: 'string' }, description: 'What a draft still needs.' },
+      workarounds: { ...workarounds, description: 'Known issues for this story only, after the platform\'s and environment\'s rules (the same name refines one, "off": true turns it off for this story). Mark a real app issue worked around for now with "issue".' },
+      review,
       ...PLATFORM_ONLY,
     },
   }),

@@ -596,7 +596,7 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
     const covers = kind === 'check' || a === 'code' ? [step.criterion ?? criteria].flat().filter(c => c !== undefined && c !== '').map(String) : [];
     const started = Date.now();
     const entry = { scene, step: index, action: a, kind, ...(covers.length && kind === 'check' ? { criteria: covers } : {}), spec: shown(step),
-      ...(step.from ? { from: step.from } : {}) };
+      ...(step.from ? { from: step.from } : {}), ...(step.scriptStep ? { scriptStep: step.scriptStep } : {}), ...(step.knownIssue ? { knownIssue: step.knownIssue } : {}) };
     const warnings = [];
     // Attribution: browser errors and failing requests from now on belong to this step.
     t.stepKey = `${scene ?? 'setup'}#${index}`;
@@ -637,7 +637,9 @@ export async function runSteps(t, steps, { baseUrl, onError = 'fail', unpaced = 
       const hint = suggestions.length ? ` (did you mean ${suggestions.map(x => JSON.stringify(x)).join(', ')}?)` : '';
       // collect (dry run): report everything and carry on. Otherwise a failed "verify" always stops the run (it's an
       // acceptance check) unless that step is marked optional.
-      if (onError === 'collect' || step.optional || (onError === 'skip' && a !== 'verify'))
+      // A step marked as a known app issue fails as expected: reported, and the run carries on.
+      if (step.knownIssue && onError !== 'collect') log(`${scene ?? 'setup'} step ${index}: known app issue${step.knownIssue.ticket ? ` ${step.knownIssue.ticket}` : ''}, failed as expected: ${message}`);
+      else if (onError === 'collect' || step.optional || (onError === 'skip' && a !== 'verify'))
         log(`${scene ?? 'setup'} step ${index} ${onError === 'collect' ? 'FAILED' : 'skipped'}: ${message}${hint}`);
       else throw Object.assign(new StepError(`${failure === 'criterion' ? `CRITERION${entry.criteria?.length ? ` ${entry.criteria.join(', ')}` : ''} not met` : failure === 'app' ? 'APP error' : 'SCRIPT failure'}: ${scene ?? 'setup'} step ${index}${step.from ? ` (fragment ${step.from})` : ''} ${JSON.stringify(shown(step))}: ${message}${hint}`), { failure, entry });
     }
