@@ -46,6 +46,7 @@ aft run      my.tour.json --target qa                                       # an
 aft run      my.tour.json --base-url http://localhost:3000/                 # a one-off URL (or BASE_URL=...)
 aft run      my.tour.json --speech silent                        # headless/CI: silent audio, captions carry the narration
 aft all      --story story.md --platform todomvc --llm claude                # story → script → dry run → video
+aft batch    platforms/todomvc/tours/ --reset --speech silent                # several tours in order, one reset first
 aft ui                                                                       # the local web UI (ui/README.md); Ctrl+C stops it
 ```
 
@@ -55,7 +56,7 @@ Add `--json` to any command for one JSON result on stdout (see "Agent primitives
 Run folder contents: `tour.mp4` (the video), `tour.vtt` (captions), `recording.webm` (raw browser recording),
 `clips/` (per scene), `scene-NN.wav` (narration), `timings.json` (scene windows in the recording), `screens/`
 (a still per scene, discovery pages), `trace.zip` (Playwright trace), `tour.json` / `script.md` (generated
-scripts), `validation.md`, `discovery.json`, `run.json` (command, args, status; a dry run with blocking steps is `failed`), `ledger.json` (what was set up and
+scripts), `validation.md`, `notes.md` (the platform's notes as they were when the run started, if it has any), `discovery.json`, `run.json` (command, args, status; a dry run with blocking steps is `failed`), `ledger.json` (what was set up and
 undone), `artifacts.json` + `artifacts/` (what the run pinned). On failure: `screens/failure.png`,
 `trace-failed.zip`, `recording-failed.webm`. `out/<name>/latest.json` points at the newest successful run.
 
@@ -103,6 +104,7 @@ pages that never settled, app errors that didn't fail the step) and every step. 
   console.json  network.json  every console error / failed request, with the step that was running ("stepKey")
   trace.zip                 Playwright trace (full network traffic, cookies, DOM: sensitive; "trace": false turns it off)
   PROMPT.md                 a brief for any AI assistant, about triaging the run
+  notes.md                  the platform's notes at the start of the run (PROMPT.md includes them)
 ```
 
 **App errors policy** (per target): `"appErrors": { "network": "fail"|"warn", "pageErrors": "fail"|"warn",
@@ -312,6 +314,9 @@ platforms/<name>/
   fragments/          reusable steps: <name>.json { "params": {...}, "steps": [...] } or <name>.mjs (a code step)
   fixtures/           test data: <name>.json { "data": {...}, "setup": [hooks], "teardown": [hooks], "steps": [...] }
   mocks/              opt-in canned responses: <name>.json { "mocks": [mock steps] }
+  notes/              what was learned about the app: <name>.md (optional frontmatter "schema: aft-platform-notes/1");
+                      findings are "### <ID> · <title>" + "- area/type/status/seen/evidence/suggested: …" lines;
+                      notes/imported/<platform>/ holds notes that came with imported tours
   requirements.mjs    extra `aft doctor --platform <name>` checks       README.md   what it is, data rules
   tours/              its tours; smoke.tour.json is what `aft platform check` runs
 ```
@@ -390,7 +395,16 @@ automatically.
 Tag what a tour creates, so parallel runs don't collide and `aft cleanup --tag aft-1105` finds them. `"shared": true` on
 an environment (QA): `validate` and runs warn about fixture items, fixture steps or pins that create data without
 `{run.tag}` (mark lookups `"readOnly"`). `"reset": [hooks]` on a local environment restores a known state. It runs with
-`aft reset --platform p [--target env]`, or `--reset` on run/validate, and is refused on a shared environment.
+`aft reset --platform p [--target env]`, `--reset` on run/validate, or once at the start of a batch, and is refused on a shared environment.
+
+**Batches.** `aft batch <tour.json | folder | glob>... [--target env] [--reset] [--validate-only] [--stop-on-fail]` runs
+several tours in order, each through the normal `aft run` (or `aft validate` with `--validate-only`) in its own run
+folder; other flags (`--speech`, `--no-trim`…) are passed on. With `--reset`, every tour must be on one platform and
+environment (else exit 1), and the reset runs once before the first tour. The batch writes
+`out/batch/<YYYYMMDD-HHMMSS>-<id>/batch.json` (schema `aft-batch/1`: each tour's run folder, exit code, class, verdict
+and status passed | failed | interrupted | skipped) and `batch.md`. Exit code: 0 if every tour passed, else the first
+failure's. `--stop-on-fail` skips the rest after a failure; Ctrl+C stops the current tour (exit 130) and marks the rest
+skipped.
 
 ### Lifecycle
 
@@ -447,11 +461,18 @@ Nested documents have their own `schema`: `aft-snapshot/1`, `aft-locate/1`, `aft
 | `aft snapshot [--url <path>] [--screenshot]` | `{ url, title, aria, text }`: the ARIA tree is the names steps can target |
 | `aft locate "<target>"` | `{ resolved, strategy, uses, ambiguous, matches[], strategies[], alternatives[] }`: what a step with this target would act on, without acting |
 | `aft try-step '<step or [steps]>' [--url <path>]` | performs them live (fragments and code steps too) and returns each step's report entry, network/console errors during them and the ARIA tree after; exit code = the class |
+| `aft session wait [<call id>] [--session <name>] [--timeout <s>]` | waits for a session (or stage) call the CLI stopped waiting for, by id (none: the running one, else the last finished) and prints that call's own result document and exit code/class; `--timeout` running out: exit 1, `data.running: true` |
 
 They use the running session (`--session <name>`, where the name is `<platform>-<env>-<role or anon>` and is in `session start`'s output, or the only one for `--platform`); without one they open a one-shot
 browser for that call (slower: start, sign in, close). A session is one page: state carries over between calls, and
 calls run one at a time: a second call while one is running is refused (busy) rather than interleaved. try-step and
 snapshot handle known issues (workarounds) as a run does and list them under `workarounds`.
+
+Every snapshot, locate and try-step call on a session has a call id (`callId` in its result). A long call outlives the
+CLI's wait (a long try-step batch: "fetch failed", or `AFT_CALL_TIMEOUT=<s>`) without stopping: the CLI exits 1 with
+`data: { callId, running: true, hint }`, and `aft session wait <callId> --session <name> --json` returns the call's
+normal result when it finishes (the last 10 results are kept, so this works after it finished too). A busy refusal names
+the running call. Stages answer the same way (`--session stage-<tour>-<env>`).
 
 The loop, for writing or fixing a tour:
 
@@ -516,7 +537,8 @@ aft stage end <name> [--keep] --json
    `examples/stories/`.
 2. `aft generate --story story.md --platform <name> [--target <env>] --llm claude [--style verification|demo|training]`
    (the tour it writes names the platform). Without
-   `--llm` you get a per-criterion draft to fill in by hand. The style is a generation hint only.
+   `--llm` you get a per-criterion draft to fill in by hand. The style is a generation hint only. With a platform, `--llm claude` also sends the
+   platform's notes (accounts, setup recipes, findings) as context.
 3. Review and edit the run folder's `tour.json`:
    - one scene per acceptance criterion (`"criteria": [n]`), narration saying which criterion it shows;
    - targets as visible names: `{ "role": "button", "name": "Run report" }`, `{ "label": "Hate Bias Status" }`,
@@ -587,6 +609,11 @@ stays for its fixtures to fill. Import never overwrites a tour unless `--force`.
 passed on dev, the report says what differs: a SCRIPT failure is usually a label that differs between versions
 (fix the step, or match it more loosely); CRITERION or APP is what the deployed version does, so report it.
 
+The export also carries the source platform's notes (`notes`: each file with its frontmatter, findings and text; notes
+it had itself imported are left out). Import writes them to `platforms/<target>/notes/imported/<source-platform>/`, never
+over the target's own notes (an earlier imported copy is kept unless `--force`), and lists the finding ids the target's
+own notes don't have yet.
+
 ## Rules
 
 - **Synthetic or test data only.** Local or dedicated QA/test environments are fine; never production or real
@@ -595,7 +622,7 @@ passed on dev, the report says what differs: a SCRIPT failure is usually a label
   `platforms/<name>/`. Tours hold no URLs, credentials, launch commands or app-wide selectors.
 - **Never overwrite a previous run.** Use `newRunDir`; no fixed output paths, no shared temp files, free ports.
 - **Rendering never depends on an LLM.** LLMs may write scripts; scripts are files a person can review.
-- `--llm claude` sends the discovery inventory and story text to Claude; with `--converse` it also sends the live
+- `--llm claude` sends the discovery inventory, story text and the platform's notes to Claude; with `--converse` it also sends the live
   page's ARIA tree, text and errors from the probes (masked and redacted as reports are). Only use it where that's allowed.
 - Never commit `out/`, `auth/`, `.sessions/` or `.env`.
 
@@ -620,6 +647,7 @@ passed on dev, the report says what differs: a SCRIPT failure is usually a label
 | `didn't come up (… is still starting …)` | a slow service (a dev server compiling): raise the launch's `timeoutSeconds` |
 | `looks like a path Git Bash rewrote` | `export MSYS_NO_PATHCONV=1`, or run from PowerShell |
 | `session … is busy` | another call is still running on that session; wait, or start a second one with `--session <name>` |
+| `stopped waiting for the try-step call c-…` | the call is still running on the session: `aft session wait <id> --session <name>` |
 | scene overruns its narration | a step waited for its timeout; mark it `"optional": true` (3 s limit) or fix the target |
 
 Reading a trace: `npx playwright show-trace out/<name>/<run>/trace-failed.zip` shows every action with DOM
@@ -635,4 +663,4 @@ try-step · `stage.mjs` / `stage-daemon.mjs` do / redo until here · `cli-app.mj
 `narrate-timing.mjs` scene timing · `render.mjs` ffmpeg · `tts.mjs` speech · `auth.mjs` saved logins ·
 `doctor.mjs` checks · `workarounds.mjs` known issues (merge, checkpoint, matching) · `review.mjs` evidence, findings,
 decisions, verdict · `fix.mjs` AI fix proposals (`suggest-fix`) · `ledger.mjs` ledger.json, run tags · `fixtures.mjs`
-hooks, fixture items, browser fixtures, artifacts, `aft cleanup` / `aft reset`. Tests: `npm test`.
+hooks, fixture items, browser fixtures, artifacts, `aft cleanup` / `aft reset` · `batch.mjs` `aft batch` · `notes.mjs` platform notes · `daemon-calls.mjs` call ids, kept results. Tests: `npm test`.
