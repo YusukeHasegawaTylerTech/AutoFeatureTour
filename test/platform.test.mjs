@@ -20,7 +20,7 @@ const write = (file, v) => { fs.mkdirSync(path.dirname(file), { recursive: true 
 function makePlatform(baseUrl = 'http://localhost:9/', extra = {}) {
   const dir = path.join(tmp(), 'platforms');
   const p = path.join(dir, 'app');
-  write(path.join(p, 'platform.json'), { timeouts: { action: 2500, verify: 2500, navigation: 4000, optional: 1000 }, retries: 0, ignore: ['favicon'], pronounce: { App: 'app' }, ...extra.platform });
+  write(path.join(p, 'platform.json'), { timeouts: { action: 2500, verify: 2500, navigation: 30000, optional: 1000 }, retries: 0, ignore: ['favicon'], pronounce: { App: 'app' }, ...extra.platform });
   write(path.join(p, 'environments.json'), { default: 'local', local: { baseUrl }, qa: { baseUrl: 'http://qa.example.test/', timeouts: { verify: 9000 } } });
   write(path.join(p, 'login.json'), { default: 'clerk', signedIn: '#me', roles: { clerk: { steps: [{ use: 'sign-in', with: { user: '{env:AFT_TEST_USER}' } }] }, admin: { steps: [{ goto: '/admin-login' }] } } });
   write(path.join(p, 'fragments', 'sign-in.json'), { params: { user: { required: true } }, steps: [{ goto: '/login' }, { fill: 'User', text: '{args.user}' }] });

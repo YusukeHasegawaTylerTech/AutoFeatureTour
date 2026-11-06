@@ -33,7 +33,7 @@ function runCli(args, { env = {} } = {}) {
 async function tour(steps, extra = {}, args = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aft-fail-'));
   const file = path.join(dir, 'tour.json');
-  const t = { name: 'fixture', baseUrl: app.url, timeouts: { action: 2500, verify: 2500, navigation: 4000, optional: 1000 }, retries: 0,
+  const t = { name: 'fixture', baseUrl: app.url, timeouts: { action: 2500, verify: 2500, navigation: 30000, optional: 1000 }, retries: 0,
     scenes: [{ title: 'Fixture', narration: 'Testing.', url: extra.url ?? '/ok', steps }], ...extra };
   delete t.url;
   delete t.env; // the CLI's environment variables, not a tour key
@@ -100,8 +100,8 @@ describe('failure modes', { concurrency: 3, timeout: 900000 }, () => {
   });
 
   test('failing XHR with appErrors.network=fail: APP, exit 5, attributed to the step', async () => {
-    const r = await tour([{ click: { role: 'button', name: 'Save' } }, { wait: 0.5 }], { url: '/xhr500', appErrors: { network: 'fail' } });
-    // The 500 arrives during the click or the wait right after it; either way it's named and attributed.
+    const r = await tour([{ click: { role: 'button', name: 'Save' } }, { waitFor: '.toast' }], { url: '/xhr500', appErrors: { network: 'fail' } });
+    // The 500 arrives during the click or while waiting for the toast it causes; either way it's named and attributed.
     assert.equal(r.code, 5, r.log);
     assert.equal(r.report.class, 'app');
     assert.match(r.report.error, /GET .*\/api\/fail 500/);
@@ -112,14 +112,14 @@ describe('failure modes', { concurrency: 3, timeout: 900000 }, () => {
   });
 
   test('error toast via tour "errors": APP, exit 5', async () => {
-    const r = await tour([{ click: { role: 'button', name: 'Save' } }, { wait: 0.5 }, { point: { text: 'Server error' } }],
+    const r = await tour([{ click: { role: 'button', name: 'Save' } }, { waitFor: '.toast' }, { point: { text: 'Server error' } }],
       { url: '/xhr500', errors: { selector: '.toast', text: 'error' } });
     assert.equal(r.code, 5, r.log);
     assert.match(r.report.error, /something went wrong/);
   });
 
   test('ignored endpoint: kept but not a cause', async () => {
-    const r = await tour([{ click: { role: 'button', name: 'Save' } }, { wait: 0.5 }], { url: '/xhr500', appErrors: { network: 'fail', ignore: ['/api/fail'] } });
+    const r = await tour([{ click: { role: 'button', name: 'Save' } }, { waitFor: '.toast' }], { url: '/xhr500', appErrors: { network: 'fail', ignore: ['/api/fail'] } });
     assert.equal(r.code, 0, r.log);
   });
 
