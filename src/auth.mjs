@@ -26,7 +26,7 @@ export async function saveLogin({ baseUrl, steps, file, manual = false, viewport
   try {
     const context = await browser.newContext({ viewport, ignoreHTTPSErrors });
     const page = await context.newPage();
-    await page.goto(baseUrl);
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: timeouts?.navigation ?? 60000 });
     if (manual) {
       log('Log in in the browser window (SSO, MFA…), then press Enter here.');
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
