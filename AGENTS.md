@@ -34,6 +34,8 @@ date, `npx playwright install chromium`, `npm link` with `-Link`, then `doctor`.
 | npm packages / Playwright Chromium | `npm ci`, `npx playwright install chromium` |
 | no SAPI voices (warn) | add a voice in Windows Settings > Speech, or run with `--speech silent` |
 | claude CLI (warn) | only for `--llm claude`; install Claude Code |
+| claude signed in (warn) | `claude auth login` (or run `claude` once); only for `--llm claude`, checked with `claude auth status` |
+| platforms | informational: the platforms found, or none yet (`platforms/` is git-ignored, so a fresh clone has none: `aft platform init <name>`) |
 | `<platform>: …` | that platform's own requirements; see `platforms/<name>/README.md` (`aft doctor --platform <name>` makes them required) |
 
 ## Running

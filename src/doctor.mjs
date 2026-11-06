@@ -45,10 +45,21 @@ export async function doctor({ toolRoot, platform: target, quiet = false } = {})
   }
   const claude = which('claude') && await version('claude');
   add('claude CLI (generate/plan --llm claude)', claude, claude ?? 'not on PATH', 'install Claude Code: https://claude.com/claude-code', false);
+  if (claude) {
+    // `claude auth status --json` prints { loggedIn, authMethod, … }; an older CLI without it, or bad output, reads as unknown.
+    let auth = null;
+    try { auth = JSON.parse(await run('claude', ['auth', 'status', '--json'], { capture: true })); } catch { /* unknown */ }
+    add('claude signed in', auth?.loggedIn,
+      auth ? (auth.loggedIn ? `via ${auth.authMethod ?? 'unknown method'}` : 'not signed in') : 'could not read `claude auth status`',
+      'claude auth login (or run `claude` once and sign in)', false);
+  }
 
   const targetsDir = platformsDir(toolRoot, process.cwd());
+  // Platforms are data, not a requirement: list what's there; none yet is fine.
+  const platforms = listPlatforms(targetsDir);
+  add('platforms', true, platforms.length ? platforms.join(', ') : `none yet: aft platform init <name> creates one`, '', false);
   if (target && !listPlatforms(targetsDir).includes(target)) add(`platform ${target}`, false, `not in ${targetsDir}`, `aft platform init ${target}`, true, target);
-  for (const app of listPlatforms(targetsDir)) {
+  for (const app of platforms) {
     const file = path.join(targetsDir, app, 'requirements.mjs');
     if (!fs.existsSync(file) || (target && target !== app)) continue;
     const strict = target === app;
