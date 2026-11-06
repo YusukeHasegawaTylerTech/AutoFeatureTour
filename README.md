@@ -29,6 +29,22 @@ aft doctor                    # what's installed, what's missing and how to fix 
 aft doctor --platform <name> # also that platform's own requirements (platforms/<name>/requirements.mjs)
 ```
 
+Open a new terminal after installing, so Node, ffmpeg and `aft` are on PATH. The installer stops with a message
+when winget is missing, a winget install fails, or `npm ci` / the Chromium download fails (usually a proxy or
+network problem); fix that and run it again. If it finishes but `doctor` reports a required item missing, the
+line says how to fix it.
+
+Doctor's advisory lines don't fail it:
+
+- **Speech: Windows SAPI**: no voice installed. Add one in Settings > Time & language > Speech, or run with
+  `--speech silent` (captions carry the narration).
+- **claude CLI** and **claude signed in**: only `--llm claude` needs them (`generate`, `all`, `--converse`,
+  `suggest-fix`). Install Claude Code, then `claude auth login`. Without them, `generate` writes a draft to
+  fill in by hand.
+- **platforms**: the platforms found. `platforms/` is git-ignored, so a fresh clone has none; create one with
+  `aft platform init <name> --base-url <url>` (see "Onboarding a platform" in AGENTS.md), then
+  `aft platform check <name>`.
+
 Without `npm link`, use `node src/cli.mjs` wherever this README says `aft`.
 
 ## Commands

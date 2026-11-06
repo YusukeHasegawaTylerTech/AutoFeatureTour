@@ -92,7 +92,7 @@ describe('agent primitives', { concurrency: 3, timeout: 600000 }, () => {
     const start = parsed(await aft(['session', 'start', '--base-url', app.url, '--session', name]));
     assert.equal(start.ok, true, JSON.stringify(start));
     try {
-      const slow = '[{"goto":"/ok"},{"wait":10},{"fill":"Name","text":"Di"},{"click":"Save"},{"verify":{"text":"Saved Di"}}]';
+      const slow = '[{"goto":"/ok"},{"wait":25},{"fill":"Name","text":"Di"},{"click":"Save"},{"verify":{"text":"Saved Di"}}]';
       const gaveUp = parsed(await aft(['try-step', slow, '--session', name], { AFT_CALL_TIMEOUT: '1' }));
       assert.equal(gaveUp.ok, false);
       assert.equal(gaveUp.exitCode, 1);

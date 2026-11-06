@@ -50,6 +50,15 @@ import { probe, startProcess, stopProcess, waitForHttp } from './recorder.mjs';
 import { Failure } from './failures.mjs';
 import { fillArtifacts, runSteps, settle, StopRun } from './steps.mjs';
 import { freePort } from './util.mjs';
+
+/** Opens a sign-in check page; a load timeout is an APP failure (as for a goto step), not a tool error. */
+async function openCheckPage(page, url, timeout, where) {
+  try { await page.goto(url, { timeout }); }
+  catch (e) {
+    if (/Timeout/i.test(e.message)) throw new Failure('app', `the app showed an error: page didn't load within ${timeout / 1000}s (${url}), ${where}`);
+    throw e;
+  }
+}
 import { earlierOpen, finishUndo, Ledger, recordArtifact, runHooks, setupBrowser, setupItems, sharedWarnings, undoInBrowser, writeArtifacts } from './fixtures.mjs';
 import { runTag, undoAll } from './ledger.mjs';
 
@@ -429,7 +438,7 @@ export async function accountSwitcher(cfg, cfg0, composed, { outDir, log, option
     const keep = [step.keepCookies ?? []].flat();
     const startAt = baseUrl + '/' + String(step.url ?? login.checkPath ?? cfg.startPath ?? '').replace(/^\//, '');
     const signedIn = async () => {
-      await t.page.goto(startAt, { timeout: timeouts.navigation ?? 30000 });
+      await openCheckPage(t.page, startAt, timeouts.navigation ?? 30000, `checking the sign-in for signInAs ${role}`);
       await settle(t.page, cfg.ready);
       return !login.signedIn || t.page.locator(login.signedIn).first().waitFor({ timeout: timeouts.waitFor ?? 15000 }).then(() => true, () => false);
     };
@@ -480,7 +489,7 @@ export function makeLogin(cfg, cfg0, composed, { outDir, log, options = {}, base
     async ensure(t, startOpts, firstUrl) {
       const startAt = baseUrl + '/' + String(cfg.login?.checkPath ?? cfg.startPath ?? firstUrl ?? '').replace(/^\//, '');
       const signedIn = async () => {
-        await t.page.goto(startAt, { timeout: cfg.timeouts?.navigation ?? 30000 });
+        await openCheckPage(t.page, startAt, cfg.timeouts?.navigation ?? 30000, 'checking the sign-in before the first scene');
         await settle(t.page, cfg.ready);
         if (!cfg.login?.signedIn) return true;
         return t.page.locator(cfg.login.signedIn).first().waitFor({ timeout: fresh ? cfg.ready?.timeout ?? 30000 : cfg.timeouts?.waitFor ?? 15000 }).then(() => true, () => false);
