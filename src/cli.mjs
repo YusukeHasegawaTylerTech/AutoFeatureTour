@@ -73,7 +73,7 @@
 // script isn't ready: unresolved/empty scenes) · 3 the app wasn't reachable · 4 CRITERION failure (a verify step
 // ran and its check failed) · 5 APP error (its error UI, an HTTP error or exception per the tour's "appErrors", or a
 // page that never loaded, during a step) · 6 LOGIN failure · 7 TOOLING failure (ffmpeg, voice, browser, disk) ·
-// 130 interrupted (Ctrl+C; the partial report and bundle are still written). A failed run writes no tour.mp4; it
+// 130 interrupted (Ctrl+C; the partial report and bundle are still written). A failed run writes no video; it
 // leaves report.json, report.md, triage/, screens/failure.png, trace-failed.zip and recording-failed.webm.
 // --fresh-login: sign in again even if a saved session exists (expired sessions are renewed automatically anyway).
 
@@ -108,7 +108,7 @@ import { criteriaOf, finalize, progress } from './triage.mjs';
 import { review as reviewOf } from './review.mjs';
 import { suggestFix } from './fix.mjs';
 import { defaultProvider, estimateSeconds, listVoices, resolveVoice, speak } from './tts.mjs';
-import { log, newRunDir, num, parseArgs, run, sleep } from './util.mjs';
+import { log, newRunDir, num, parseArgs, run, sleep, videoName } from './util.mjs';
 
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
@@ -652,7 +652,7 @@ async function withFindings(def, outDir, done, fn) {
   const note = r => { try { const f = writeFindings(def, outDir, r); if (f) log(`findings: ${f}`); } catch (e) { log(`findings: not written (${e.message})`); } };
   try {
     const r = await fn();
-    note({ status: r?.blocking ? 'failed' : done, ...(r?.video ? { video: 'tour.mp4', seconds: r.seconds } : {}), ...(r?.blocking ? { error: `${r.blocking} step(s) can't be resolved` } : {}) });
+    note({ status: r?.blocking ? 'failed' : done, ...(r?.video ? { video: path.basename(r.video), seconds: r.seconds } : {}), ...(r?.blocking ? { error: `${r.blocking} step(s) can't be resolved` } : {}) });
     return r;
   } catch (e) {
     note({ status: 'failed', class: classify(e), error: e.message.split('\n')[0].slice(0, 300) });
@@ -736,9 +736,9 @@ async function render(def, tourDir, outDir, args) {
     segments.push(seg.file);
     s.length = seg.length;
   }
-  const file = await concat(segments, outDir);
+  const file = await concat(segments, outDir, videoName(outDir));
   if (!args.noCaptions)
-    writeCaptions(filmed.map(s => ({ text: spokenText(s.narration), narrationSeconds: s.narrationSeconds, length: s.length, mocked: s.mocked, notes: s.notes })), path.join(outDir, 'tour.vtt'));
+    writeCaptions(filmed.map(s => ({ text: spokenText(s.narration), narrationSeconds: s.narrationSeconds, length: s.length, mocked: s.mocked, notes: s.notes })), path.join(outDir, videoName(outDir, 'vtt')));
   const seconds = await duration(file);
   console.log(`Done: ${file}  (${num(seconds)} s)`);
   return { video: file, seconds: +num(seconds) };

@@ -188,8 +188,8 @@ const views = {
         ${failedStep ? `<button data-cmd="run" data-extra="--headed --pause">Replay headed (pause at failure)</button>` : ''}
       </div>
       <div class="grid"><div>
-        ${has('tour.mp4') ? `<div class="card"><video controls preload="metadata" src="${fileUrl(id, 'tour.mp4')}">
-            ${has('tour.vtt') ? `<track default kind="captions" src="${fileUrl(id, 'tour.vtt')}">` : ''}</video>
+        ${d.video ? `<div class="card"><video controls preload="metadata" src="${fileUrl(id, d.video)}">
+            ${d.captions ? `<track default kind="captions" src="${fileUrl(id, d.captions)}">` : ''}</video>
             <div id="markers"></div></div>`
           : has('screens/failure.png') ? `<div class="card"><img class="shot" src="${fileUrl(id, 'screens/failure.png')}"></div>` : ''}
         ${r.status !== 'done' || rep ? `<div class="card summary"><h3>Summary</h3>
@@ -214,8 +214,8 @@ const views = {
     const fill = async (sel, f) => { const el = $app.querySelector(sel); if (el) el.textContent = await (await fetch(fileUrl(id, f))).text(); };
     fill('#val', 'validation.md');
     const video = $app.querySelector('video');
-    if (video && has('tour.vtt')) runTour(id, d, input).then(tour => mountMarkers($app.querySelector('#markers'), video,
-      { vttUrl: fileUrl(id, 'tour.vtt'), scenes: filmedScenes(d.files, tour) })).catch(() => {});
+    if (video && d.captions) runTour(id, d, input).then(tour => mountMarkers($app.querySelector('#markers'), video,
+      { vttUrl: fileUrl(id, d.captions), scenes: filmedScenes(d.files, tour) })).catch(() => {});
     mountReview($app.querySelector('#review'), { id, d, input, h, api, rel, fileUrl, onCheckAgain: p => startJob(['validate', p]) }).catch(e => console.error(e));
     storyboard(id, d, input).then(async html => {
       const el = $app.querySelector('#story');

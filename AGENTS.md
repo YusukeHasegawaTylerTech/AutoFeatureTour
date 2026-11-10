@@ -11,7 +11,7 @@ an editable script; the script is dry-run against the live app, then recorded wi
 narration, and post-processed into a video with captions.
 
 ```
-story ─generate─► tour.json + script.md ─validate─► all steps resolve ─run─► recording ─► tour.mp4 + tour.vtt
+story ─generate─► tour.json + script.md ─validate─► all steps resolve ─run─► recording ─► <name>-<run id>.mp4 + .vtt
 ```
 
 Every command writes to its own folder, `out/<story-or-tour>/<YYYYMMDD-HHMMSS>-<id>/`, and never touches another run.
@@ -57,7 +57,7 @@ start.cmd                                                                    # o
 Add `--json` to any command for one JSON result on stdout (see "Agent primitives"). Exit codes: 0 ok · 1 usage/config · 2 SCRIPT failure · 3 app unreachable · 4 CRITERION failure · 5 APP error (see
 "When a run fails"). Nothing prompts unless you ask (`login --manual`, `--headed --pause`).
 
-Run folder contents: `tour.mp4` (the video), `tour.vtt` (captions), `recording.webm` (raw browser recording),
+Run folder contents: `<name>-<run id>.mp4` (the video, named after the run folder, e.g. `RMS-4923-x-20261110-115734-qqsn.mp4`, so a copy still says which run made it; runs made before have `tour.mp4`), `<name>-<run id>.vtt` (captions, same name), `recording.webm` (raw browser recording),
 `clips/` (per scene), `scene-NN.wav` (narration), `timings.json` (scene windows in the recording), `screens/`
 (a still per scene, discovery pages), `trace.zip` (Playwright trace), `tour.json` / `script.md` (generated
 scripts), `validation.md`, `notes.md` (the platform's notes as they were when the run started, if it has any), `discovery.json`, `run.json` (command, args, status; a dry run with blocking steps is `failed`), `ledger.json` (what was set up and
@@ -90,7 +90,7 @@ reporting are deterministic (no LLM on the run path). Classes describe what was 
 
 | exit | class | observed |
 |---|---|---|
-| 0 | ok | every step and check passed; `tour.mp4` written |
+| 0 | ok | every step and check passed; the video written |
 | 1 | error | a usage or config problem, or an unexpected error in the tool |
 | 2 | SCRIPT | an action step couldn't be performed: target not found, covered by another element, disabled, or detached; or the script isn't ready (unresolved or empty scenes) |
 | 3 | UNREACHABLE | nothing answered at the app's URL |
@@ -105,7 +105,7 @@ Every run writes `report.json` (schema `aft-report/1`, written after each scene 
 failing request or browser error during that step, e.g. `GET /internal/DynamicReports/Modules 500`, kept apart from
 earlier unrelated ones), **look next**, **criteria so far**. Then the failing step, the warnings (ambiguous targets,
 pages that never settled, app errors that didn't fail the step) and every step. Actions that time out are retried
-(`"retries"`, default 1); checks never are. A failed run writes **no** `tour.mp4`. It keeps
+(`"retries"`, default 1); checks never are. A failed run writes **no** video. It keeps
 `recording-failed.webm`, `screens/failure.png`, `trace-failed.zip` and a **triage bundle**:
 
 ```

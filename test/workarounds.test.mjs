@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { trimPlan } from '../src/render.mjs';
 import { mergeWorkarounds, workaroundProblems } from '../src/workarounds.mjs';
 import { startFixture } from './fixture/server.mjs';
+import { findVideo } from '../src/util.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = path.join(root, 'src', 'cli.mjs');
@@ -147,7 +148,7 @@ describe('other run behaviours', { concurrency: 3, timeout: 900000 }, () => {
     assert.match(refused.log, /verification.*can't use "mock"/);
     const r = await tour([mock, { click: 'Save' }, { verify: { text: 'tcm 200' } }], { url: '/known?tcm=1', allowMocks: true, style: 'demo' });
     assert.equal(r.code, 0, r.log);
-    assert.match(fs.readFileSync(path.join(r.out, 'tour.vtt'), 'utf8'), /Simulated data/);
+    assert.match(fs.readFileSync(findVideo(r.out, 'vtt'), 'utf8'), /Simulated data/);
   });
 
   test('long waits are trimmed from the video and listed in timings.json; --no-trim keeps them', async () => {

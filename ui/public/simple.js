@@ -491,11 +491,11 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         ${edit ? `<div class="stage-bar" data-stage-at="setup">${stageButton({ setup: true })} ${stageButton({})}
           <span class="hint">get the app live, with this script's test data, to test by hand (EDIT has ▶ on every scene and step)</span></div><div id="stage-box"></div>` : ''}
         <div id="creds"></div>
-        ${lastVideo ? `<div class="group-title">Latest video</div><div class="card" style="max-width:900px"><video controls preload="metadata" src="${fileUrl(lastVideo.id, 'tour.mp4')}">
-          <track default kind="captions" src="${fileUrl(lastVideo.id, 'tour.vtt')}"></video><div id="markers"></div></div>` : ''}`;
+        ${lastVideo ? `<div class="group-title">Latest video</div><div class="card" style="max-width:900px"><video controls preload="metadata" src="${fileUrl(lastVideo.id, lastVideo.video ?? 'tour.mp4')}">
+          <track default kind="captions" src="${fileUrl(lastVideo.id, lastVideo.captions ?? 'tour.vtt')}"></video><div id="markers"></div></div>` : ''}`;
       if (lastVideo) api(`/api/run?id=${encodeURIComponent(lastVideo.id)}`).then(async rd => {
         let t = null; try { t = rd.files.some(f => f.path === 'tour.json') ? await (await fetch(fileUrl(lastVideo.id, 'tour.json'))).json() : await readTour(p); } catch {}
-        await mountMarkers($app.querySelector('#markers'), $app.querySelector('video'), { vttUrl: fileUrl(lastVideo.id, 'tour.vtt'), scenes: filmedScenes(rd.files, t) });
+        await mountMarkers($app.querySelector('#markers'), $app.querySelector('video'), { vttUrl: fileUrl(lastVideo.id, lastVideo.captions ?? 'tour.vtt'), scenes: filmedScenes(rd.files, t) });
       }).catch(() => {});
       let stageStop = null;
       if (edit) readTour(p).then(async t => { stageStop = await mountStage($app, $app.querySelector('#stage-box'), { ...(await stageOptions(platform, d, t)), source: p, tourFile: p }); }).catch(() => {});
@@ -577,7 +577,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       const lastVideo = runs.find(r => rel(r.input?.[0]) === p && r.command === 'run' && r.status === 'done');
       const filmedLength = {};   // scene number → seconds in the last video
       if (lastVideo) try {
-        const vtt = await (await fetch(fileUrl(lastVideo.id, 'tour.vtt'))).text();
+        const vtt = await (await fetch(fileUrl(lastVideo.id, lastVideo.captions ?? 'tour.vtt'))).text();
         const rd = await api(`/api/run?id=${encodeURIComponent(lastVideo.id)}`);
         const ids = filmedScenes(rd.files, tour).map(s => s.n);
         const starts = sceneStarts(vtt), end = rd.run?.seconds ?? null;

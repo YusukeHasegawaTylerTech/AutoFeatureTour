@@ -199,6 +199,14 @@ function pendingCleanup(platform) {
 
 // ---- runs ----
 const classOf = e => e ? (/^(SCRIPT|CRITERION|APP|LOGIN|TOOLING|UNREACHABLE|INTERRUPTED)/.exec(e)?.[1]?.toLowerCase() ?? 'error') : undefined;
+/** A run folder's video and captions file names: { video, captions } (each only when there is one). */
+function videoFiles(dir) {
+  const named = `${path.basename(path.dirname(dir))}-${path.basename(dir)}`;
+  const pick = ext => [`${named}.${ext}`, `tour.${ext}`].find(f => fs.existsSync(path.join(dir, f)));
+  const video = pick('mp4'), captions = pick('vtt');
+  return { ...(video ? { video } : {}), ...(captions ? { captions } : {}) };
+}
+
 function listRuns() {
   if (!isDir(outDir)) return [];
   const runs = [];
@@ -209,7 +217,9 @@ function listRuns() {
       const info = readJson(path.join(base, id, 'run.json'));
       if (!info) continue;
       const run = { id: `${name}/${id}`, name, command: info.command, status: info.status, startedAt: info.startedAt,
-        finishedAt: info.finishedAt, seconds: info.seconds, error: info.error, input: info.input, class: info.class ?? classOf(info.error) };
+        finishedAt: info.finishedAt, seconds: info.seconds, error: info.error, input: info.input, class: info.class ?? classOf(info.error),
+        // The video and its captions: <name>-<run id>.mp4 / .vtt (tour.mp4 / tour.vtt in runs made before).
+        ...videoFiles(path.join(base, id)) };
       // A dry run (validate) finishes "done" even when steps failed: the verdict is in validation.json.
       const v = info.command === 'validate' && info.status === 'done' ? readJson(path.join(base, id, 'validation.json')) : null;
       if (v?.blocking > 0) {
@@ -238,7 +248,7 @@ function runDetail(id) {
   } };
   walk(dir);
   return { id, run: readJson(path.join(dir, 'run.json')), report: readJson(path.join(dir, 'report.json')),
-    timings: readJson(path.join(dir, 'timings.json')), files,
+    timings: readJson(path.join(dir, 'timings.json')), files, ...videoFiles(dir),
     // What the run created and what it set up: artifacts (fields already masked) and each ledger item's outcome
     // (never the undo steps themselves, which can hold values).
     artifacts: readJson(path.join(dir, 'artifacts.json'))?.artifacts ?? [],

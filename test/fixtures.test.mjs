@@ -12,6 +12,7 @@ import { fillArtifacts } from '../src/steps.mjs';
 import { Ledger, parseAge, runTag, undoAll } from '../src/ledger.mjs';
 import { pinSuggestions } from '../src/review.mjs';
 import { startFixture } from './fixture/server.mjs';
+import { findVideo } from '../src/util.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'aft-fx-'));
@@ -241,7 +242,7 @@ describe('off camera', { concurrency: 1, timeout: 900000 }, () => {
     assert.ok(!fs.existsSync(path.join(r.runDir, 'clips', 'scene-01.mp4')), 'no clip for the off-camera scene');
     assert.ok(fs.existsSync(path.join(r.runDir, 'clips', 'scene-02.mp4')));
     assert.ok(!fs.existsSync(path.join(r.runDir, 'scene-01.wav')), 'no narration for it');
-    const vtt = fs.readFileSync(path.join(r.runDir, 'tour.vtt'), 'utf8');
+    const vtt = fs.readFileSync(findVideo(r.runDir, 'vtt'), 'utf8');
     assert.equal((vtt.match(/-->/g) ?? []).length, 1, vtt);
     assert.deepEqual(r.report.criteria.map(c => [c.id, c.status]), [['1', 'met'], ['2', 'met']]);
     assert.ok(r.report.steps.filter(s => s.scene === 'scene-01').every(s => s.offCamera), 'reported as off camera');

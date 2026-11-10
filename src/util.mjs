@@ -84,3 +84,21 @@ export function parseArgs(argv) {
   }
   return out;
 }
+
+/**
+ * The video's file name in a run folder: "<run name>-<run id>.mp4" (out/RMS-4923-x/20261110-115734-qqsn →
+ * RMS-4923-x-20261110-115734-qqsn.mp4), so a copied or shared video still says which run made it; the captions are
+ * the same name with .vtt (players pick them up). ext: "mp4" | "vtt".
+ */
+export const videoName = (outDir, ext = 'mp4') => `${path.basename(path.dirname(path.resolve(outDir)))}-${path.basename(path.resolve(outDir))}.${ext}`;
+
+/** The run's video in a folder, whatever it is named (tour.mp4 in runs made before), else null. */
+export function findVideo(outDir, ext = 'mp4') {
+  const named = path.join(outDir, videoName(outDir, ext));
+  if (fs.existsSync(named)) return named;
+  const old = path.join(outDir, `tour.${ext}`);
+  if (fs.existsSync(old)) return old;
+  // Moved or renamed run folders: the one top-level video that isn't a scene segment or the raw recording.
+  const hit = fs.existsSync(outDir) ? fs.readdirSync(outDir).filter(f => f.endsWith(`.${ext}`) && !/^scene-\d+/.test(f) && !/^recording/.test(f)) : [];
+  return hit.length === 1 ? path.join(outDir, hit[0]) : null;
+}

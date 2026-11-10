@@ -69,7 +69,7 @@ then opens the UI in an Edge/Chrome app window. A server started that way (`--ex
   and ■ END, KEEP DATA; the point reached is outlined in the page. A failed stage shows what failed and links to its run
   (review, suggest a fix); the browser stays at the failure. The start page lists **Live stages**. From a run's page it
   stages the script that ran there.
-- **Videos** (a run's page and a script's page): scene markers under the player, from `tour.vtt`; click one to jump there.
+- **Videos** (a run's page and a script's page): scene markers under the player, from the run's captions (`.vtt`); click one to jump there.
 - **Compare** (⇄ on a run's page): the run next to an earlier run of the same script: result, time, video length,
   findings, each criterion, and every step that got better, worse, edited, added or removed.
 - **Trash** (☰ menu): everything deleted (scripts, files, apps, runs), with ↩ restore when its old place is free.

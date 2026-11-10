@@ -16,6 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseFindings, parseFrontmatter } from './notes.mjs';
+import { findVideo } from './util.mjs';
 
 export const FINDINGS_SCHEMA = 'aft-findings/1';
 const STATUS = ['confirmed', 'refuted', 'partial', 'open', 'fixed', 'wontfix'];
@@ -69,12 +70,13 @@ export function writeFindings(def, outDir, result = {}) {
   fs.mkdirSync(dir, { recursive: true });
   fs.copyFileSync(def.findingsFile, path.join(dir, 'source.md'));
   const has = f => fs.existsSync(path.join(outDir, f));
+  const video = findVideo(outDir), captions = findVideo(outDir, 'vtt');
   const list = (sub, re) => (fs.existsSync(path.join(outDir, sub)) ? fs.readdirSync(path.join(outDir, sub)).filter(f => re.test(f)).sort().map(f => `${sub}/${f}`) : []);
   const report = readJson(path.join(outDir, 'report.json'));
   const validation = readJson(path.join(outDir, 'validation.json'));
   const review = report?.review ?? validation?.review ?? null;
   const artifacts = {
-    ...(has('tour.mp4') ? { video: 'tour.mp4' } : {}), ...(has('tour.vtt') ? { captions: 'tour.vtt' } : {}),
+    ...(video ? { video: path.basename(video) } : {}), ...(captions ? { captions: path.basename(captions) } : {}),
     slides: list('slides', /^scene-\d+\.png$/), screens: list('screens', /\.png$/i),
     ...(has('slides/index.html') ? { deck: 'slides/index.html' } : {}),
     ...(has('report.md') ? { report: 'report.md' } : has('validation.md') ? { report: 'validation.md' } : {}),
@@ -100,7 +102,7 @@ export function writeFindings(def, outDir, result = {}) {
   fs.writeFileSync(path.join(dir, 'findings.json'), JSON.stringify(data, null, 2) + '\n');
 
   const link = f => `[${f}](../${f})`;
-  const status = result.status ?? (has('tour.mp4') ? 'rendered' : 'checked');
+  const status = result.status ?? (video ? 'rendered' : 'checked');
   const lines = [
     `# Findings: ${doc.title}`, '',
     ...(doc.question ? [`**Question:** ${doc.question}`, ''] : []),

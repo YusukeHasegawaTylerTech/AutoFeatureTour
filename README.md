@@ -3,7 +3,7 @@
 Narrated feature-tour videos of web apps, from a user story or a hand-written script:
 
 ```
-story ──generate──► tour.json + script.md ──validate──► every step resolved ──run──► tour.mp4 + tour.vtt
+story ──generate──► tour.json + script.md ──validate──► every step resolved ──run──► <name>-<run id>.mp4 + .vtt
  (or a URL + brief)  (editable, reviewable)    (dry run, no video)               (paced to narration)
 ```
 
@@ -80,12 +80,12 @@ aft doctor [--platform <name>] | --help | --version | --list-voices
 | `--voice <name>`, `--rate -10..10`, `--tail <s>` | SAPI voice, speed, pause after each scene |
 | `--on-error fail\|skip` | skip steps that can't be done instead of failing (a failed `verify` still fails) |
 | `--llm claude [--model <id>]` | plan with local `claude -p` instead of the built-in heuristic (see Data below) |
-| `--no-captions`, `--no-record` | skip tour.vtt; `auto` without recording |
+| `--no-captions`, `--no-record` | skip the captions (.vtt); `auto` without recording |
 | anything else | passed to a `.tour.mjs` code tour as `ctx.options` (e.g. `--engine`, `--skip-build`) |
 
 **Exit codes:** 0 ok · 1 usage/config · 2 SCRIPT (an action couldn't be performed) · 3 UNREACHABLE · 4 CRITERION
 (a `verify` failed) · 5 APP (error UI, HTTP error or exception during a step) · 6 LOGIN · 7 TOOLING · 130 interrupted.
-A failed run writes no `tour.mp4`; it writes a cause-first `report.md` and a **triage bundle** (`<run>/triage/`:
+A failed run writes no video; it writes a cause-first `report.md` and a **triage bundle** (`<run>/triage/`:
 report, script with the failing step marked, ARIA snapshot, screenshot, trace, console and network errors per step,
 PROMPT.md), with secrets scrubbed. See [AGENTS.md](AGENTS.md#when-a-run-fails). Hand triage: `--headed --pause`,
 `--until-step N`, `--from-step N`, `--zip`. Everything is non-interactive unless you ask.
@@ -98,7 +98,7 @@ out/<story-id-or-tour>/<YYYYMMDD-HHMMSS>-<id>/     one folder per command, never
   discovery.json    screens/  (generate, auto, all)
   tour.json         script.md                      the script and its narration
   validation.md     validation.json                validate / all
-  tour.mp4  tour.vtt  recording.webm  clips/  scene-NN.wav  timings.json  screens/scene-NN.png
+  <name>-<run id>.mp4  <name>-<run id>.vtt  recording.webm  clips/  scene-NN.wav  timings.json  screens/scene-NN.png
   report.json  report.md                         every run: result, failing step, first cause, criteria
   trace.zip         npx playwright show-trace <file>   (trace-failed.zip, screens/failure.png, recording-failed.webm on failure)
   triage/           on failure: the portable bundle (report, script, ARIA snapshot, screenshot, trace, console/network, PROMPT.md)

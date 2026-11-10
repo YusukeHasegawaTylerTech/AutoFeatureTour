@@ -9,6 +9,7 @@ import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { scrub } from '../src/triage.mjs';
 import { startFixture } from './fixture/server.mjs';
+import { findVideo, videoName } from '../src/util.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = path.join(root, 'src', 'cli.mjs');
@@ -48,7 +49,7 @@ function assertBundle(out, { page = true, stuck = false } = {}) {
   const files = [...BUNDLE, ...(page ? WITH_PAGE : [])].map(f => (stuck && f === 'screenshot.png' ? 'screenshot.txt' : f));
   for (const f of files) assert.ok(fs.existsSync(path.join(out, 'triage', f)), `triage/${f} missing`);
   assert.ok(!fs.existsSync(path.join(out, 'triage', 'INCOMPLETE')), 'bundle marked incomplete');
-  assert.ok(!fs.existsSync(path.join(out, 'tour.mp4')), 'a failed run must not write tour.mp4');
+  assert.equal(findVideo(out), null, 'a failed run must not write a video');
   const md = fs.readFileSync(path.join(out, 'triage', 'report.md'), 'utf8');
   for (const k of ['What failed', 'Why we think so', 'First cause', 'Look next', 'Criteria so far']) assert.match(md, new RegExp(k));
 }
@@ -59,7 +60,7 @@ describe('failure modes', { concurrency: 3, timeout: 900000 }, () => {
     assert.equal(r.code, 0, r.log);
     assert.equal(r.report.class, 'ok');
     assert.equal(r.report.schema, 'aft-report/1');
-    assert.ok(fs.existsSync(path.join(r.out, 'tour.mp4')));
+    assert.equal(path.basename(findVideo(r.out)), videoName(r.out), 'the video is named after the run');
     assert.ok(!fs.existsSync(path.join(r.out, 'triage')));
   });
 
