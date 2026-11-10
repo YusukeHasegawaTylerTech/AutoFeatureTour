@@ -116,12 +116,19 @@ const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+
 
 /**
  * A three-way merge of a generated tour: `current` (the file, maybe edited by hand), `prev` (what the last generation
- * wrote) and `next` (the new generation). A value the person changed since `prev` is kept; everything else follows
- * `next`. Scenes match by title (then by position); slide fields merge one by one. Scenes added by hand stay, after
- * the scene they followed. Returns { tour, kept: [descriptions] }.
+ * wrote, .generated.json) and `next` (the new generation). A value the person changed since `prev` is kept; everything
+ * else follows `next`. Slide fields merge one by one. Scenes added by hand stay, after the scene they followed.
+ *
+ * Pairing never trusts titles alone (they change between generations: a renamed heading, a new title rule):
+ * - prev ↔ next by "$key" (the document section each came from), else by position when the counts match, else by a
+ *   title both have once;
+ * - prev ↔ current in order: the file was written from prev, so its scenes come in prev's order, with hand-added
+ *   ones between; a scene whose title was edited by hand pairs by its place between paired neighbours.
+ * Returns { tour, kept: [descriptions] }.
  */
 function mergeEdits(current, prev, next) {
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const strip = s => { const { $key: _k, ...rest } = s; return rest; };
   const kept = [];
   const pick = (where, cur, old, neu) => {
     const out = {};
@@ -133,27 +140,53 @@ function mergeEdits(current, prev, next) {
     }
     return out;
   };
-  const tour = pick('', Object.fromEntries(Object.entries(current).filter(([k]) => k !== 'scenes')), Object.fromEntries(Object.entries(prev).filter(([k]) => k !== 'scenes')),
-    Object.fromEntries(Object.entries(next).filter(([k]) => k !== 'scenes')));
-  const scenes = next.scenes.map((n, i) => {
-    const old = prev.scenes.find(x => x.title === n.title) ?? prev.scenes[i];
-    const cur = old && (current.scenes.find(x => x.title === old.title) ?? null);
-    if (!cur) return n;
+  const top = t => Object.fromEntries(Object.entries(t).filter(([k]) => k !== 'scenes'));
+  const tour = pick('', top(current), top(prev), top(next));
+  const P = prev.scenes, N = next.scenes, C = current.scenes;
+  // prev ↔ current, in order.
+  const curOf = new Array(P.length).fill(-1);
+  const claimed = new Set();
+  let from = 0;
+  for (const [j, p] of P.entries()) {
+    const i = C.findIndex((c, k) => k >= from && !claimed.has(k) && c.title === p.title);
+    if (i >= 0) { curOf[j] = i; claimed.add(i); from = i + 1; }
+  }
+  for (const [j] of P.entries()) {
+    if (curOf[j] >= 0) continue;
+    const lo = curOf.slice(0, j).filter(x => x >= 0).at(-1) ?? -1;
+    const hi = curOf.slice(j + 1).find(x => x >= 0) ?? C.length;
+    const gap = [...Array(Math.max(0, hi - lo - 1)).keys()].map(k => lo + 1 + k).filter(k => !claimed.has(k));
+    if (gap.length === 1 && !P.some(p => p.title === C[gap[0]].title)) { curOf[j] = gap[0]; claimed.add(gap[0]); }
+  }
+  // prev ↔ next.
+  const keyed = P.every(p => p.$key) && N.every(n => n.$key);
+  const once = (list, t) => list.filter(x => x.title === t).length === 1;
+  const prevOf = N.map((n, i) => {
+    if (keyed) { const j = P.findIndex(p => p.$key === n.$key); return j; }
+    if (P.length === N.length) return i;
+    return once(N, n.title) && once(P, n.title) ? P.findIndex(p => p.title === n.title) : -1;
+  });
+  const scenes = N.map((n0, i) => {
+    const n = strip(n0);
+    const j = prevOf[i];
+    if (j < 0 || curOf[j] < 0) return j >= 0 && curOf[j] < 0 ? null : n; // deleted by hand: stays deleted
+    const old = strip(P[j]), cur = C[curOf[j]];
     const where = `scene "${n.title}": `;
     const { slide: cs, ...cRest } = cur, { slide: os, ...oRest } = old, { slide: ns, ...nRest } = n;
     const merged = pick(where, cRest, oRest, nRest);
     if (cs || ns) merged.slide = pick(`${where}slide.`, cs, os, ns);
-    return merged;
+    return { at: curOf[j], scene: merged };
   });
-  // Scenes added by hand (in the file, not in the last generation): kept after the scene they followed.
-  for (const [i, c] of current.scenes.entries()) {
-    if (prev.scenes.some(p => p.title === c.title)) continue;
-    const before = current.scenes[i - 1]?.title;
-    const at = before ? scenes.findIndex(s => s.title === before) : -1;
-    scenes.splice(at + 1, 0, c);
+  // In the new generation's order; hand-added scenes after the scene they followed in the file.
+  const out = scenes.filter(Boolean).map(x => (x.scene ? x : { at: -1, scene: x }));
+  for (const [k, c] of C.entries()) {
+    if (claimed.has(k)) continue;
+    let before = -1;
+    out.forEach((x, i) => { if (x.at >= 0 && x.at < k) before = i; });
+    out.splice(before + 1, 0, { at: k, scene: c });
     kept.push(`scene "${c.title}" (added by hand)`);
   }
-  return { tour: { ...tour, scenes }, kept };
+  return { tour: { ...tour, scenes: out.map(x => x.scene) }, kept };
 }
 
 /**
@@ -1235,12 +1268,12 @@ const commands = {
       return { tour: tourFile, dir, from, scenes: doc.scenes?.length ?? 0 };
     }
     fs.mkdirSync(dir, { recursive: true });
-    let scenes, deck = { slides: { theme: 'dark' }, pronounce: {} };
+    let scenes, sceneKeys = null, deck = { slides: { theme: 'dark' }, pronounce: {} };
     if (args.from) {
       const docFile = path.resolve(String(args.from));
       if (!fs.existsSync(docFile)) throw new UsageError(`--from ${args.from}: no such file`);
       let meta, dropped;
-      try { ({ scenes, meta, dropped } = outline(fs.readFileSync(docFile, 'utf8'), { dir: path.dirname(docFile), ...(args.maxScenes ? { maxScenes: Number(args.maxScenes) } : {}) })); }
+      try { ({ scenes, meta, dropped, keys: sceneKeys } = outline(fs.readFileSync(docFile, 'utf8'), { dir: path.dirname(docFile), ...(args.maxScenes ? { maxScenes: Number(args.maxScenes) } : {}) })); }
       catch (e) { throw new UsageError(`${path.basename(docFile)}: ${e.message}`); }
       if (dropped) log(`warning: --max-scenes ${scenes.length}: the last ${dropped} section(s) of ${path.basename(docFile)} were left out`);
       // Deck settings from the document's front matter (footer, theme, accent, voice, pronounce, platform, pages).
@@ -1290,11 +1323,21 @@ const commands = {
     const generated = path.join(dir, '.generated.json');
     let kept = null;
     if (args.from) {
+      // The generation as written, each scene with the document section it came from ("$key"), so the next
+      // --update pairs scenes by section, not by title.
       const next = JSON.parse(JSON.stringify(tour));
+      if (sceneKeys) next.scenes.forEach((s, i) => { s.$key = sceneKeys[i]; });
       if (args.update && fs.existsSync(tourFile)) {
         const prev = fs.existsSync(generated) ? JSON.parse(fs.readFileSync(generated, 'utf8')) : null;
         if (!prev) throw new UsageError(`--update: ${generated} is missing (the tour wasn't generated by aft scratch --from), so edits can't be told apart; use --force to start over`);
         ({ tour, kept } = mergeEdits(JSON.parse(fs.readFileSync(tourFile, 'utf8')), prev, next));
+        // A merge that makes a tour the loader refuses is not written: say why, change nothing.
+        const probe = path.join(dir, `.update-check-${process.pid}.tour.json`);
+        fs.writeFileSync(probe, JSON.stringify(tour, null, 2));
+        try { loadTourJson(probe, { toolRoot }); } catch (e) {
+          throw new UsageError(`--update: keeping your edits would make an invalid tour, so nothing was written:\n  ${e.message.split(probe).join(tourFile).split('\n').join('\n  ')}\n` +
+            `edits it tried to keep:\n  ${kept.join('\n  ') || '(none)'}\nFix the tour (or the document) and run --update again, or --force to regenerate from the document only.`);
+        } finally { fs.rmSync(probe, { force: true }); }
         for (const k of kept) log(`kept your edit: ${k}`);
       }
       fs.writeFileSync(generated, JSON.stringify(next, null, 2) + '\n');

@@ -294,3 +294,37 @@ test('round 6: currency before the number, repeated titles, shared slides beside
     assert.equal(JSON.parse(cli(['validate', r.data.tour, '--out', path.join(dir, 'run')]).stdout).ok, true);
   } finally { fs.rmSync(path.join(root, 'scratch', name), { recursive: true, force: true }); }
 });
+
+test('--update pairs scenes by section, not title; an invalid merge is refused and nothing is written', () => {
+  const dir = tmp();
+  const doc = path.join(dir, 'd.md');
+  const write1 = extra => fs.writeFileSync(doc, `# Deck\n\nIntro.\n\n## Foundry: one\n\n- a\n\nSay: one.\n${extra}\n## Foundry: two\n\n\`\`\`chart\nA | 1\nB | 2\n\`\`\`\n\nSay: two.\n\n## Cost: three\n\n- **5 MB** a day\n- **9 MB** a week\n\nSay: three.\n`);
+  const name = `t-pair-${process.pid}`;
+  const tourFile = path.join(root, 'scratch', name, `${name}.tour.json`);
+  const run = (...a) => JSON.parse(cli(['scratch', name, '--from', doc, ...a]).stdout);
+  try {
+    write1('');
+    assert.equal(run().ok, true);
+    // A new section in the middle shifts every position after it: pairing by section keeps edits on their scene.
+    const t = JSON.parse(fs.readFileSync(tourFile, 'utf8'));
+    t.scenes.find(s => s.slide?.chart).slide.accent = '#c53030';
+    fs.writeFileSync(tourFile, JSON.stringify(t));
+    write1('\n## Inserted\n\n- new\n\nSay: new.\n');
+    const r = run('--update');
+    assert.equal(r.ok, true, JSON.stringify(r.error));
+    assert.deepEqual(r.data.kept, ['scene "Foundry: Two": slide.accent']);
+    const after = JSON.parse(fs.readFileSync(tourFile, 'utf8'));
+    const chart = after.scenes.find(s => s.slide?.chart);
+    assert.equal(chart.slide.accent, '#c53030');
+    assert.ok(after.scenes.find(s => s.title === 'Cost').slide.stats, 'the stats stay on their own slide');
+    assert.ok(after.scenes.some(s => s.title === 'Inserted'));
+    // Steps put on a slide scene by hand: the merge would be invalid, so it is refused and the file is left as it was.
+    chart.steps = [{ wait: 1 }];
+    fs.writeFileSync(tourFile, JSON.stringify(after));
+    const before = fs.readFileSync(tourFile, 'utf8');
+    const bad = run('--update');
+    assert.equal(bad.ok, false);
+    assert.match(bad.error.message, /would make an invalid tour, so nothing was written/);
+    assert.equal(fs.readFileSync(tourFile, 'utf8'), before);
+  } finally { fs.rmSync(path.join(root, 'scratch', name), { recursive: true, force: true }); }
+});

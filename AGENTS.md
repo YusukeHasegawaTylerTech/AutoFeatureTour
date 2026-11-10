@@ -704,7 +704,7 @@ Note: Measured on the spike branch
 ```
 
 Edited the tour by hand anyway? `aft scratch <name> --from doc.md --update` regenerates from the document and keeps
-every field changed since the last generation (`.generated.json` beside the tour records it), and lists what it kept;
+every field changed since the last generation (`.generated.json` beside the tour records it, with the section each scene came from: scenes pair by section, so renamed titles or an inserted section do not shift edits onto the wrong scene), and lists what it kept; a merge that would make an invalid tour is refused and nothing is written;
 scenes added by hand stay where they were. Each `--from` (and `--update`) copies the document's images, `pages:` folder and shared slides (`slides/` beside it) again. `--force` starts over. Short titles that repeat ("Foundry: …" five times) become the whole heading. No section is left out unless `--max-scenes` (or
 `max-scenes:`) says so, and then it warns.
 

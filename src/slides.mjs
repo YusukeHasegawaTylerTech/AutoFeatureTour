@@ -538,6 +538,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
   const docTitle = plain(titleBlock?.heading ?? sections.find(s => s.heading)?.heading ?? 'Overview');
   const autoReveal = meta.reveal && !/^(no|off|false|none)$/i.test(meta.reveal) ? revealOf(meta.reveal === 'auto' ? 'yes' : meta.reveal) : null;
   const scenes = [];
+  const keys = []; // the section each scene came from (its heading), for --update to pair generations
   let said = false;
   for (const sec of sections) {
     const { parts, say, directives, steps } = parse(sec.body);
@@ -548,6 +549,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
       const split0 = heading.match(/^([^:]{2,60}):\s+(\S.*)$/);
       const t = split0 ? plain(split0[1]) : shortTitle(heading);
       if (say.length) said = true;
+      keys.push(sec.title ? '#' : plain(sec.heading ?? ''));
       scenes.push({ title: t, narration: say.join(' ') || heading, ...(directives.url ? { url: directives.url } : {}), steps,
         ...(directives.hold !== undefined && Number.isFinite(Number(directives.hold)) ? { hold: Number(directives.hold) } : {}), ...voiceOf(directives) });
       continue;
@@ -609,6 +611,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
       ...(b ?? []).map(x => plain(x).replace(/[.;:]?$/, '.'))].filter(Boolean).join(' ') || heading;
     const title = sec.title ? (split ? 'Overview' : shortTitle(heading)) : split ? plain(split[1]) : shortTitle(heading);
     const hold = directives.hold !== undefined && Number.isFinite(Number(directives.hold)) ? { hold: Number(directives.hold) } : {};
+    keys.push(sec.title ? '#' : plain(sec.heading ?? ''));
     scenes.push({ title, ...(narration !== undefined ? { narration } : {}), slide, ...hold, ...voiceOf(directives) });
   }
   // Short titles that repeat (five "Foundry: …" headings) name reports and captions badly: those take the whole
@@ -624,7 +627,10 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
     dropped = scenes.length - maxScenes;
     scenes.length = maxScenes;
   }
-  return { title: docTitle, scenes, said, meta, dropped };
+  // Keys are unique: a heading used twice is "<heading> #2".
+  const used = new Map();
+  const uniq = keys.slice(0, scenes.length).map(k => { const n = (used.get(k) ?? 0) + 1; used.set(k, n); return n > 1 ? `${k} #${n}` : k; });
+  return { title: docTitle, scenes, said, meta, dropped, keys: uniq };
 }
 
 /** The tour-level settings front matter gives: { platform, env, role, pages (as written), slides, pronounce, voice, name }. */
