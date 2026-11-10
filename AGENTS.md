@@ -709,11 +709,11 @@ scenes added by hand stay where they were. Each `--from` (and `--update`) copies
 `max-scenes:`) says so, and then it warns.
 
 ```
-aft scratch foia-findings --from findings.md     # in scratch/foia-findings/ (git-ignored, kept, "$schema" works)
+aft scratch foia-findings --from findings.md     # in out/scratch/foia-findings/ (beside the runs, kept, "$schema" works)
 aft scratch demo                                 # a starter deck: one slide per layout, to copy from
-aft scratch demo --pages                         # plus scratch/demo/pages/index.html, recorded in the browser
+aft scratch demo --pages                         # plus out/scratch/demo/pages/index.html, recorded in the browser
 aft scratch demo-v2 --from-tour demo             # a new version of a deck (its folder copied: assets, shared slides, pages)
-aft render scratch/demo/demo.tour.json --slides-only   # the deck as pictures: slides/index.html
+aft render out/scratch/demo/demo.tour.json --slides-only # the deck as pictures: slides/index.html
 aft generate --from findings.md [--llm claude]   # the same into a run folder (Claude: sends the document)
 aft scratch                                      # the list
 ```
@@ -725,10 +725,68 @@ A tour with a `story` id names its run folder `<id>-<name>`: add the story befor
 as its baseUrl: `goto` paths and scene `url`s are files in it (`"index.html?s=2"`), and steps and checks work on them as
 on an app. Use it for content slides can't hold (a mock-up, a diagram with a cursor); use slides for the rest.
 
-**Where one-off tours go:** `scratch/<name>/`, never a temp folder: a temp folder goes when the session does, and the
+**Where one-off tours go:** `out/scratch/<name>/` (beside the runs; decks in an older `scratch/` move there the first time), never a temp folder: a temp folder goes when the session does, and the
 run's `source/` copy is the only way back. Outside the checkout, `aft schema tour --write <folder>` writes
 `<folder>/.aft-schemas/` and prints the `"$schema"` to use. `aft export` embeds slide images; a tour with `pages` is
 stand-alone and can't be imported into a platform (share its run's `source/` folder).
+
+## Findings: what a spike concluded, with the run that showed it
+
+When a tour (often an explainer) reports an investigation, its write-up is the tour's **findings document**:
+`"findings": "findings.md"` (relative to the tour). `aft scratch <name>` starts one from a template;
+`aft scratch <name> --from doc.md` makes the deck from the document and keeps it as the deck's `findings.md`. Every
+`run`, `render` and `validate` of the tour, passed or failed, writes:
+
+```
+<run>/findings/
+  findings.md     the summary: question, run result, a findings table, each finding, evidence links (video, captions,
+                  slides, screens, report, the tour as it ran), the scenes, then the write-up (deck directives and
+                  ```steps blocks left out; Say: lines shown as narration)
+  findings.json   the same as data (schema aft-findings/1): title, question, run { status, verdict }, summary
+                  (counts by status), findings[], runFindings[] (the run's own review findings), scenes[], artifacts
+  source.md       the document exactly as it was when the run started
+```
+
+Findings use the platform-notes format, so the same lines work in `platforms/<p>/notes/`:
+
+```
+---
+title: RMS-4923 context limits
+question: Are the context-limit concerns real?
+---
+### F-1 · A 20-page rule set fits easily
+- status: confirmed            # confirmed | refuted | partial | open | fixed | wontfix
+- severity: info               # high | medium | low | info
+- area: Foundry agent prompt
+- evidence: scene 3; report.md
+- suggested: send the full rules on every call
+```
+
+In a deck, a section's `### F-1 · …` headings are drawn as a findings table (id, finding, status ✓ ✗ △ ℹ); their
+`- key:` lines go to the summary, not the slide. `aft findings <run> [--from doc.md]` writes `findings/` again for a
+run (after the write-up changed, or for a run made before the tour named its findings).
+
+## Tours across platforms
+
+A story can cross apps: an RMS request, then the Foundry agent it calls. Each app stays its own platform (its
+environments, its `login.json` and saved login, its known issues, fragments and data); a scene names the platform it
+runs on, and the tour picks that platform's environment and role:
+
+```json
+{ "platform": "rms", "platforms": { "foundry": { "env": "dev", "role": "user" } },
+  "scenes": [
+    { "title": "The request form", "narration": "…", "url": "#/requests/new", "steps": [ … ] },
+    { "title": "The agent in Foundry", "narration": "…", "platform": "foundry", "url": "{data.project}", "steps": [ … ] } ] }
+```
+
+- Each visited platform signs in like the tour's own: its saved login (`auth/<platform>/<env>/<role>.json`), renewed
+  off camera when it has login steps and credentials. SSO/MFA (Foundry): `aft login --platform foundry --manual` once.
+  All saved logins are loaded into the one browser, so a scene can move between apps without signing in on camera.
+- A scene on another platform uses that platform's baseUrl, `ready`, `errors`, `appErrors`, known issues,
+  fragments and `{data.x}`; its services are attached or launched like the tour's. The tour's own settings apply
+  again from the next scene.
+- In markdown: `platforms: foundry=dev/user` in the front matter, `Platform: foundry` under a ```` ```steps ````
+  section. A tour whose browser scenes are all on other platforms needs no baseUrl of its own.
 
 ## Rules
 
@@ -779,4 +837,4 @@ try-step · `stage.mjs` / `stage-daemon.mjs` do / redo until here · `cli-app.mj
 `narrate-timing.mjs` scene timing · `render.mjs` ffmpeg · `slides.mjs` slide scenes, pages, document outlines · `tts.mjs` speech · `auth.mjs` saved logins ·
 `doctor.mjs` checks · `workarounds.mjs` known issues (merge, checkpoint, matching) · `review.mjs` evidence, findings,
 decisions, verdict · `fix.mjs` AI fix proposals (`suggest-fix`) · `ledger.mjs` ledger.json, run tags · `fixtures.mjs`
-hooks, fixture items, browser fixtures, artifacts, `aft cleanup` / `aft reset` · `batch.mjs` `aft batch` · `notes.mjs` platform notes · `daemon-calls.mjs` call ids, kept results. Tests: `npm test`.
+hooks, fixture items, browser fixtures, artifacts, `aft cleanup` / `aft reset` · `batch.mjs` `aft batch` · `findings.mjs` a run's findings summary · `notes.mjs` platform notes · `daemon-calls.mjs` call ids, kept results. Tests: `npm test`.

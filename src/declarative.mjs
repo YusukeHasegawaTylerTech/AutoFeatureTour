@@ -82,7 +82,9 @@ function fill(value, vars) {
 export function validate(cfg, file) {
   const problems = [];
   // A tour of slides only needs no app; "pages" is its own (served for the run).
-  if (!cfg.baseUrl && !cfg.pages && needsBrowser(cfg.scenes))
+  // Scenes on another platform ("platform": "<name>") use that platform's baseUrl, not the tour's.
+  const own = (cfg.scenes ?? []).filter(s => !(s.platform && cfg.others?.[s.platform]));
+  if (!cfg.baseUrl && !cfg.pages && needsBrowser(own))
     problems.push('no target: name a "platform" (its environments.json has the baseUrl), pass --base-url <url> / set BASE_URL, or give "pages" (a folder of static pages)');
   if (!Array.isArray(cfg.scenes) || !cfg.scenes.length) problems.push('scenes must be a non-empty array');
   (cfg.scenes ?? []).forEach((s, i) => {
@@ -115,14 +117,44 @@ export const authTarget = (cfg, env) => `${cfg.target ?? cfg.name}${env ? `-${en
  * fragments expanded, BASE_URL / --base-url on top. Without: the tour's own settings (a stand-alone tour, for quick
  * experiments and tests). Returns { cfg, env, platform, authFile(role) }.
  */
+/**
+ * The other platforms a tour's scenes visit ("platform": "<name>" on a scene that isn't the tour's own): each with
+ * its own environment, login role, data, known issues and saved login, chosen by the tour's "platforms": { "<name>":
+ * { "env", "role" } } (default: that platform's defaults). Returns { <name>: { p, cfg, env, dirs, data, authFile } }.
+ */
+export function otherPlatforms(raw, { toolRoot, dir, main = raw.platform }) {
+  const names = [...new Set((raw.scenes ?? []).map(s => s.platform).filter(n => n && n !== main))];
+  for (const n of Object.keys(raw.platforms ?? {})) if (!names.includes(n) && n !== main)
+    throw new ConfigError(`"platforms": "${n}" is set, but no scene has "platform": "${n}"`);
+  return Object.fromEntries(names.map(n => {
+    let p;
+    try { p = loadPlatform(toolRoot, n, { from: dir }); } catch (e) { throw new ConfigError(`a scene has "platform": "${n}": ${e.message}`); }
+    const pick = raw.platforms?.[n] ?? {};
+    let composed;
+    try { composed = platformConfig(p, { env: pick.env, role: pick.role }); } catch (e) { throw new ConfigError(`"platforms": "${n}": ${e.message}`); }
+    const { cfg, env } = composed;
+    if (!cfg.baseUrl) throw new ConfigError(`platform ${n} (environment ${env ?? 'default'}) has no baseUrl`);
+    if (cfg.login) cfg.login = { ...cfg.login, steps: expandSteps(cfg.login.steps, { dirs: [path.join(p.dir, 'fragments')], data: cfg.data }) };
+    return [n, { p, cfg, env, dirs: [path.join(p.dir, 'fragments'), dir], data: cfg.data ?? {},
+      authFile: r => platformAuthFile(toolRoot, p.name, env, r ?? cfg.login?.role) }];
+  }));
+}
+
 export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
   const dir = path.dirname(path.resolve(file));
   const wrap = fn => { try { return fn(); } catch (e) { throw e instanceof PlatformError ? new ConfigError(e.message) : e; } };
+  // Scenes on another platform take their fragments and {data.x} from that platform.
+  const others = otherPlatforms(raw, { toolRoot, dir });
+  const expandScene = (s, dirs, data) => {
+    const o = s.platform && others[s.platform];
+    return { ...s, steps: expandSceneSteps(s.steps, o ? { dirs: o.dirs, data: o.data } : { dirs, data }) };
+  };
   if (!raw.platform) {
     const cfg = resolveConfig(raw, { env, baseUrl });
     const dirs = [path.join(dir, 'fragments'), dir];
+    cfg.others = others;
     wrap(() => {
-      cfg.scenes = (cfg.scenes ?? []).map(s => ({ ...s, steps: expandSceneSteps(s.steps, { dirs }) }));
+      cfg.scenes = (cfg.scenes ?? []).map(s => expandScene(s, dirs, undefined));
       if (cfg.login?.steps) cfg.login = { ...cfg.login, steps: expandSteps(cfg.login.steps, { dirs }) };
     });
     wrap(() => finishSteps(cfg, file, [dir]));
@@ -153,7 +185,8 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
       fixtureBrowser: browser,
       fixtureSteps: [...mocks, ...browser.flatMap(b => [...b.checkSteps, ...b.steps, ...b.cleanupSteps])],
       data,
-      scenes: (raw.scenes ?? []).map(s => ({ ...s, steps: expandSceneSteps(s.steps, { dirs, data }) })),
+      scenes: (raw.scenes ?? []).map(s => expandScene(s, dirs, data)),
+      others,
       ...(base.login ? { login: { ...base.login, steps: expandSteps(base.login.steps, { dirs, data }) } } : {}),
       ...(base.loginRoles ? { loginRoles: Object.fromEntries(Object.entries(base.loginRoles).map(([n, l]) => [n, { ...l, steps: expandSteps(l.steps, { dirs, data }) }])) } : {}),
     };
@@ -222,6 +255,9 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
   validate(cfg0, file);
   const dir = path.dirname(path.resolve(file));
   // "pages": the tour's own static site, served on a free port for each run (its baseUrl unless one is given).
+  // "findings": the spike's write-up; each run summarizes it in <run>/findings/ (src/findings.mjs).
+  const findingsFile = cfg0.findings ? path.resolve(dir, cfg0.findings) : null;
+  if (findingsFile && !fs.existsSync(findingsFile)) throw new ConfigError(`${file}: "findings" document ${findingsFile} not found`);
   const pagesDir = cfg0.pages ? path.resolve(dir, cfg0.pages) : null;
   if (pagesDir && !fs.existsSync(path.join(pagesDir))) throw new ConfigError(`${file}: "pages" folder ${pagesDir} not found`);
   for (const [i, s] of raw.scenes.entries()) if (s.slide?.image) {
@@ -243,6 +279,7 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
     /** How slide scenes look (src/slides.mjs), and the static pages folder, if any. */
     slides: cfg0.slides ?? {},
     pagesDir,
+    findingsFile,
     /** false: every scene is a slide, so nothing needs a browser, an app or a login. */
     needsBrowser: needsBrowser(cfg0.scenes),
     /** Warnings about the tour as written (data left untagged on a shared environment). */
@@ -258,7 +295,9 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
       // The tour's own pages: served for this run only (--base-url / BASE_URL still win), stopped when it ends.
       const pages = pagesDir && !baseUrl && !process.env.BASE_URL ? await servePages(pagesDir) : null;
       if (pages) { ctx.log(`pages: ${pagesDir} served at ${pages.url}/`); ctx.closePages = pages.close; }
-      const { cfg, vars } = await materialize(pages ? { ...cfg0, baseUrl: pages.url } : cfg0, { tag });
+      // A tour whose browser scenes are all on other platforms has no URL of its own.
+      const ownBrowser = cfg0.scenes.some(s => !isSlide(s) && !(s.platform && cfg0.others?.[s.platform]));
+      const { cfg, vars } = await materialize(pages ? { ...cfg0, baseUrl: pages.url } : cfg0.baseUrl ? cfg0 : { ...cfg0, baseUrl: 'about:blank' }, { tag });
       // Values marked secret (resolved from the environment) are scrubbed from every report and bundle file.
       ctx.secrets?.push(...secretsOf(cfg));
       const log = ctx.log;
@@ -305,7 +344,32 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
         // Data for {data.x} left in steps until now: fixture data, plus what setup hooks looked up.
         t.data = { ...cfg.data, ...looked };
         if (cfg.workarounds?.length) t.workarounds = new Workarounds(cfg.workarounds, { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, ready: cfg.ready, log });
-        const startOpts = { storageState: login.state ?? undefined, ignoreHTTPSErrors: cfg.ignoreHTTPSErrors, trace: cfg.trace !== false && !(stage && !stage.trace) };
+        // Other platforms the tour visits: their services, their own saved login (signed in now, off camera, like the
+        // tour's), their known issues. Their sessions go into the same browser as the tour's.
+        const others = {};
+        for (const [name, o] of Object.entries(cfg0.others ?? {})) {
+          const { cfg: oc, vars: ov } = await materialize(o.cfg, { tag });
+          const os = await startServices(oc, ov, { outDir: ctx.outDir, log: m => log(`${name}: ${m}`), dir: o.p.dir });
+          services.procs.push(...os.procs);
+          const ol = makeLogin(oc, o.cfg, { authFile: o.authFile }, { outDir: ctx.outDir, log: m => log(`${name}: ${m}`), options: { ...ctx.options, env: o.env }, baseUrl: ov.baseUrl });
+          await ol.beforeStart();
+          ctx.secrets?.push(...secretsOf(oc));
+          others[name] = { cfg: oc, vars: ov, login: ol, ensured: false,
+            workarounds: oc.workarounds?.length ? new Workarounds(oc.workarounds, { baseUrl: ov.baseUrl + '/', timeouts: oc.timeouts, ready: oc.ready, log }) : null };
+          log(`${name}: ${o.env ?? 'default'} environment at ${ov.baseUrl}${oc.login ? ` as ${oc.login.role}` : ''}`);
+        }
+        // Every saved login in one browser: the tour's, then each other platform's (read again on each start, so a
+        // login renewed partway through is used).
+        const states = () => [login.state, ...Object.values(others).map(o => o.login.state)].filter(f => f && fs.existsSync(f));
+        const startOpts = { ignoreHTTPSErrors: cfg.ignoreHTTPSErrors || Object.values(others).some(o => o.cfg.ignoreHTTPSErrors), trace: cfg.trace !== false && !(stage && !stage.trace) };
+        Object.defineProperty(startOpts, 'storageState', { enumerable: true, get: () => {
+          const files = states();
+          if (files.length <= 1) return files[0] ?? undefined;
+          const docs = files.map(f => JSON.parse(fs.readFileSync(f, 'utf8')));
+          return { cookies: docs.flatMap(d => d.cookies ?? []), origins: docs.flatMap(d => d.origins ?? []) };
+        } });
+        // Known noisy requests of every platform the tour visits are ignored from the start (the listener reads them once).
+        if (Object.keys(others).length) t.policy = { ...t.policy, ignore: [...(t.policy.ignore ?? []), ...Object.values(others).flatMap(o => o.cfg.appErrors?.ignore ?? [])] };
         await t.start(startOpts);
         browserUp = true;
         opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report, ready: cfg.ready, errors: cfg.errors, retries: cfg.retries ?? 1,
@@ -314,7 +378,19 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
           onError: stage ? 'fail' : ctx.dryRun ? 'collect' : ctx.options.onError ?? cfg.onError ?? 'fail' };
         ctx.live = { cfg, vars, services, opts, startOpts, ledger };
         // Check the session where the tour starts (off camera: before the first scene, so it's cut from the video).
-        await login.ensure(t, startOpts, cfg.scenes[0]?.url);
+        const firstOwn = cfg.scenes.find(s => !isSlide(s) && !(s.platform && others[s.platform]));
+        if (ownBrowser) await login.ensure(t, startOpts, firstOwn?.url);
+        // A scene on another platform runs with that platform's URL, readiness, error UI, policy and known issues.
+        const mainPolicy = t.policy, mainWorkarounds = t.workarounds;
+        const on = async (s, id) => {
+          const o = s.platform && others[s.platform];
+          if (!o) { t.policy = mainPolicy; t.workarounds = mainWorkarounds; t.platform = undefined; return opts; }
+          if (!o.ensured) { await o.login.ensure(t, startOpts, s.url); o.ensured = true; } // off camera: between scenes
+          t.policy = { ...mainPolicy, ...o.cfg.appErrors, ignore: mainPolicy.ignore };
+          t.workarounds = o.workarounds;
+          t.platform = s.platform;
+          return { ...opts, baseUrl: o.vars.baseUrl + '/', timeouts: o.cfg.timeouts, ready: o.cfg.ready, errors: o.cfg.errors, retries: o.cfg.retries ?? opts.retries, platform: s.platform, scene: id };
+        };
         try {
           // Browser undo an earlier run left pending, in this browser.
           if (earlier.some(f => f.ledger.pending({ retryFailed: true }).some(i => i.undo.steps)))
@@ -336,12 +412,14 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
             // range.step with range.scenes = n: scene n only up to that step of the script (fragments count as one).
             const cut = ctx.range?.step && ctx.range.scenes === i + 1;
             const steps = cut ? (s.steps ?? []).filter((x, k) => (x.scriptStep ?? k + 1) <= ctx.range.step) : s.steps ?? [];
-            if (s.url) await runSteps(t, [{ goto: s.url }], { ...opts, unpaced: true, scene: `${id} (url)` });
+            const so = await on(s, id);
+            if (s.url) await runSteps(t, [{ goto: s.url }], { ...so, unpaced: true, scene: `${id} (url)` });
             // Off camera: it runs and is checked like any scene, but it isn't filmed or narrated.
             if (s.camera === false) {
-              await runSteps(t, steps, { ...opts, offCamera: true, scene: id, criteria: s.criteria ?? [] });
+              await runSteps(t, steps, { ...so, offCamera: true, scene: id, criteria: s.criteria ?? [] });
               await t.screenshot(id);
-            } else await t.scene(id, () => runSteps(t, steps, { ...opts, scene: id, criteria: s.criteria ?? [] }));
+            } else await t.scene(id, () => runSteps(t, steps, { ...so, scene: id, criteria: s.criteria ?? [] }));
+            await on({}, id); // back to the tour's own platform for what follows (cleanup, the next scene)
             ctx.progress?.();
             if (cut) throw new StopRun(`stopped after scene ${i + 1} · step ${ctx.range.step}`);
           }

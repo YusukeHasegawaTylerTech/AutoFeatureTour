@@ -328,7 +328,7 @@ const sentencesOf = p => plain(p).split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/).filter
 const shortTitle = h => { const p = plain(h).split(/\s*(?::|\s[—–-]\s)\s*/)[0]; return p.length >= 3 ? p : plain(h); };
 const SAY = /^\s*(?:say|narration)\s*:\s*/i;
 /** Per-slide directive lines (never shown): Reveal:, Hold:, Note:, Use:, Theme:, Accent:. */
-const DIRECTIVE = /^\s*(reveal|hold|note|use|theme|accent|layout|url|voice|rate)\s*:\s*(.*)$/i;
+const DIRECTIVE = /^\s*(reveal|hold|note|use|theme|accent|layout|url|voice|rate|platform)\s*:\s*(.*)$/i;
 /** "Voice: Zira" / "Rate: 2" (a section, or the front matter) → { voice, rate }. */
 const voiceOf = d => ({ ...(d.voice ? { voice: d.voice } : {}), ...(d.rate !== undefined && d.rate !== '' && Number.isFinite(Number(d.rate)) ? { rate: Number(d.rate) } : {}) });
 
@@ -491,7 +491,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
     const say = [];
     const directives = {};
     const steps = [];
-    let para = [], quote = [], table = [], saying = false;
+    let para = [], quote = [], table = [], saying = false, finding = null;
     const last = kind => (parts.at(-1)?.kind === kind ? parts.at(-1) : null);
     const flush = () => {
       if (para.length) { const v = para.join(' '); const f = flowOf(v); parts.push(f ? { kind: 'flow', value: f } : { kind: 'body', value: v }); }
@@ -512,8 +512,21 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
         else parts.push({ kind: 'code', value: b.code });
         continue;
       }
-      if (b.heading) { flush(); (last('bullets') ?? parts[parts.push({ kind: 'bullets', value: [] }) - 1]).value.push(plain(b.heading)); continue; }
+      // "### F-1 · Title" findings (src/findings.mjs) become a table: id, finding, status (✓ confirmed, ✗ refuted,
+      // △ partial, ℹ open); their "- key: value" lines are for the findings summary, not the slide.
+      const fh = b.heading && b.heading.match(/^([A-Za-z][A-Za-z0-9]*-\d+[A-Za-z0-9]*)\s*(?:[·:—–-]\s*)?(.*)$/);
+      if (fh) {
+        flush();
+        const t = last('findings') ?? parts[parts.push({ kind: 'findings', value: [] }) - 1];
+        t.value.push({ id: fh[1], title: plain(fh[2]) });
+        finding = t.value.at(-1);
+        continue;
+      }
+      if (b.heading) { finding = null; flush(); (last('bullets') ?? parts[parts.push({ kind: 'bullets', value: [] }) - 1]).value.push(plain(b.heading)); continue; }
       const l = b.line;
+      const kv = finding && l.match(/^\s*[-*]\s+([a-z][\w-]*)\s*:\s*(.*)$/i);
+      if (kv) { finding[kv[1].toLowerCase()] = kv[2].trim(); continue; }
+      if (finding && l.trim() && !/^\s{2,}\S/.test(l)) finding = null;
       // "Say:" starts the narration; the lines right after it (up to a blank line) continue it.
       if (SAY.test(l)) { flush(); say.push(l.replace(SAY, '').trim()); saying = true; continue; }
       const d = l.match(DIRECTIVE);
@@ -550,7 +563,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
       const t = split0 ? plain(split0[1]) : shortTitle(heading);
       if (say.length) said = true;
       keys.push(sec.title ? '#' : plain(sec.heading ?? ''));
-      scenes.push({ title: t, narration: say.join(' ') || heading, ...(directives.url ? { url: directives.url } : {}), steps,
+      scenes.push({ title: t, narration: say.join(' ') || heading, ...(directives.platform ? { platform: directives.platform } : {}), ...(directives.url ? { url: directives.url } : {}), steps,
         ...(directives.hold !== undefined && Number.isFinite(Number(directives.hold)) ? { hold: Number(directives.hold) } : {}), ...voiceOf(directives) });
       continue;
     }
@@ -569,6 +582,12 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
       }
       if (p.kind === 'code') v = v.split('\n').slice(0, 14).join('\n');
       if (p.kind === 'bullets') v = v.slice(0, 8);
+      if (p.kind === 'findings') {
+        if (slide.table) continue;
+        const mark = { confirmed: '✓', fixed: '✓', refuted: '✗', partial: '△', open: 'ℹ' };
+        slide.table = { head: ['', 'Finding', 'Status'], rows: v.map(f => [f.id, f.title, `${f.status ?? 'open'} ${mark[String(f.status ?? 'open').toLowerCase()] ?? ''}`.trim()]) };
+        continue;
+      }
       if (p.kind === 'body' && slide.body) { slide.body += `\n\n${v}`; continue; }
       if (p.kind in slide && p.kind !== 'body') continue; // one block of a kind per slide; the rest stays in the document
       slide[p.kind] = v;
@@ -637,6 +656,12 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
 export function deckSettings(meta = {}) {
   const slides = Object.fromEntries(['theme', 'accent', 'footer'].filter(k => meta[k]).map(k => [k, meta[k]]));
   const app = Object.fromEntries(['platform', 'env', 'role', 'pages'].filter(k => meta[k]).map(k => [k, meta[k]]));
+  // "platforms: foundry=dev/owner, rms=local": the environment (and role) of each other platform scenes visit.
+  if (meta.platforms) app.platforms = Object.fromEntries(String(meta.platforms).split(/\s*,\s*/).filter(Boolean).map(x => {
+    const [n, v = ''] = x.split('=').map(y => y.trim());
+    const [env, role] = v.split('/').map(y => y.trim());
+    return [n, { ...(env ? { env } : {}), ...(role ? { role } : {}) }];
+  }));
   return { ...app, slides: { theme: 'dark', ...slides }, pronounce: meta.pronounce ?? {}, ...voiceOf(meta), ...(meta.name ? { name: meta.name } : {}) };
 }
 

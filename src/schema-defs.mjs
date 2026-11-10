@@ -326,6 +326,7 @@ const slide = obj('A still slide instead of steps: drawn without a browser or ap
 const slideStyle = obj('How slide scenes look (a platform\'s apply to its tours; the tour\'s win).', { theme: { enum: ['dark', 'light'], description: 'Default dark.' }, accent: str('Accent colour (CSS), e.g. "#1f6fd1".'), footer: str('Footer text on every slide.') });
 const scene = obj('One scene: narration over the steps that show it.', {
   slide,
+  platform: str('This scene runs on another app: platforms/<name>/ (its baseUrl, login, known issues, fragments and data). Its sign-in is its own saved login, loaded into the same browser; pick its environment and role in the tour "platforms".'),
   voice: str('The narrator of this scene, when it is not the tour narrator (a second voice, for a dialogue or a quote). Wins over --voice.'),
   rate: num('Speaking rate of this scene, -10 to 10 (wins over --rate).', { minimum: -10, maximum: 10 }),
   title: str('Shown on title cards and in reports.'), narration: str('What the narrator says; the scene lasts as long as it does. Required unless "camera": false.'),
@@ -364,6 +365,8 @@ export const SCHEMAS = {
     properties: {
       ...$schemaProp,
       name: str('Run folder name (default: the file name).'), platform: str('The app: platforms/<platform>/.'),
+      findings: str('The findings document of this tour (markdown, relative to the tour file): what the spike or investigation concluded. Every run writes <run>/findings/ (findings.md, findings.json, source.md) from it. Findings are "### F-1 · Title" headings with "- status: confirmed" (refuted, partial, open), "- severity:", "- evidence:" lines. aft scratch --from sets it to the document the deck came from.'),
+      platforms: { type: 'object', description: 'Other apps the scenes visit (a scene with "platform": "<name>"): which environment and login role of each. Default: that platform defaults.', additionalProperties: obj('One other platform.', { env: str('Its environment (environments.json).'), role: str('Its login role (login.json).') }) },
       env: str('Default environment (--target overrides; default: the platform\'s default).'), role: str('Login role (--role overrides; default: login.json "default").'),
       fixtures: { type: 'array', items: { type: 'string', pattern: '^[A-Za-z0-9_-]+$' }, description: 'Fixtures from the platform\'s fixtures/: data ({data.x}), setup/teardown and off-camera steps.' },
       story, scenes: { type: 'array', minItems: 1, items: scene, description: 'The scenes, in order.' },

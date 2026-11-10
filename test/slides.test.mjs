@@ -218,7 +218,7 @@ test('scratch --from --update keeps hand edits and takes the document\'s changes
   const doc = path.join(dir, 'd.md');
   fs.writeFileSync(doc, '# Deck\n\nIntro.\n\n## One\n\n- a\n\nSay: first.\n\n## Two\n\n- b\n\nSay: second.\n');
   const name = `t-update-${process.pid}`;
-  const tourFile = path.join(root, 'scratch', name, `${name}.tour.json`);
+  const tourFile = path.join(root, 'out', 'scratch', name, `${name}.tour.json`);
   try {
     assert.equal(JSON.parse(cli(['scratch', name, '--from', doc]).stdout).ok, true);
     const t = JSON.parse(fs.readFileSync(tourFile, 'utf8'));
@@ -231,7 +231,7 @@ test('scratch --from --update keeps hand edits and takes the document\'s changes
     const after = JSON.parse(fs.readFileSync(tourFile, 'utf8'));
     assert.equal(after.scenes.find(s => s.title === 'One').narration, 'mine');
     assert.equal(after.scenes.find(s => s.title === 'Two').narration, 'second, changed.');
-  } finally { fs.rmSync(path.join(root, 'scratch', name), { recursive: true, force: true }); }
+  } finally { fs.rmSync(path.join(root, 'out', 'scratch', name), { recursive: true, force: true }); }
 });
 
 test('a shared-slide scene needs no title', () => {
@@ -290,9 +290,9 @@ test('round 6: currency before the number, repeated titles, shared slides beside
   try {
     const r = JSON.parse(cli(['scratch', name, '--from', path.join(dir, 'd.md')]).stdout);
     assert.equal(r.ok, true);
-    assert.ok(fs.existsSync(path.join(root, 'scratch', name, 'slides', 'closing.json')));
+    assert.ok(fs.existsSync(path.join(root, 'out', 'scratch', name, 'slides', 'closing.json')));
     assert.equal(JSON.parse(cli(['validate', r.data.tour, '--out', path.join(dir, 'run')]).stdout).ok, true);
-  } finally { fs.rmSync(path.join(root, 'scratch', name), { recursive: true, force: true }); }
+  } finally { fs.rmSync(path.join(root, 'out', 'scratch', name), { recursive: true, force: true }); }
 });
 
 test('--update pairs scenes by section, not title; an invalid merge is refused and nothing is written', () => {
@@ -300,7 +300,7 @@ test('--update pairs scenes by section, not title; an invalid merge is refused a
   const doc = path.join(dir, 'd.md');
   const write1 = extra => fs.writeFileSync(doc, `# Deck\n\nIntro.\n\n## Foundry: one\n\n- a\n\nSay: one.\n${extra}\n## Foundry: two\n\n\`\`\`chart\nA | 1\nB | 2\n\`\`\`\n\nSay: two.\n\n## Cost: three\n\n- **5 MB** a day\n- **9 MB** a week\n\nSay: three.\n`);
   const name = `t-pair-${process.pid}`;
-  const tourFile = path.join(root, 'scratch', name, `${name}.tour.json`);
+  const tourFile = path.join(root, 'out', 'scratch', name, `${name}.tour.json`);
   const run = (...a) => JSON.parse(cli(['scratch', name, '--from', doc, ...a]).stdout);
   try {
     write1('');
@@ -326,5 +326,96 @@ test('--update pairs scenes by section, not title; an invalid merge is refused a
     assert.equal(bad.ok, false);
     assert.match(bad.error.message, /would make an invalid tour, so nothing was written/);
     assert.equal(fs.readFileSync(tourFile, 'utf8'), before);
-  } finally { fs.rmSync(path.join(root, 'scratch', name), { recursive: true, force: true }); }
+  } finally { fs.rmSync(path.join(root, 'out', 'scratch', name), { recursive: true, force: true }); }
+});
+
+test('multi-platform tours: a scene on another platform uses its URL and its own saved login, in the same browser', async () => {
+  const http = await import('node:http');
+  const serve = handler => new Promise(r => { const s = http.createServer(handler); s.listen(0, '127.0.0.1', () => r(s)); });
+  // Platform "a": the tour's app, no login. Platform "b": its page needs a session cookie, which its login sets.
+  const a = await serve((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<h1>App A</h1>'); });
+  const b = await serve((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html', ...(req.url.startsWith('/login') ? { 'Set-Cookie': 'sid=ok; Path=/' } : {}) });
+    const signed = /sid=ok/.test(req.headers.cookie ?? '') || req.url.startsWith('/login');
+    res.end(signed ? '<span id="me">me</span><h1>Service B</h1>' : '<h1>Please sign in</h1>');
+  });
+  const tag = `mp${process.pid}`;
+  const dir = path.join(tmp(), 'platforms');
+  const pa = path.join(dir, `${tag}-a`), pb = path.join(dir, `${tag}-b`);
+  const w = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v)); };
+  w(path.join(pa, 'platform.json'), { timeouts: { action: 3000, verify: 3000 } });
+  w(path.join(pa, 'environments.json'), { default: 'local', local: { baseUrl: `http://127.0.0.1:${a.address().port}/` } });
+  w(path.join(pb, 'platform.json'), { timeouts: { action: 3000, verify: 3000 } });
+  w(path.join(pb, 'environments.json'), { default: 'dev', dev: { baseUrl: `http://127.0.0.1:${b.address().port}/` } });
+  w(path.join(pb, 'login.json'), { default: 'user', signedIn: '#me', checkPath: '/', roles: { user: { steps: [{ goto: '/login' }] } } });
+  const tour = path.join(pa, 'tours', 'mp.tour.json');
+  w(tour, { name: 'mp', platform: `${tag}-a`, platforms: { [`${tag}-b`]: { env: 'dev' } }, scenes: [
+    { title: 'A', narration: 'On A.', url: '/', steps: [{ verify: { role: 'heading', name: 'App A' } }] },
+    { title: 'B', narration: 'On B.', platform: `${tag}-b`, url: '/', steps: [{ verify: { role: 'heading', name: 'Service B' } }] },
+    { title: 'A again', narration: 'Back.', url: '/', steps: [{ verify: { role: 'heading', name: 'App A' } }] }] });
+  try {
+    const def = loadTourJson(tour, { toolRoot: root });
+    assert.deepEqual(Object.keys(def.raw.others), [`${tag}-b`]);
+    // Async: the two servers live in this process and must keep answering while the CLI runs.
+    const { spawn } = await import('node:child_process');
+    const r = await new Promise(res => { const p = spawn(process.execPath, [path.join(root, 'src', 'cli.mjs'), 'validate', tour, '--out', path.join(tmp(), 'run'), '--json']); let stdout = '', stderr = ''; p.stdout.on('data', d => { stdout += d; }); p.stderr.on('data', d => { stderr += d; }); p.on('close', () => res({ stdout, stderr })); });
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.ok, true, `${r.stderr.slice(-1500)}`);
+    assert.equal(out.data.blocking, 0);
+    assert.ok(fs.existsSync(path.join(root, 'auth', `${tag}-b`, 'dev', 'user.json')), 'b signed in with its own saved login');
+    // An unknown platform on a scene is a config error.
+    w(tour, { name: 'mp', platform: `${tag}-a`, scenes: [{ title: 'X', narration: 'n', platform: 'nope-platform', steps: [] }] });
+    assert.throws(() => loadTourJson(tour, { toolRoot: root }), /a scene has "platform": "nope-platform"/);
+  } finally {
+    a.close(); b.close();
+    fs.rmSync(path.join(root, 'auth', `${tag}-b`), { recursive: true, force: true });
+  }
+});
+
+test('markdown: Platform: on a steps section, platforms: in front matter', async () => {
+  const m = await import('../src/slides.mjs');
+  const { scenes, meta } = m.outline('---\nplatform: rms\nplatforms: foundry=dev/owner, other=qa\n---\n# D\n\n## Intro\n\n- a\n\n## In Foundry: the agent\nPlatform: foundry\n```steps\nverify Agents\n```\nSay: The agent.\n');
+  assert.equal(scenes[2].platform, 'foundry');
+  assert.deepEqual(m.deckSettings(meta).platforms, { foundry: { env: 'dev', role: 'owner' }, other: { env: 'qa' } });
+  assert.equal(m.deckSettings(meta).platform, 'rms');
+});
+
+test('findings: the tour\'s findings document becomes <run>/findings/ (md, json, source) on every run, passed or failed', async () => {
+  const { writeFindings, readable, FINDINGS_SCHEMA } = await import('../src/findings.mjs');
+  const dir = tmp();
+  const doc = path.join(dir, 'findings.md');
+  fs.writeFileSync(doc, '---\ntitle: Spike X\nquestion: Does it fit?\n---\n# Spike X\n\n## Findings\n\n### F-1 · It fits\n- status: confirmed\n- severity: high\n- evidence: scene 2\n\n### F-2 · It is slow\n- status: partial\n\nSay: Two findings.\nReveal: dim\n\n```steps\nclick Go\n```\n');
+  const tour = write(dir, 'x.tour.json', { name: 'x', style: 'explainer', findings: 'findings.md', scenes: [{ title: 'A', narration: 'n', slide: { heading: 'A' } }] });
+  const def = loadTourJson(tour, { toolRoot: root });
+  assert.equal(def.findingsFile, doc);
+  const out = path.join(dir, 'run');
+  fs.mkdirSync(out);
+  const md = writeFindings(def, out, { status: 'failed', error: 'SCRIPT failure: x' });
+  const data = JSON.parse(fs.readFileSync(path.join(out, 'findings', 'findings.json'), 'utf8'));
+  assert.equal(data.schema, FINDINGS_SCHEMA);
+  assert.equal(data.question, 'Does it fit?');
+  assert.deepEqual(data.summary, { findings: 2, confirmed: 1, partial: 1 });
+  assert.deepEqual(data.findings.map(f => [f.id, f.status, f.severity ?? null]), [['F-1', 'confirmed', 'high'], ['F-2', 'partial', null]]);
+  assert.equal(data.run.status, 'failed');
+  const text = fs.readFileSync(md, 'utf8');
+  assert.match(text, /\| F-1 \| It fits \| confirmed \| high \| scene 2 \|/);
+  assert.ok(!/Reveal: dim|click Go/.test(text), 'deck directives and steps are left out of the summary');
+  assert.match(readable('Say: hello'), /🗣 \*hello\*/);
+  assert.ok(fs.existsSync(path.join(out, 'findings', 'source.md')));
+  assert.throws(() => loadTourJson(write(dir, 'y.tour.json', { findings: 'nope.md', scenes: [{ title: 'A', narration: 'n', slide: {} }] }), { toolRoot: root }), /"findings" document .* not found/);
+  // In a deck: "### F-1 · …" headings are a findings table on the slide.
+  const m = await import('../src/slides.mjs');
+  const t = m.outline('# D\n\n## Intro\n\n- a\n\n## Findings\n\n### F-1 · It fits\n- status: confirmed\n\n### F-2 · It is slow\n- status: refuted\n').scenes[2].slide.table;
+  assert.deepEqual(t, { head: ['', 'Finding', 'Status'], rows: [['F-1', 'It fits', 'confirmed ✓'], ['F-2', 'It is slow', 'refuted ✗']] });
+});
+
+test('scratch decks live in out/scratch and carry a findings.md', () => {
+  const name = `t-out-${process.pid}`;
+  try {
+    const r = JSON.parse(cli(['scratch', name]).stdout);
+    assert.equal(r.ok, true);
+    assert.equal(path.dirname(r.data.dir), path.join(root, 'out', 'scratch'));
+    assert.ok(fs.existsSync(path.join(r.data.dir, 'findings.md')));
+    assert.equal(JSON.parse(fs.readFileSync(r.data.tour, 'utf8')).findings, 'findings.md');
+  } finally { fs.rmSync(path.join(root, 'out', 'scratch', name), { recursive: true, force: true }); }
 });

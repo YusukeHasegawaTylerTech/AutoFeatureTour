@@ -49,6 +49,7 @@
 //                                                    wait for it (no id: the running one, else the last) and print its
 //                                                    result, same exit code; AFT_CALL_TIMEOUT=<s> caps a call's wait
 //   aft ui       [--port 4777] [--no-open] [--root <checkout>]   the local web UI (ui/server.mjs; Ctrl+C stops it)
+//   aft findings <run folder> [--from <doc.md>]       (re)write <run>/findings/: the spike summary (findings.md, findings.json aft-findings/1)
 //   aft voices   [--try <name>]                      the installed narrators (tour "voice", a scene's "voice", --voice; short names work)
 //   aft --list-voices | --help | --version
 //
@@ -82,6 +83,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { saveLogin } from './auth.mjs';
 import { ConfigError, loadTourJson, materialize, missingCredentials } from './declarative.mjs';
 import { check as checkSchema, schemaFor, schemaRef, schemasDir, schemaTypes, writeSchemaCopy } from './schema.mjs';
+import { writeFindings } from './findings.mjs';
 import { contactSheet, deckSettings, narrationWarnings, OUTLINE_SCHEMA, OUTLINE_SYSTEM, outline, renderSlides } from './slides.mjs';
 import { appSettingsFor } from './cli-app.mjs';
 import { platformCommand } from './platform-cli.mjs';
@@ -113,6 +115,73 @@ const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rat
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
   'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'try', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
+
+/** A spike's write-up in the standard form (src/findings.mjs); `aft scratch --from findings.md` makes the deck from it. */
+const FINDINGS_TEMPLATE = name => `---
+title: ${name}
+question: What did this spike set out to answer?
+footer: ${name}
+reveal: auto
+---
+# ${name}: what we found
+
+One line on the question and the answer.
+
+Say: This video reviews what the spike found.
+
+## Context: why we looked
+
+- What prompted it
+- What was in scope, and what wasn't
+
+Say: Here is why we looked.
+
+## Findings
+
+### F-1 · The first finding, as a claim
+- status: confirmed
+- severity: medium
+- area: where it applies
+- evidence: scene 3; report.md; the run's screens
+- suggested: the next step
+
+### F-2 · A concern that turned out not to hold
+- status: refuted
+- severity: low
+- evidence: the measurement that showed it
+
+Say: Two findings: one confirmed, one that didn't hold.
+
+## Next steps
+
+1. What to do now
+2. Who decides
+
+Say: Here is what happens next.
+`;
+
+/**
+ * out/scratch/: one-off tours live beside their runs. Decks made before, in <checkout>/scratch/, move there the first
+ * time (each folder once; a name already in out/scratch/ stays where it was), with their "$schema" paths fixed.
+ */
+function scratchRoot() {
+  const root = path.join(path.resolve(process.env.AFT_OUT_DIR ?? path.join(toolRoot, 'out')), 'scratch');
+  const legacy = path.join(toolRoot, 'scratch');
+  if (fs.existsSync(legacy) && path.resolve(legacy) !== path.resolve(root)) {
+    for (const d of fs.readdirSync(legacy)) {
+      const from = path.join(legacy, d), to = path.join(root, d);
+      if (!fs.statSync(from).isDirectory() || fs.existsSync(to)) continue;
+      fs.mkdirSync(root, { recursive: true });
+      try { fs.renameSync(from, to); } catch { fs.cpSync(from, to, { recursive: true }); fs.rmSync(from, { recursive: true, force: true }); }
+      for (const f of fs.readdirSync(to).filter(f => /\.tour\.json$/.test(f))) {
+        try { const t = JSON.parse(fs.readFileSync(path.join(to, f), 'utf8')); if (t.$schema) { t.$schema = schemaRef(to, 'tour'); fs.writeFileSync(path.join(to, f), JSON.stringify(t, null, 2) + '\n'); } } catch { /* not ours to fix */ }
+      }
+      log(`moved scratch/${d} to ${to}`);
+    }
+    if (!fs.readdirSync(legacy).length) fs.rmdirSync(legacy);
+  }
+  return root;
+}
 
 /**
  * A three-way merge of a generated tour: `current` (the file, maybe edited by hand), `prev` (what the last generation
@@ -218,6 +287,7 @@ async function generateExplainer(args) {
     for (const s of scenes) if (s.slide?.image) s.slide.image = path.relative(out, s.slide.image).split(path.sep).join('/');
     if (args.platform) loadPlatform(toolRoot, args.platform); // fails early on a typo
     const { name: _n, ...deck } = deckSettings(heuristic.meta);
+    deck.findings = path.relative(out, docFile).split(path.sep).join('/'); // the document is the run's findings
     if (deck.pages) deck.pages = path.relative(out, path.resolve(docDir, deck.pages)).split(path.sep).join('/'); // as written: relative to the document
     const tour = { $schema: schemaRef(out, 'tour'), name, ...deck, ...(args.platform ? { platform: args.platform } : {}), style: 'explainer',
       comment: `Generated from ${path.basename(docFile)} (${by}). Edit the slides and narration, add app scenes (steps) between them if useful, then aft run it.${by === 'outline' && !heuristic.said ? ' The narration is the document\'s text: write "Say: …" under each heading in the document to give each slide its own spoken words.' : ''}`,
@@ -566,10 +636,28 @@ function keepSource(def, tourDir, outDir) {
   const inside = (a, b) => { const r = path.relative(b, a); return !r.startsWith('..') && !path.isAbsolute(r); };
   if (def.pagesDir && !inside(outDir, def.pagesDir)) { fs.cpSync(def.pagesDir, path.join(src, 'pages'), { recursive: true }); raw.pages = 'pages'; }
   else if (def.pagesDir) raw.pages = path.relative(src, def.pagesDir).split(path.sep).join('/');
+  // The findings document comes along, so the copy summarizes its findings too.
+  if (def.findingsFile && fs.existsSync(def.findingsFile)) { fs.copyFileSync(def.findingsFile, path.join(src, 'findings.md')); raw.findings = 'findings.md'; }
   raw.$schema = schemaRef(src, 'tour');
   const file = path.join(src, path.basename(def.tourFile));
   fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
   return file;
+}
+
+/**
+ * Runs fn (a render or a validate) and then writes <outDir>/findings/ when the tour has a findings document
+ * (src/findings.mjs), passed or failed: a failure is part of what the spike found.
+ */
+async function withFindings(def, outDir, done, fn) {
+  const note = r => { try { const f = writeFindings(def, outDir, r); if (f) log(`findings: ${f}`); } catch (e) { log(`findings: not written (${e.message})`); } };
+  try {
+    const r = await fn();
+    note({ status: r?.blocking ? 'failed' : done, ...(r?.video ? { video: 'tour.mp4', seconds: r.seconds } : {}), ...(r?.blocking ? { error: `${r.blocking} step(s) can't be resolved` } : {}) });
+    return r;
+  } catch (e) {
+    note({ status: 'failed', class: classify(e), error: e.message.split('\n')[0].slice(0, 300) });
+    throw e;
+  }
 }
 
 // ---- Render (narrate → record → cut → mux → join) ----------------------------------------------------------------
@@ -1022,7 +1110,7 @@ const commands = {
     }
     const { def, dir } = await loadTour(file, args);
     if (args.reset) await commands.reset({ ...args, _: ['reset'], platform: def.platform, tour: file, target: envOf(args) ?? def.env, name: undefined });
-    const r = await withRun(runName(def, args), args, 'validate', out => validate(def, dir, out, args));
+    const r = await withRun(runName(def, args), args, 'validate', out => withFindings(def, out, 'validated', () => validate(def, dir, out, args)));
     if (r.blocking) { lastData = r; throw new StepError(`${r.blocking} step(s) can't be resolved; see validation.md in the run folder`); }
     return r;
   },
@@ -1032,7 +1120,7 @@ const commands = {
   async render(args) {
     const { def, dir } = await loadTour(args.script ?? args._[1], args);
     if (args.reset) await commands.reset({ ...args, _: ['reset'], platform: def.platform, tour: args.script ?? args._[1], target: envOf(args) ?? def.env, name: undefined });
-    return withRun(runName(def, args), args, args.record ? 'run' : 'render', out => render(def, dir, out, args));
+    return withRun(runName(def, args), args, args.record ? 'run' : 'render', out => withFindings(def, out, args.slidesOnly ? 'previewed' : args.record ? 'recorded' : 'rendered', () => render(def, dir, out, args)));
   },
 
   async all(args) {
@@ -1227,12 +1315,13 @@ const commands = {
 
   /**
    * `aft scratch [<name>] [--from doc.md] [--pages] [--force]`: the official place for one-off tours (an explainer, an
-   * experiment): scratch/<name>/<name>.tour.json in this checkout, git-ignored, kept across sessions, with a working
-   * "$schema". No name: lists them. --from: slides from a document's outline (its images copied into assets/);
-   * --pages: also a pages/ folder of static HTML, served for each run.
+   * experiment, a spike's findings): out/scratch/<name>/<name>.tour.json, beside the runs (out/ is git-ignored), kept
+   * across sessions, with a working "$schema". No name: lists them. --from: slides from a document's outline (its
+   * images copied into assets/; the document itself is the tour's findings, findings.md); --pages: also a pages/
+   * folder of static HTML, served for each run.
    */
   async scratch(args) {
-    const root = path.join(toolRoot, 'scratch');
+    const root = scratchRoot();
     const name = args._[1];
     if (!name) {
       const list = fs.existsSync(root) ? fs.readdirSync(root).filter(d => fs.existsSync(path.join(root, d, `${d}.tour.json`)))
@@ -1286,6 +1375,8 @@ const commands = {
         fs.cpSync(from, path.join(dir, 'pages'), { recursive: true });
         deck.pages = 'pages';
       }
+      // The document is the spike's write-up: the deck's findings (findings.md), summarized in every run's findings/.
+      if (path.resolve(docFile) !== path.resolve(dir, 'findings.md')) fs.copyFileSync(docFile, path.join(dir, 'findings.md'));
       // Shared slides ("Use: closing") beside the document come along: slides/<name>.json (the whole slides/
       // folder, so their images too), or a .json path, copied into slides/. Every --from (and --update) copies again.
       const docDir = path.dirname(docFile);
@@ -1317,7 +1408,9 @@ const commands = {
       { title: 'Results', narration: 'A table, and a flow from input to result.',
         slide: { table: { head: ['Case', 'Result'], rows: [['Sample one', '✓ pass'], ['Sample two', '✗ fail']] }, flow: ['Input', 'One call', 'Decision'], note: 'Source: where the numbers came from' } },
     ];
-    let tour = { $schema: schemaRef(dir, 'tour'), name, style: 'explainer', ...deck, scenes };
+    // Without --from: a findings.md to start the write-up from, in the standard form (never over one that's there).
+    if (!args.from && !fs.existsSync(path.join(dir, 'findings.md'))) fs.writeFileSync(path.join(dir, 'findings.md'), FINDINGS_TEMPLATE(name));
+    let tour = { $schema: schemaRef(dir, 'tour'), name, style: 'explainer', ...deck, findings: 'findings.md', scenes };
     // --update: regenerated from the document, keeping what was edited in the tour since the last generation
     // (.generated.json beside it is that generation). Returns what was kept.
     const generated = path.join(dir, '.generated.json');
@@ -1352,6 +1445,29 @@ const commands = {
     fs.writeFileSync(tourFile, JSON.stringify(tour, null, 2) + '\n');
     if (!json) console.log(`wrote ${tourFile}\nnext: edit it, then  aft render "${tourFile}" --slides-only  (preview)  or  aft run "${tourFile}"`);
     return { tour: tourFile, dir, scenes: tour.scenes.length, ...(kept ? { kept } : {}) };
+  },
+
+  /**
+   * `aft findings <run folder> [--from <doc.md>]`: (re)writes <run>/findings/ for a run that is already there: after
+   * the write-up changed, or for a run made before the tour named its findings. --from names the document when the
+   * tour doesn't. Reads the run's source/ copy of the tour (else the tour it ran).
+   */
+  async findings(args) {
+    const runDir = args._[1] && path.resolve(args._[1]);
+    if (!runDir || !fs.existsSync(path.join(runDir, 'run.json'))) throw new UsageError('Usage: aft findings <run folder> [--from <findings.md>]');
+    const info = JSON.parse(fs.readFileSync(path.join(runDir, 'run.json'), 'utf8'));
+    const src = path.join(runDir, 'source');
+    const tourFile = (fs.existsSync(src) && fs.readdirSync(src).filter(f => /\.json$/.test(f)).map(f => path.join(src, f))[0])
+      || (info.input ?? []).map(f => path.resolve(f)).find(f => /\.json$/.test(f) && fs.existsSync(f));
+    if (!tourFile) throw new UsageError(`${runDir}: no tour to read (no source/ copy, and the tour it ran is gone)`);
+    const { def } = await loadTour(tourFile, { ...args, _: ['findings', tourFile] });
+    if (args.from) def.findingsFile = path.resolve(String(args.from));
+    if (!def.findingsFile) throw new UsageError(`${path.basename(tourFile)} names no findings document: add "findings": "<file.md>" to the tour, or pass --from <file.md>`);
+    if (!fs.existsSync(def.findingsFile)) throw new UsageError(`findings document ${def.findingsFile} not found`);
+    const report = (() => { try { return JSON.parse(fs.readFileSync(path.join(runDir, 'report.json'), 'utf8')); } catch { return null; } })();
+    const file = writeFindings(def, runDir, { status: info.status === 'done' ? (info.command === 'validate' ? 'validated' : 'recorded') : info.status, ...(report?.error ? { error: String(report.error).slice(0, 300) } : {}) });
+    if (!json) console.log(file);
+    return { findings: file, json: path.join(runDir, 'findings', 'findings.json') };
   },
 
   /** `aft voices [--try "<name>"]`: the installed narrators; --try resolves a short name ("Zira") to one. */

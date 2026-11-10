@@ -21,6 +21,29 @@
       "type": "string",
       "description": "The app: platforms/<platform>/."
     },
+    "findings": {
+      "type": "string",
+      "description": "The findings document of this tour (markdown, relative to the tour file): what the spike or investigation concluded. Every run writes <run>/findings/ (findings.md, findings.json, source.md) from it. Findings are \"### F-1 · Title\" headings with \"- status: confirmed\" (refuted, partial, open), \"- severity:\", \"- evidence:\" lines. aft scratch --from sets it to the document the deck came from."
+    },
+    "platforms": {
+      "type": "object",
+      "description": "Other apps the scenes visit (a scene with \"platform\": \"<name>\"): which environment and login role of each. Default: that platform defaults.",
+      "additionalProperties": {
+        "type": "object",
+        "description": "One other platform.",
+        "properties": {
+          "env": {
+            "type": "string",
+            "description": "Its environment (environments.json)."
+          },
+          "role": {
+            "type": "string",
+            "description": "Its login role (login.json)."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "env": {
       "type": "string",
       "description": "Default environment (--target overrides; default: the platform's default)."
@@ -515,6 +538,10 @@
               }
             },
             "additionalProperties": false
+          },
+          "platform": {
+            "type": "string",
+            "description": "This scene runs on another app: platforms/<name>/ (its baseUrl, login, known issues, fragments and data). Its sign-in is its own saved login, loaded into the same browser; pick its environment and role in the tour \"platforms\"."
           },
           "voice": {
             "type": "string",
