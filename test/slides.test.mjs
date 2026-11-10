@@ -43,7 +43,7 @@ test('outline: tables, blockquotes as callouts, "Say:" narration, short titles',
   assert.equal(said, true);
   const r = scenes.find(s => s.slide.table);
   assert.equal(r.title, 'Results');
-  assert.equal(r.slide.heading, 'five of six passed');
+  assert.equal(r.slide.heading, 'Five of six passed');
   assert.equal(r.slide.kicker, 'Results');
   assert.equal(r.narration, 'Five of the six samples passed. The sixth is a real finding.');
   assert.deepEqual(r.slide.table, { head: ['Case', 'Result'], rows: [['One', 'valid ✓'], ['Two', 'invalid ✗']] });
@@ -168,9 +168,9 @@ test('round 3: flow connectors, heading split, lists as columns or stats, row to
   const [, net, agents] = ol(md).scenes;
   assert.equal(net.title, 'Network load');
   assert.equal(net.slide.kicker, 'Network load');
-  assert.equal(net.slide.heading, 'sending rules is fine');
+  assert.equal(net.slide.heading, 'Sending rules is fine');
   assert.deepEqual(net.slide.stats, [{ value: '60 KB', label: 'of text' }, { value: '80 MB', label: 'a day' }]);
-  assert.deepEqual(agents.slide.columns, [{ heading: 'Misconception', body: 'agents remember' }, { heading: 'Reality', body: 'they do not' }]);
+  assert.deepEqual(agents.slide.columns, [{ heading: 'Misconception', body: 'Agents remember' }, { heading: 'Reality', body: 'They do not' }]);
   assert.equal(agents.slide.bullets, undefined);
 });
 
@@ -185,4 +185,56 @@ test('shared slides: "use" fills a slide from a file, the scene overrides it; ho
   assert.equal(def.scenes[0].narration, 'Thanks.');
   assert.equal(def.scenes[0].hold, 2);
   assert.throws(() => loadTourJson(write(dir, 'u.tour.json', { scenes: [{ title: 'X', narration: 'n', slide: { use: 'nope' } }] }), { toolRoot: root }), /no such shared slide/);
+});
+
+test('round 4: front matter, directives, H1 split, flow from prose, glyph tones everywhere, no scene cap', async () => {
+  const m = await import('../src/slides.mjs');
+  const md = ['---', 'footer: F', 'reveal: auto', 'pronounce: FOIA=Foya, RMS=R M S', '---', '# ID-1 · Area: big question', '', 'Sub.', '',
+    '## Design: one call', 'A + B → C ✓', 'Hold: 2', 'Note: small', '', '## List', '- a', '- b', 'Reveal: dim', '',
+    '## End', 'Use: closing', ...Array.from({ length: 14 }, (_, i) => `\n## S${i}\n\ntext ${i}`)].join('\n');
+  const { scenes, meta, dropped } = m.outline(md);
+  assert.equal(dropped, 0);
+  assert.equal(scenes.length, 18);
+  assert.deepEqual(m.deckSettings(meta), { slides: { theme: 'dark', footer: 'F' }, pronounce: { FOIA: 'Foya', RMS: 'R M S' } });
+  assert.deepEqual([scenes[0].title, scenes[0].slide.kicker, scenes[0].slide.heading], ['Overview', 'ID-1 · Area', 'Big question']);
+  const d = scenes[1];
+  assert.deepEqual(d.slide.flow, ['A', '+', 'B', '→', 'C ✓']);
+  assert.equal(d.hold, 2);
+  assert.equal(d.slide.note, 'small');
+  assert.equal(d.slide.reveal, true); // reveal: auto, 2+ items
+  assert.deepEqual([scenes[2].slide.reveal, scenes[2].slide.dim], [true, true]);
+  assert.deepEqual(scenes[3].slide, { use: 'closing' });
+  assert.equal(scenes[3].narration, undefined);
+  assert.equal(m.outline(md, { maxScenes: 5 }).dropped, 13);
+  const h = m.slideHtml({ number: 1, title: 't', slide: { callout: '△ careful', stats: [{ value: '1', label: 'x ✓' }], columns: [{ heading: 'A', body: 'x ✗' }, { heading: 'B' }], table: { rows: [['a', 'b △']] } } });
+  assert.match(h, /callout warn/);
+  assert.match(h, /stat ok/);
+  assert.match(h, /col bad/);
+  assert.match(h, /<tr class="warn"/);
+});
+
+test('scratch --from --update keeps hand edits and takes the document\'s changes', () => {
+  const dir = tmp();
+  const doc = path.join(dir, 'd.md');
+  fs.writeFileSync(doc, '# Deck\n\nIntro.\n\n## One\n\n- a\n\nSay: first.\n\n## Two\n\n- b\n\nSay: second.\n');
+  const name = `t-update-${process.pid}`;
+  const tourFile = path.join(root, 'scratch', name, `${name}.tour.json`);
+  try {
+    assert.equal(JSON.parse(cli(['scratch', name, '--from', doc]).stdout).ok, true);
+    const t = JSON.parse(fs.readFileSync(tourFile, 'utf8'));
+    t.scenes.find(s => s.title === 'One').narration = 'mine';
+    fs.writeFileSync(tourFile, JSON.stringify(t));
+    fs.writeFileSync(doc, '# Deck\n\nIntro.\n\n## One\n\n- a\n\nSay: first, changed.\n\n## Two\n\n- b\n\nSay: second, changed.\n');
+    assert.equal(JSON.parse(cli(['scratch', name, '--from', doc]).stdout).ok, false); // exists: needs --update or --force
+    const r = JSON.parse(cli(['scratch', name, '--from', doc, '--update']).stdout);
+    assert.deepEqual(r.data.kept, ['scene "One": narration']);
+    const after = JSON.parse(fs.readFileSync(tourFile, 'utf8'));
+    assert.equal(after.scenes.find(s => s.title === 'One').narration, 'mine');
+    assert.equal(after.scenes.find(s => s.title === 'Two').narration, 'second, changed.');
+  } finally { fs.rmSync(path.join(root, 'scratch', name), { recursive: true, force: true }); }
+});
+
+test('a shared-slide scene needs no title', () => {
+  assert.deepEqual(check('tour', { scenes: [{ slide: { use: 'closing' } }] }), []);
+  assert.ok(check('tour', { scenes: [{ narration: 'x' }] }).length);
 });

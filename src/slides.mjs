@@ -38,6 +38,11 @@ export function toned(x) {
   return m ? { text: s, tone: GLYPH[m[1]] } : { text: s };
 }
 
+/** The tone a ✓ △ ✗ ℹ at the start or end of any of these texts gives, else undefined. */
+const glyphTone = (...texts) => texts.map(t => (t == null ? undefined : toned(String(t)).tone)).find(Boolean);
+/** A table row's tone from a glyph in any of its cells (the whole row takes it). */
+const rowTone = cells => glyphTone(...cells.map(c => (typeof c === 'object' ? c.text : c)));
+
 const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp' };
 
 /** The slide's image file, made absolute (relative to the tour's folder). Throws when it isn't there. */
@@ -70,11 +75,11 @@ function block(kind, v, { dir, reveal }) {
       const rows = (v.rows ?? []).map(row => (Array.isArray(row) ? { cells: row } : row));
       const cell = (c, tag) => { const t = toned(c); return `<${tag} class="${t.tone ?? ''}">${inline(t.text)}</${tag}>`; };
       return `<table>${v.head?.length ? `<thead><tr>${v.head.map(h => cell(h, 'th')).join('')}</tr></thead>` : ''}<tbody>${rows.map(row =>
-        `<tr class="${row.tone ?? ''}"${r()}>${row.cells.map(c => cell(c, 'td')).join('')}</tr>`).join('')}</tbody></table>`;
+        `<tr class="${row.tone ?? rowTone(row.cells) ?? ''}"${r()}>${row.cells.map(c => cell(c, 'td')).join('')}</tr>`).join('')}</tbody></table>`;
     }
     // A card builds in, then each of its bullets.
-    case 'columns': return `<div class="columns">${v.map(c => `<div class="col ${c.tone ?? ''}"${r()}>${c.heading ? `<h3>${inline(c.heading)}</h3>` : ''}${c.body ? `<p>${inline(c.body)}</p>` : ''}${c.bullets?.length ? `<ul>${c.bullets.map(toned).map(b => `<li class="${b.tone ?? ''}"${r()}>${inline(b.text)}</li>`).join('')}</ul>` : ''}</div>`).join('')}</div>`;
-    case 'stats': return `<div class="stats">${v.map(s => `<div class="stat ${s.tone ?? ''}"${r()}><div class="value">${inline(s.value)}</div><div class="label">${inline(s.label ?? '')}</div></div>`).join('')}</div>`;
+    case 'columns': return `<div class="columns">${v.map(c => `<div class="col ${c.tone ?? glyphTone(c.heading, c.body) ?? ''}"${r()}>${c.heading ? `<h3>${inline(c.heading)}</h3>` : ''}${c.body ? `<p>${inline(c.body)}</p>` : ''}${c.bullets?.length ? `<ul>${c.bullets.map(toned).map(b => `<li class="${b.tone ?? ''}"${r()}>${inline(b.text)}</li>`).join('')}</ul>` : ''}</div>`).join('')}</div>`;
+    case 'stats': return `<div class="stats">${v.map(s => `<div class="stat ${s.tone ?? glyphTone(s.value, s.label) ?? ''}"${r()}><div class="value">${inline(s.value)}</div><div class="label">${inline(s.label ?? '')}</div></div>`).join('')}</div>`;
     case 'flow': {
       // Boxes and connectors: "+", "=", "→" (or "->") between boxes as written; two boxes in a row get "→".
       const out = [];
@@ -89,7 +94,7 @@ function block(kind, v, { dir, reveal }) {
       }
       return `<div class="flow">${out.join('')}</div>`;
     }
-    case 'callout': { const c = typeof v === 'string' ? { text: v } : v; return `<div class="callout ${c.tone ?? 'info'}"${r()}>${inline(c.text)}</div>`; }
+    case 'callout': { const c = typeof v === 'string' ? { text: v } : v; return `<div class="callout ${c.tone ?? glyphTone(c.text) ?? 'info'}"${r()}>${inline(c.text)}</div>`; }
     case 'image': { const f = slideImage(v, dir); return `<div class="img"${r()}><img src="data:${MIME[path.extname(f).toLowerCase()]};base64,${fs.readFileSync(f).toString('base64')}"></div>`; }
     default: return '';
   }
@@ -303,19 +308,77 @@ const sentencesOf = p => plain(p).split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/).filter
 /** A short scene title from a heading: the part before ":" or " — " (reports and captions use it). */
 const shortTitle = h => { const p = plain(h).split(/\s*(?::|\s[—–-]\s)\s*/)[0]; return p.length >= 3 ? p : plain(h); };
 const SAY = /^\s*(?:say|narration)\s*:\s*/i;
+/** Per-slide directive lines (never shown): Reveal:, Hold:, Note:, Use:, Theme:, Accent:. */
+const DIRECTIVE = /^\s*(reveal|hold|note|use|theme|accent)\s*:\s*(.*)$/i;
+const cap = s => s.replace(/^\p{Ll}/u, c => c.toUpperCase());
+
+/** "yes", "dim", "no", or fractions ("0, 0.3, 0.6") → { reveal, dim }. */
+function revealOf(v) {
+  const t = String(v).trim().toLowerCase();
+  if (/^(no|off|false|none)$/.test(t)) return { reveal: false };
+  if (t === 'dim') return { reveal: true, dim: true };
+  const nums = t.split(/[\s,]+/).filter(Boolean).map(Number);
+  if (nums.length && nums.every(n => Number.isFinite(n) && n >= 0 && n <= 1)) return { reveal: nums };
+  return { reveal: true, ...(/dim/.test(t) ? { dim: true } : {}) };
+}
+
+/**
+ * The document's front matter (between --- lines at the very top): deck settings. Keys: footer, theme, accent, voice,
+ * reveal (auto | dim | off: the default for slides with two or more items), pronounce ("FOIA=Foya, RMS=R M S", or
+ * indented "FOIA: Foya" lines), name, max-scenes. Returns { meta, text } (text: the document without it).
+ */
+export function frontMatter(markdown) {
+  const m = markdown.replace(/\r\n?/g, '\n').match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!m) return { meta: {}, text: markdown };
+  const meta = {};
+  let list = null;
+  for (const line of m[1].split('\n')) {
+    if (!line.trim() || /^\s*#/.test(line)) continue;
+    const sub = line.match(/^\s+([^:]+?)\s*:\s*(.*)$/);
+    if (sub && list) { meta[list][sub[1]] = sub[2].replace(/^["']|["']$/g, ''); continue; }
+    const kv = line.match(/^([A-Za-z][\w-]*)\s*:\s*(.*)$/);
+    if (!kv) continue;
+    const key = kv[1].toLowerCase(), value = kv[2].trim().replace(/^["']|["']$/g, '');
+    list = null;
+    if (key === 'pronounce') {
+      meta.pronounce = {};
+      if (value) for (const pair of value.split(/\s*,\s*/)) { const [k, ...v] = pair.split('='); if (k && v.length) meta.pronounce[k.trim()] = v.join('=').trim(); }
+      else list = 'pronounce';
+    } else meta[key] = value;
+  }
+  return { meta, text: markdown.replace(/\r\n?/g, '\n').slice(m[0].length) };
+}
+
+/** A paragraph that is a diagram: parts joined by " + ", " → ", " -> " or " = ", with at least one → or =. */
+function flowOf(text) {
+  const t = plain(text);
+  if (!/\s(→|->|=)\s/.test(t) || t.length > 220) return null;
+  const parts = t.split(/\s(\+|→|->|=)\s/).map(x => x.trim()).filter(Boolean);
+  if (parts.length < 3 || parts.length > 9) return null;
+  return parts.map(p => (p === '->' ? '→' : p));
+}
 
 /**
  * A markdown document (findings, a design note, release notes) as slide scenes, with no AI:
+ * - front matter (see frontMatter) sets the deck: footer, theme, accent, voice, pronounce, reveal default;
  * - a title slide from the document's first heading (and its first paragraph as the subtitle), then one slide per
  *   section (the heading level that splits it into several); sub-headings become points;
- * - the slide: list items → bullets, a table → table, a blockquote → callout, a code block → code, an image → image,
+ * - "Topic: claim" headings → kicker "Topic", heading "Claim"; the scene title is the topic ("Overview" for the
+ *   title slide);
+ * - the slide: list items → bullets ("**Label:** text" items → columns, "**number** phrase" items → stats), a table →
+ *   table, a blockquote → callout, a code block → code, an image → image, a paragraph of "a + b → c" → flow, other
  *   prose → body (in the order they come);
  * - the narration: "Say: …" lines (or <!-- say: … --> comments) under the heading, never shown; without them, the
- *   section's prose and points, read as written (validate warns about what a voice misreads).
- * Returns { title, scenes, said } (said: whether the document wrote its narration).
+ *   section's prose and points, read as written (validate warns about what a voice misreads);
+ * - directive lines, never shown: "Reveal: yes | dim | no | 0, 0.3, 0.6", "Hold: 2", "Note: …", "Use: closing"
+ *   (a shared slide), "Theme: light", "Accent: #c53030".
+ * Returns { title, scenes, said, meta, dropped } (said: the document wrote its narration; dropped: scenes past
+ * maxScenes, when one is given).
  */
-export function outline(markdown, { dir = '.', maxScenes = 12 } = {}) {
-  const lines = markdown.replace(/\r\n?/g, '\n')
+export function outline(markdown, { dir = '.', maxScenes } = {}) {
+  const { meta, text } = frontMatter(markdown);
+  maxScenes ??= meta['max-scenes'] ? Number(meta['max-scenes']) : Infinity;
+  const lines = text
     // <!-- say: … --> comments, possibly over several lines, become Say: lines.
     .replace(/<!--\s*(?:say|narration)\s*:\s*([\s\S]*?)-->/gi, (_, t) => `Say: ${t.replace(/\s+/g, ' ').trim()}`)
     .split('\n');
@@ -343,10 +406,11 @@ export function outline(markdown, { dir = '.', maxScenes = 12 } = {}) {
   const parse = body => {
     const parts = []; // [{ kind, value }] in document order
     const say = [];
+    const directives = {};
     let para = [], quote = [], table = [], saying = false;
     const last = kind => (parts.at(-1)?.kind === kind ? parts.at(-1) : null);
     const flush = () => {
-      if (para.length) parts.push({ kind: 'body', value: para.join(' ') });
+      if (para.length) { const v = para.join(' '); const f = flowOf(v); parts.push(f ? { kind: 'flow', value: f } : { kind: 'body', value: v }); }
       if (quote.length) parts.push({ kind: 'callout', value: quote.join(' ') });
       if (table.length) {
         const rows = table.map(r => r.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim()));
@@ -362,6 +426,8 @@ export function outline(markdown, { dir = '.', maxScenes = 12 } = {}) {
       const l = b.line;
       // "Say:" starts the narration; the lines right after it (up to a blank line) continue it.
       if (SAY.test(l)) { flush(); say.push(l.replace(SAY, '').trim()); saying = true; continue; }
+      const d = l.match(DIRECTIVE);
+      if (d) { flush(); saying = false; directives[d[1].toLowerCase()] = d[2].trim(); continue; }
       if (saying && l.trim() && !/^\s*([-*+]|\d+[.)]|>|\||!\[)/.test(l)) { say.push(l.trim()); continue; }
       saying = false;
       const img = l.match(/^\s*!\[[^\]]*\]\(([^)\s]+)[^)]*\)\s*$/);
@@ -376,17 +442,18 @@ export function outline(markdown, { dir = '.', maxScenes = 12 } = {}) {
       para.push(l.trim());
     }
     flush();
-    return { parts, say };
+    return { parts, say, directives };
   };
 
   const docTitle = plain(titleBlock?.heading ?? sections.find(s => s.heading)?.heading ?? 'Overview');
+  const autoReveal = meta.reveal && !/^(no|off|false|none)$/i.test(meta.reveal) ? revealOf(meta.reveal === 'auto' ? 'yes' : meta.reveal) : null;
   const scenes = [];
   let said = false;
   for (const sec of sections) {
-    const { parts, say } = parse(sec.body);
-    if (!sec.heading && !parts.length && !say.length) continue;
+    const { parts, say, directives } = parse(sec.body);
+    if (!sec.heading && !parts.length && !say.length && !Object.keys(directives).length) continue;
     const heading = plain(sec.heading ?? docTitle);
-    const slide = { heading };
+    let slide = { heading };
     const bodies = parts.filter(p => p.kind === 'body');
     if (sec.title) {
       // The title slide: the first paragraph is its subtitle; the rest of it stays as content.
@@ -401,9 +468,9 @@ export function outline(markdown, { dir = '.', maxScenes = 12 } = {}) {
       if (p.kind in slide && p.kind !== 'body') continue; // one block of a kind per slide; the rest stays in the document
       slide[p.kind] = v;
     }
-    // "Topic: claim" headings: the topic is the kicker (and the scene title), the claim the heading.
-    const split = !sec.title && heading.match(/^([^:]{2,40}):\s+(\S.*)$/);
-    if (split) Object.assign(slide, { kicker: split[1], heading: split[2] });
+    // "Topic: claim" headings (the title slide's too): the topic is the kicker, the claim the heading.
+    const split = heading.match(/^([^:]{2,60}):\s+(\S.*)$/);
+    if (split) Object.assign(slide, { kicker: split[1], heading: cap(split[2]) });
     // Lists that are really cards or numbers: every item "**Label:** text" (2 to 4) → columns;
     // every item "**a number** phrase" (2 to 4) → stats. In the list's place.
     const b = slide.bullets;
@@ -412,21 +479,45 @@ export function outline(markdown, { dir = '.', maxScenes = 12 } = {}) {
       const numbers = b.map(x => x.match(/^\*\*([^*]{1,14})\*\*\s+(\S.*)$/)).map(m => (m && /\d/.test(m[1]) ? m : null));
       const replace = (key, value) => { const e = Object.entries(slide).map(([k, v]) => (k === 'bullets' ? [key, value] : [k, v])); for (const k of Object.keys(slide)) delete slide[k]; Object.assign(slide, Object.fromEntries(e)); };
       if (numbers.every(Boolean) && !slide.stats) replace('stats', numbers.map(m => ({ value: m[1], label: m[2] })));
-      else if (labelled.every(Boolean) && !slide.columns) replace('columns', labelled.map(m => ({ heading: m[1], body: m[2] })));
+      else if (labelled.every(Boolean) && !slide.columns) replace('columns', labelled.map(m => ({ heading: m[1], body: cap(m[2]) })));
     }
+    // Directives: a shared slide, build-in, small print, look.
+    if (directives.use) {
+      // The shared slide's own heading wins unless the section says more than its heading.
+      const { heading: _h, ...rest } = slide;
+      slide = { use: directives.use, ...(parts.length ? slide : rest) };
+    }
+    const items = (slide.bullets?.length ?? 0) + (slide.columns?.length ?? 0) + (slide.stats?.length ?? 0) + (slide.flow?.length ?? 0) + (slide.table?.rows?.length ?? 0);
+    if (directives.reveal) Object.assign(slide, revealOf(directives.reveal));
+    else if (autoReveal && items >= 2) Object.assign(slide, autoReveal);
+    if (slide.reveal === false) delete slide.reveal;
+    if (directives.note) slide.note = directives.note;
+    if (directives.theme) slide.theme = directives.theme.toLowerCase() === 'light' ? 'light' : 'dark';
+    if (directives.accent) slide.accent = directives.accent;
     // Spoken: the Say lines, else the prose and points as written.
     let narration;
     if (say.length) { narration = say.join(' '); said = true; }
+    else if (directives.use) narration = undefined; // the shared slide's narration
     else narration = [slide.subtitle, ...parts.filter(p => p.kind === 'body' || p.kind === 'callout').map(p => plain(p.value)),
       ...(b ?? []).map(x => plain(x).replace(/[.;:]?$/, '.'))].filter(Boolean).join(' ') || heading;
-    scenes.push({ title: shortTitle(heading), narration, slide });
+    const title = sec.title ? (split ? 'Overview' : shortTitle(heading)) : split ? plain(split[1]) : shortTitle(heading);
+    const hold = directives.hold !== undefined && Number.isFinite(Number(directives.hold)) ? { hold: Number(directives.hold) } : {};
+    scenes.push({ title, ...(narration !== undefined ? { narration } : {}), slide, ...hold });
   }
+  let dropped = 0;
   if (scenes.length > maxScenes) {
+    dropped = scenes.length - maxScenes;
     scenes.length = maxScenes;
-    scenes[maxScenes - 1].slide.note = 'continued in the document';
   }
-  return { title: docTitle, scenes, said };
+  return { title: docTitle, scenes, said, meta, dropped };
 }
+
+/** The tour-level settings front matter gives: { slides, pronounce, voice, name }. */
+export function deckSettings(meta = {}) {
+  const slides = Object.fromEntries(['theme', 'accent', 'footer'].filter(k => meta[k]).map(k => [k, meta[k]]));
+  return { slides: { theme: 'dark', ...slides }, pronounce: meta.pronounce ?? {}, ...(meta.voice ? { voice: meta.voice } : {}), ...(meta.name ? { name: meta.name } : {}) };
+}
+
 
 /** The JSON schema of a Claude answer for `generate --from --llm claude`: slide scenes only. */
 export const OUTLINE_SCHEMA = {
@@ -476,7 +567,7 @@ export function resolveSlideUses(scenes, { dir, platformDir }) {
     if (shared.image) shared.image = path.resolve(path.dirname(file), shared.image);
     const { use: _u, ...own } = s.slide;
     s.slide = { ...shared, ...own };
-    if (!s.title && doc.title) s.title = doc.title;
+    if (!s.title) s.title = doc.title ?? path.basename(file, '.json');
     if (!s.narration && doc.narration) s.narration = doc.narration;
     s.slideFrom = file;
   }

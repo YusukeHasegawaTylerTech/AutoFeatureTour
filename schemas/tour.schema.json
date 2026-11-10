@@ -510,7 +510,7 @@
             "description": "Work left for a person; recording refuses until removed."
           },
           "hold": {
-            "description": "Seconds the scene stays after its narration ends (default: --tail, 0.75).",
+            "description": "Seconds the scene stays on screen after its narration ends, instead of the default pause (--tail, 0.75 s).",
             "anyOf": [
               {
                 "type": "number",
@@ -523,8 +523,24 @@
           }
         },
         "additionalProperties": false,
-        "required": [
-          "title"
+        "anyOf": [
+          {
+            "required": [
+              "title"
+            ]
+          },
+          {
+            "required": [
+              "slide"
+            ],
+            "properties": {
+              "slide": {
+                "required": [
+                  "use"
+                ]
+              }
+            }
+          }
         ]
       },
       "description": "The scenes, in order."

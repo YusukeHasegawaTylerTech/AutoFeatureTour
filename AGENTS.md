@@ -642,7 +642,8 @@ scene. Slides are designed by hand in the tour file (the schema describes every 
 - **shared slides**: `"slide": { "use": "closing" }` takes `platforms/<p>/slides/closing.json`, else
   `slides/closing.json` beside the tour, or a `.json` path (`{ "title", "narration", "slide" }` or a slide alone); the
   slide's other keys and the scene's narration win. A run's `source/` copy has it filled in;
-- on the scene: `"hold": 2` keeps it on screen 2 s after its narration (default 0.75, `--tail`).
+- on the scene: `"hold": 2` keeps it on screen 2 s after its narration, instead of the default pause (0.75 s,
+  `--tail`); a shared-slide scene needs no `title` (the shared file's, else its name).
 
 A tour of slides only needs no platform or baseUrl; `render` and `run` both make the video. `aft render <tour>
 --slides-only` draws the slides in seconds (no voice, no video) with `slides/index.html`, the whole deck on one page,
@@ -656,9 +657,38 @@ of a platform tour (a title, a summary, context before a demo): only the recorde
 title slide; each section is a slide. Lists become bullets, tables become tables, `>` quotes become callouts, prose
 becomes body and code blocks become code, in document order. Write each slide's spoken words in the document, under its heading, as
 `Say: …` lines (or `<!-- say: … -->`). They are the narration and never appear on the slide. Without them, the narration is the
-section's text and the generated tour's comment says so. A heading "Topic: claim" becomes kicker "Topic" and
-heading "claim" (the scene title is the topic). A list whose every item is `**Label:** text` (2 to 4) becomes
-`columns`, and one whose every item starts with a bold number (`**80 MB** a day`) becomes `stats`.
+section's text and the generated tour's comment says so. A heading "Topic: claim" (the first one too) becomes
+kicker "Topic" and heading "Claim" (capitalised; the scene title is the topic, "Overview" for the title slide). A list
+whose every item is `**Label:** text` (2 to 4) becomes `columns`, and one whose every item starts with a bold number
+(`**80 MB** a day`) becomes `stats`. A paragraph like `Rules + Form → Decision ✓` becomes a `flow`. A ✓ △ ✗ ℹ at
+the start or end of a bullet, cell, card text, stat or quote sets its tone (in a table, the whole row's).
+
+The markdown can be the whole design, so the tour never needs editing:
+
+```
+---
+footer: RMS-4923 · spike/foia-request-validation
+theme: dark                      # accent, voice, name, max-scenes too
+reveal: auto                     # build in every slide with 2+ items (or: dim, off)
+pronounce: FOIA=Foya, RMS=R M S
+---
+# RMS-4923 · Records Requests: Research on context limits
+
+## Agents: they don't retain the rules
+- **Misconception:** an agent holds the rules ✗
+- **Reality:** instructions go to the model every run ✓
+> △ One agent per agency still helps usage tracking.
+Say: Agents don't save tokens.
+Reveal: dim                      # per slide: yes | dim | no | 0, 0.3, 0.6
+Hold: 2
+Note: Measured on the spike branch
+                                 # also: Use: closing (a shared slide), Theme: light, Accent: #c53030
+```
+
+Edited the tour by hand anyway? `aft scratch <name> --from doc.md --update` regenerates from the document and keeps
+every field changed since the last generation (`.generated.json` beside the tour records it), and lists what it kept;
+scenes added by hand stay where they were. `--force` starts over. No section is left out unless `--max-scenes` (or
+`max-scenes:`) says so, and then it warns.
 
 ```
 aft scratch foia-findings --from findings.md     # in scratch/foia-findings/ (git-ignored, kept, "$schema" works)

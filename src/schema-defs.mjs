@@ -328,8 +328,8 @@ const scene = obj('One scene: narration over the steps that show it.', {
   steps: ref('steps'), comment: str('A note for people.'),
   unresolved: { type: 'array', items: { type: 'string' }, description: 'Story items the generator could not map to the app; recording refuses until resolved.' },
   todo: str('Work left for a person; recording refuses until removed.'),
-  hold: num('Seconds the scene stays after its narration ends (default: --tail, 0.75).', { minimum: 0 }),
-}, { required: ['title'] });
+  hold: num('Seconds the scene stays on screen after its narration ends, instead of the default pause (--tail, 0.75 s).', { minimum: 0 }),
+}, { anyOf: [{ required: ['title'] }, { required: ['slide'], properties: { slide: { required: ['use'] } } }] });
 
 const story = obj('The user story the tour verifies.', {
   id: str('Ticket id, e.g. RMS-6142 (used in the run folder name).'), title: str('Story title.'), description: str('Story text.'),

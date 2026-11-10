@@ -14,7 +14,7 @@
 //   aft render   <tour>  [--record]                   narration over slides, clips or title cards, or a recording
 //   aft generate --from <doc.md> [--llm claude] [--platform <name>] [--max-scenes 12]
 //                                                    an explainer: a document's outline as narrated slide scenes (no app)
-//   aft scratch  [<name>] [--from <doc.md> | --from-tour <scratch name|tour>] [--pages] [--force]   one-off tours in scratch/<name>/ (git-ignored); no name: the list
+//   aft scratch  [<name>] [--from <doc.md> [--update] [--max-scenes n] | --from-tour <scratch name|tour>] [--pages] [--force]   one-off tours in scratch/<name>/ (git-ignored); no name: the list
 //   aft discover <url>   [--max-pages 12]             crawl screens (used by generate/auto)
 //   aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm claude]
 //   aft auto     <url> [--prompt ...]                 discover → plan → run, no story needed
@@ -81,7 +81,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { saveLogin } from './auth.mjs';
 import { ConfigError, loadTourJson, materialize, missingCredentials } from './declarative.mjs';
 import { check as checkSchema, schemaFor, schemaRef, schemasDir, schemaTypes, writeSchemaCopy } from './schema.mjs';
-import { contactSheet, narrationWarnings, OUTLINE_SCHEMA, OUTLINE_SYSTEM, outline, renderSlides } from './slides.mjs';
+import { contactSheet, deckSettings, narrationWarnings, OUTLINE_SCHEMA, OUTLINE_SYSTEM, outline, renderSlides } from './slides.mjs';
 import { appSettingsFor } from './cli-app.mjs';
 import { platformCommand } from './platform-cli.mjs';
 import { call, parseArg, waitCall, readSessions, Session, sessionName, sessionsDir, startDaemon } from './session.mjs';
@@ -110,8 +110,50 @@ import { log, newRunDir, num, parseArgs, run, sleep } from './util.mjs';
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
+
+/**
+ * A three-way merge of a generated tour: `current` (the file, maybe edited by hand), `prev` (what the last generation
+ * wrote) and `next` (the new generation). A value the person changed since `prev` is kept; everything else follows
+ * `next`. Scenes match by title (then by position); slide fields merge one by one. Scenes added by hand stay, after
+ * the scene they followed. Returns { tour, kept: [descriptions] }.
+ */
+function mergeEdits(current, prev, next) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const kept = [];
+  const pick = (where, cur, old, neu) => {
+    const out = {};
+    for (const k of new Set([...Object.keys(neu ?? {}), ...Object.keys(cur ?? {})])) {
+      const edited = !same(cur?.[k], old?.[k]);
+      if (edited && (k in (cur ?? {}))) { out[k] = cur[k]; if (!same(cur[k], neu?.[k])) kept.push(`${where}${k}`); }
+      else if (edited) { if (neu && k in neu && old && k in old) kept.push(`${where}${k} (removed)`); } // removed by hand: stays removed
+      else if (neu && k in neu) out[k] = neu[k];
+    }
+    return out;
+  };
+  const tour = pick('', Object.fromEntries(Object.entries(current).filter(([k]) => k !== 'scenes')), Object.fromEntries(Object.entries(prev).filter(([k]) => k !== 'scenes')),
+    Object.fromEntries(Object.entries(next).filter(([k]) => k !== 'scenes')));
+  const scenes = next.scenes.map((n, i) => {
+    const old = prev.scenes.find(x => x.title === n.title) ?? prev.scenes[i];
+    const cur = old && (current.scenes.find(x => x.title === old.title) ?? null);
+    if (!cur) return n;
+    const where = `scene "${n.title}": `;
+    const { slide: cs, ...cRest } = cur, { slide: os, ...oRest } = old, { slide: ns, ...nRest } = n;
+    const merged = pick(where, cRest, oRest, nRest);
+    if (cs || ns) merged.slide = pick(`${where}slide.`, cs, os, ns);
+    return merged;
+  });
+  // Scenes added by hand (in the file, not in the last generation): kept after the scene they followed.
+  for (const [i, c] of current.scenes.entries()) {
+    if (prev.scenes.some(p => p.title === c.title)) continue;
+    const before = current.scenes[i - 1]?.title;
+    const at = before ? scenes.findIndex(s => s.title === before) : -1;
+    scenes.splice(at + 1, 0, c);
+    kept.push(`scene "${c.title}" (added by hand)`);
+  }
+  return { tour: { ...tour, scenes }, kept };
+}
 
 /**
  * `aft generate --from <doc.md>`: a document (findings, a spike write-up, release notes) as an explainer tour of
@@ -124,22 +166,23 @@ async function generateExplainer(args) {
   if (!fs.existsSync(docFile)) throw new UsageError(`--from ${args.from}: no such file`);
   const text = fs.readFileSync(docFile, 'utf8');
   const docDir = path.dirname(docFile);
-  const max = Number(args.maxScenes ?? 12);
-  const heuristic = outline(text, { dir: docDir, maxScenes: max });
+  const max = args.maxScenes ? Number(args.maxScenes) : undefined;
+  const heuristic = outline(text, { dir: docDir, ...(max ? { maxScenes: max } : {}) });
+  if (heuristic.dropped) log(`warning: --max-scenes ${max}: the last ${heuristic.dropped} section(s) of ${path.basename(docFile)} were left out`);
   if (!heuristic.scenes.length) throw new UsageError(`${args.from}: nothing to outline (no headings or text)`);
-  const name = safeName(args.name ?? heuristic.title);
+  const name = safeName(args.name ?? heuristic.meta.name ?? heuristic.title);
   return withRun(name, args, 'generate', async out => {
     let title = heuristic.title, scenes = heuristic.scenes, by = 'outline';
     if (args.llm === 'claude') {
       log('sending the document to Claude for slides and narration');
-      const r = await claude({ system: OUTLINE_SYSTEM, input: JSON.stringify({ maxScenes: max, document: text }), schema: OUTLINE_SCHEMA, cwd: out, model: args.model });
+      const r = await claude({ system: OUTLINE_SYSTEM, input: JSON.stringify({ maxScenes: max ?? 15, document: text }), schema: OUTLINE_SCHEMA, cwd: out, model: args.model });
       title = r.title; by = 'claude';
-      scenes = r.scenes.slice(0, max).map(s => ({ title: s.title, narration: s.narration, slide: { heading: s.slide.heading ?? s.title, ...s.slide } }));
+      scenes = r.scenes.slice(0, max ?? Infinity).map(s => ({ title: s.title, narration: s.narration, slide: { heading: s.slide.heading ?? s.title, ...s.slide } }));
     } else if (args.llm) throw new UsageError(`Unknown planner "${args.llm}" (claude)`);
     // Images the document points at come along, relative to the run folder's tour.json.
     for (const s of scenes) if (s.slide.image) s.slide.image = path.relative(out, s.slide.image).split(path.sep).join('/');
     if (args.platform) loadPlatform(toolRoot, args.platform); // fails early on a typo
-    const tour = { $schema: schemaRef(out, 'tour'), name, ...(args.platform ? { platform: args.platform } : {}), style: 'explainer', slides: { theme: 'dark' }, pronounce: {},
+    const tour = { $schema: schemaRef(out, 'tour'), name, ...(args.platform ? { platform: args.platform } : {}), style: 'explainer', ...(({ name: _n, ...d }) => d)(deckSettings(heuristic.meta)),
       comment: `Generated from ${path.basename(docFile)} (${by}). Edit the slides and narration, add app scenes (steps) between them if useful, then aft run it.${by === 'outline' && !heuristic.said ? ' The narration is the document\'s text: write "Say: …" under each heading in the document to give each slide its own spoken words.' : ''}`,
       generatedBy: by, plannedAt: new Date().toISOString(), scenes };
     const tourFile = path.join(out, 'tour.json');
@@ -1155,7 +1198,8 @@ const commands = {
     if (safeName(name) !== name) throw new UsageError(`scratch names are letters, digits, - and _ (try "${safeName(name)}")`);
     const dir = path.join(root, name);
     const tourFile = path.join(dir, `${name}.tour.json`);
-    if (fs.existsSync(tourFile) && !args.force) throw new UsageError(`${tourFile} exists; edit it, or pass --force to start over`);
+    if (fs.existsSync(tourFile) && !args.force && !(args.update && args.from))
+      throw new UsageError(`${tourFile} exists: edit it; or --from <doc.md> --update (regenerate from the document, keeping your edits to the tour); or --force (start over)`);
     // --from-tour <scratch name | tour file>: a new version of a deck, its folder (assets, pages, slides) copied too.
     if (args.fromTour) {
       const ref = String(args.fromTour);
@@ -1178,11 +1222,16 @@ const commands = {
       return { tour: tourFile, dir, from, scenes: doc.scenes?.length ?? 0 };
     }
     fs.mkdirSync(dir, { recursive: true });
-    let scenes;
+    let scenes, deck = { slides: { theme: 'dark' }, pronounce: {} };
     if (args.from) {
       const docFile = path.resolve(String(args.from));
       if (!fs.existsSync(docFile)) throw new UsageError(`--from ${args.from}: no such file`);
-      ({ scenes } = outline(fs.readFileSync(docFile, 'utf8'), { dir: path.dirname(docFile), maxScenes: Number(args.maxScenes ?? 12) }));
+      let meta, dropped;
+      ({ scenes, meta, dropped } = outline(fs.readFileSync(docFile, 'utf8'), { dir: path.dirname(docFile), ...(args.maxScenes ? { maxScenes: Number(args.maxScenes) } : {}) }));
+      if (dropped) log(`warning: --max-scenes ${scenes.length}: the last ${dropped} section(s) of ${path.basename(docFile)} were left out`);
+      // Deck settings from the document's front matter (footer, theme, accent, voice, pronounce).
+      const { name: _n, ...settings } = deckSettings(meta);
+      deck = settings;
       for (const s of scenes) if (s.slide.image) {
         fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
         const to = path.join(dir, 'assets', path.basename(s.slide.image));
@@ -1200,7 +1249,21 @@ const commands = {
       { title: 'Results', narration: 'A table, and a flow from input to result.',
         slide: { table: { head: ['Case', 'Result'], rows: [['Sample one', '✓ pass'], ['Sample two', '✗ fail']] }, flow: ['Input', 'One call', 'Decision'], note: 'Source: where the numbers came from' } },
     ];
-    const tour = { $schema: schemaRef(dir, 'tour'), name, style: 'explainer', slides: { theme: 'dark' }, pronounce: {}, scenes };
+    let tour = { $schema: schemaRef(dir, 'tour'), name, style: 'explainer', ...deck, scenes };
+    // --update: regenerated from the document, keeping what was edited in the tour since the last generation
+    // (.generated.json beside it is that generation). Returns what was kept.
+    const generated = path.join(dir, '.generated.json');
+    let kept = null;
+    if (args.from) {
+      const next = JSON.parse(JSON.stringify(tour));
+      if (args.update && fs.existsSync(tourFile)) {
+        const prev = fs.existsSync(generated) ? JSON.parse(fs.readFileSync(generated, 'utf8')) : null;
+        if (!prev) throw new UsageError(`--update: ${generated} is missing (the tour wasn't generated by aft scratch --from), so edits can't be told apart; use --force to start over`);
+        ({ tour, kept } = mergeEdits(JSON.parse(fs.readFileSync(tourFile, 'utf8')), prev, next));
+        for (const k of kept) log(`kept your edit: ${k}`);
+      }
+      fs.writeFileSync(generated, JSON.stringify(next, null, 2) + '\n');
+    }
     if (args.pages) {
       fs.mkdirSync(path.join(dir, 'pages'), { recursive: true });
       const page = path.join(dir, 'pages', 'index.html');
@@ -1209,8 +1272,8 @@ const commands = {
       tour.scenes.push({ title: 'A page', narration: 'Pages are recorded in the browser, with the cursor and checks.', url: 'index.html', steps: [{ point: { role: 'heading', name } }, { verify: { role: 'heading', name } }] });
     }
     fs.writeFileSync(tourFile, JSON.stringify(tour, null, 2) + '\n');
-    if (!json) console.log(`wrote ${tourFile}\nnext: edit it, then  aft render "${tourFile}"  (preview)  or  aft run "${tourFile}"`);
-    return { tour: tourFile, dir, scenes: tour.scenes.length };
+    if (!json) console.log(`wrote ${tourFile}\nnext: edit it, then  aft render "${tourFile}" --slides-only  (preview)  or  aft run "${tourFile}"`);
+    return { tour: tourFile, dir, scenes: tour.scenes.length, ...(kept ? { kept } : {}) };
   },
 
   async schema(args) {
