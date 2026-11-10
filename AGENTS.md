@@ -672,7 +672,7 @@ whose every item is `**Label:** text` (2 to 4) becomes `columns`, and one whose 
 the start or end of a bullet, cell, card text, stat or quote sets its tone (in a table, the whole row's) and is taken
 off the text (the colour says it). `Layout: bullets` keeps a `**Label:**` or bold-number list as bullets.
 `![caption](shot.png)` is an image with its caption. A ```` ```chart ```` block is a bar chart: `label | value` lines
-(a unit after the number, or `unit: ms`; a third column or a glyph for the tone; `max: 100` for the scale). A
+(a unit after the number, or `unit: ms`; a currency sign before it, `$6.77`, or `unit: $`, is shown before the number; a third column or a glyph for the tone; `max: 100` for the scale). A
 ```` ```steps ```` block makes the section a **recorded scene** instead of a slide, on the platform's app or the
 deck's `pages`: one step per line, JSON or shorthand (`goto index.html`, `click Review with AI`, `fill Request text:
 …`, `select Status: Open`, `check`, `hover`, `press Enter`, `wait 1`, `verify Saved`, `verify url /done`), with
@@ -705,7 +705,7 @@ Note: Measured on the spike branch
 
 Edited the tour by hand anyway? `aft scratch <name> --from doc.md --update` regenerates from the document and keeps
 every field changed since the last generation (`.generated.json` beside the tour records it), and lists what it kept;
-scenes added by hand stay where they were. `--force` starts over. No section is left out unless `--max-scenes` (or
+scenes added by hand stay where they were. Each `--from` (and `--update`) copies the document's images, `pages:` folder and shared slides (`slides/` beside it) again. `--force` starts over. Short titles that repeat ("Foundry: …" five times) become the whole heading. No section is left out unless `--max-scenes` (or
 `max-scenes:`) says so, and then it warns.
 
 ```

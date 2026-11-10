@@ -1253,6 +1253,20 @@ const commands = {
         fs.cpSync(from, path.join(dir, 'pages'), { recursive: true });
         deck.pages = 'pages';
       }
+      // Shared slides ("Use: closing") beside the document come along: slides/<name>.json (the whole slides/
+      // folder, so their images too), or a .json path, copied into slides/. Every --from (and --update) copies again.
+      const docDir = path.dirname(docFile);
+      for (const s of scenes) if (s.slide?.use) {
+        const use = s.slide.use;
+        if (/[\\/]|\.json$/i.test(use)) {
+          const from = path.resolve(docDir, use);
+          if (!fs.existsSync(from)) continue; // left for the loader to report (it may be a platform's)
+          fs.mkdirSync(path.join(dir, 'slides'), { recursive: true });
+          fs.copyFileSync(from, path.join(dir, 'slides', path.basename(from)));
+          s.slide.use = `slides/${path.basename(from)}`;
+        } else if (fs.existsSync(path.join(docDir, 'slides', `${use}.json`)) && path.resolve(docDir, 'slides') !== path.resolve(dir, 'slides'))
+          fs.cpSync(path.join(docDir, 'slides'), path.join(dir, 'slides'), { recursive: true });
+      }
       for (const s of scenes) if (s.slide?.image) {
         fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
         const to = path.join(dir, 'assets', path.basename(s.slide.image));

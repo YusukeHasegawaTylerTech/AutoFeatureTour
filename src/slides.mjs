@@ -102,7 +102,8 @@ function block(kind, v, { dir, reveal, caption }) {
     case 'chart': {
       // Horizontal bars, scaled to the largest value (or "max").
       const max = v.max ?? (Math.max(...v.bars.map(b => b.value), 0) || 1);
-      const fmt = n => `${Number.isInteger(n) ? n.toLocaleString('en-US') : n}${v.unit ? ` ${v.unit}` : ''}`;
+      // A currency unit goes before the number ($6.77), any other after it (80 ms).
+      const fmt = n => { const x = Number.isInteger(n) ? n.toLocaleString('en-US') : String(n); return !v.unit ? x : CURRENCY.test(v.unit) ? `${v.unit}${x}` : `${x} ${v.unit}`; };
       return `<div class="chart">${v.bars.map(b => { const t = toned(b.label); return `<div class="cbar ${b.tone ?? t.tone ?? ''}"${r()}><div class="blabel">${inline(t.text)}</div><div class="track"><div class="fill" style="width:${Math.max(0.5, Math.min(100, (b.value / max) * 100)).toFixed(1)}%"></div></div><div class="bvalue">${esc(fmt(b.value))}</div></div>`; }).join('')}</div>`;
     }
     default: return '';
@@ -232,7 +233,10 @@ export async function renderSlides(scenes, { outDir, dir, style, log = () => {},
           labels: [...document.querySelectorAll('.stat .label')].filter(l => l.textContent && lines(l) > 2).map(l => l.textContent),
           heading: !!h && lines(h) > 2 };
       });
-      if (fit.main) warnings.push(`${s.id}: the slide's content doesn't fit (shorten it, or split the scene)`);
+      // An image written before the text is a block of its own (full width); written last, it sits beside the text.
+      const kinds = Object.keys(s.slide).filter(k => BLOCKS.includes(k));
+      const imageFirst = kinds.includes('image') && kinds.at(-1) !== 'image';
+      if (fit.main) warnings.push(`${s.id}: the slide's content doesn't fit (${imageFirst ? 'the image comes before the text, so it takes the full width: write it last to put it beside the text; or ' : ''}shorten it, or split the scene)`);
       if (fit.footer) warnings.push(`${s.id}: the footer note wraps; "note" is small print (a source, a date): use "callout" for a takeaway`);
       for (const v of fit.tooWide) warnings.push(`${s.id}: the stat "${v}" doesn't fit its tile even at half size (shorten it, or use fewer stats)`);
       for (const l of fit.labels) warnings.push(`${s.id}: the stat label "${l}" runs over two lines (shorten it)`);
@@ -365,6 +369,9 @@ export function stepsOf(code) {
  * optional third column for a tone; "unit: ms" or "max: 100" lines set the scale. → { bars: [{ label, value, tone }],
  * unit, max }.
  */
+/** Units written before the number. */
+export const CURRENCY = /^(?:[$€£¥₹]|US\$|A\$|C\$)$/u;
+
 export function chartOf(code) {
   const chart = { bars: [] };
   for (const raw of code.split('\n')) {
@@ -373,10 +380,14 @@ export function chartOf(code) {
     const set = l.match(/^(unit|max)\s*:\s*(.+)$/i);
     if (set) { chart[set[1].toLowerCase()] = set[1].toLowerCase() === 'max' ? Number(set[2]) : set[2].trim(); continue; }
     const [label, value, tone] = l.split('|').map(x => x.trim());
-    const n = parseFloat(String(value ?? '').replace(/,/g, ''));
+    // "$6.77", "€12": a leading currency sign is the unit (shown before the number).
+    const cur = String(value ?? '').match(/^\s*([$€£¥₹])/u);
+    if (cur && !chart.unit) chart.unit = cur[1];
+    const num = String(value ?? '').replace(/^\s*[$€£¥₹]/u, '');
+    const n = parseFloat(num.replace(/,/g, ''));
     if (!label || !Number.isFinite(n)) throw new Error(`chart: "${l}": expected <label> | <number>`);
     chart.bars.push({ label, value: n, ...(TONES.includes(tone) ? { tone } : toned(label).tone ? { tone: toned(label).tone } : {}) });
-    if (!chart.unit && /[a-z%]/i.test(value.replace(/[\d.,\s]/g, ''))) chart.unit = value.replace(/^[\d.,\s]+/, '').trim();
+    if (!chart.unit && /[a-z%]/i.test(num.replace(/[\d.,\s]/g, ''))) chart.unit = num.replace(/^[\d.,\s]+/, '').trim();
   }
   return chart;
 }
@@ -600,6 +611,14 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
     const hold = directives.hold !== undefined && Number.isFinite(Number(directives.hold)) ? { hold: Number(directives.hold) } : {};
     scenes.push({ title, ...(narration !== undefined ? { narration } : {}), slide, ...hold, ...voiceOf(directives) });
   }
+  // Short titles that repeat (five "Foundry: …" headings) name reports and captions badly: those take the whole
+  // heading ("Foundry: The existing project"); any still the same are numbered.
+  const count = list => list.reduce((m, s) => m.set(s.title, (m.get(s.title) ?? 0) + 1), new Map());
+  let seen = count(scenes);
+  for (const s of scenes) if (seen.get(s.title) > 1 && s.slide?.kicker && s.slide.heading) s.title = `${s.slide.kicker}: ${s.slide.heading}`;
+  seen = count(scenes);
+  const n = new Map();
+  for (const s of scenes) if (seen.get(s.title) > 1) { n.set(s.title, (n.get(s.title) ?? 0) + 1); s.title = `${s.title} (${n.get(s.title)})`; }
   let dropped = 0;
   if (scenes.length > maxScenes) {
     dropped = scenes.length - maxScenes;

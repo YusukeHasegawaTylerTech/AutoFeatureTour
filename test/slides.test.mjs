@@ -273,3 +273,24 @@ test('voices: per scene in the tour and in markdown; short names resolve', async
     await assert.rejects(resolveVoice('no-such-voice-xyz'), /is installed \(installed: /);
   }
 });
+
+test('round 6: currency before the number, repeated titles, shared slides beside the document come along', async () => {
+  const m = await import('../src/slides.mjs');
+  const c = m.chartOf('Small | $6.77\nBig | $338.25');
+  assert.equal(c.unit, '$');
+  assert.deepEqual([...m.slideHtml({ number: 1, title: 't', slide: { chart: c } }).matchAll(/class="bvalue">([^<]+)/g)].map(x => x[1]), ['$6.77', '$338.25']);
+  assert.match(m.slideHtml({ number: 1, title: 't', slide: { chart: m.chartOf('unit: ms\nA | 80') } }), /80 ms/);
+  assert.deepEqual(m.outline('# D\n\n## Foundry: one\nx\n\n## Foundry: two\ny\n\n## Other\nz\n\n## Other\nw\n').scenes.map(s => s.title),
+    ['D', 'Foundry: One', 'Foundry: Two', 'Other (1)', 'Other (2)']);
+  const dir = tmp();
+  fs.mkdirSync(path.join(dir, 'slides'));
+  fs.writeFileSync(path.join(dir, 'slides', 'closing.json'), JSON.stringify({ narration: 'Bye.', slide: { heading: 'Questions?' } }));
+  fs.writeFileSync(path.join(dir, 'd.md'), '# Deck\n\nIntro.\n\n## End\nUse: closing\n');
+  const name = `t-shared-${process.pid}`;
+  try {
+    const r = JSON.parse(cli(['scratch', name, '--from', path.join(dir, 'd.md')]).stdout);
+    assert.equal(r.ok, true);
+    assert.ok(fs.existsSync(path.join(root, 'scratch', name, 'slides', 'closing.json')));
+    assert.equal(JSON.parse(cli(['validate', r.data.tour, '--out', path.join(dir, 'run')]).stdout).ok, true);
+  } finally { fs.rmSync(path.join(root, 'scratch', name), { recursive: true, force: true }); }
+});
