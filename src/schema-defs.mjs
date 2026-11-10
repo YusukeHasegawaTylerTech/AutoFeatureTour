@@ -292,15 +292,32 @@ const environment = obj('One deployment of the app.', {
   workarounds: { ...workarounds, description: 'Known issues in this environment, merged with the platform\'s by name: a new name adds a rule here only; the same name refines it (partial entries are merged over the platform rule, "off": true disables it here).' },
 }, { required: ['baseUrl'] });
 
-const slide = obj('A still slide instead of steps: drawn without a browser or app (no url, steps or camera), narrated like any scene. A tour can be all slides (an explainer) or mix slides with recorded scenes.', {
+const tone = { enum: ['ok', 'warn', 'bad', 'info'], description: 'Colour: ok (green), warn (amber), bad (red), info (accent).' };
+const tonedText = { description: 'Text, or { "text", "tone" }. A leading ✓ (ok), △ or ⚠ (warn), ✗ (bad) or ℹ (info) sets the tone too.',
+  anyOf: [{ type: 'string' }, obj('Text with a tone.', { text: str('The text.'), tone }, { required: ['text'] })] };
+const slide = obj('A still slide instead of steps: drawn without a browser or app (no url, steps or camera), narrated like any scene. A tour can be all slides (an explainer) or mix slides with recorded scenes. Content blocks (body, bullets, code, table, columns, stats, flow, callout, image) are drawn in the order they are written.', {
+  kicker: str('A small label above the heading ("Concern 1 · Context limits").'),
   heading: str('The heading (default: the scene title). **bold**, *italic* and `code` work in every text field.'),
   subtitle: str('A line under the heading (a title slide).'),
-  bullets: { type: 'array', items: { type: 'string' }, maxItems: 8, description: 'Points, one per line on the slide.' },
   body: str('Paragraphs of text (blank lines separate them).'),
+  bullets: { type: 'array', items: tonedText, maxItems: 8, description: 'Points, one per line.' },
   code: str('A code or text excerpt, monospaced.'),
-  image: str('An image (png, jpg, gif, svg, webp), relative to the tour file: beside the text, or the whole slide when there is no text.'),
-  note: str('Small print in the footer (a source, a date).'),
+  table: obj('A table.', { head: { type: 'array', items: { type: 'string' }, description: 'Column headings.' },
+    rows: { type: 'array', items: { anyOf: [{ type: 'array', items: tonedText }, obj('A row with a tone (colours its first cell).', { cells: { type: 'array', items: tonedText }, tone }, { required: ['cells'] })] }, description: 'Rows: a list of cells, or { "cells", "tone" }.' } }, { required: ['rows'] }),
+  columns: { type: 'array', minItems: 2, maxItems: 4, description: 'Side-by-side cards (a comparison: "Misconception" / "Reality").',
+    items: obj('A card.', { heading: str('Card heading.'), body: str('Text.'), bullets: { type: 'array', items: tonedText }, tone }) },
+  stats: { type: 'array', minItems: 1, maxItems: 4, description: 'Big numbers with a label ("13K" / "tokens in a 20-page rule set").',
+    items: obj('A number.', { value: str('The number, as shown.'), label: str('What it is.'), tone }, { required: ['value'] }) },
+  flow: { type: 'array', items: tonedText, minItems: 2, maxItems: 6, description: 'Boxes joined by arrows, left to right ("Rules + form" → "One call" → "Decision and reasons").' },
+  callout: { description: 'The takeaway, in a coloured box: text, or { "text", "tone" } (default info).', anyOf: [{ type: 'string' }, obj('A callout.', { text: str('The text.'), tone }, { required: ['text'] })] },
+  image: str('An image (png, jpg, gif, svg, webp), relative to the tour file: beside the other content when it is written last, else a block of its own.'),
+  imageSide: bool('false: an image written last is a block below the rest, not beside it.'),
+  note: str('Small print in the footer (a source, a date). For a takeaway, use "callout".'),
+  reveal: { description: 'Build the slide in: each bullet, row, card, stat, flow box or paragraph appears in turn. true: one per sentence of the narration; a list: when each appears, as fractions of the narration ([0, 0.3, 0.6]).',
+    anyOf: [{ type: 'boolean' }, { type: 'array', items: { type: 'number', minimum: 0, maximum: 1 } }] },
+  theme: { enum: ['dark', 'light'], description: 'This slide only.' }, accent: str('This slide\'s accent colour (CSS).'),
 });
+const slideStyle = obj('How slide scenes look (a platform\'s apply to its tours; the tour\'s win).', { theme: { enum: ['dark', 'light'], description: 'Default dark.' }, accent: str('Accent colour (CSS), e.g. "#1f6fd1".'), footer: str('Footer text on every slide.') });
 const scene = obj('One scene: narration over the steps that show it.', {
   slide,
   title: str('Shown on title cards and in reports.'), narration: str('What the narrator says; the scene lasts as long as it does. Required unless "camera": false.'),
@@ -346,7 +363,7 @@ export const SCHEMAS = {
       allowMocks: bool('Permit "mock" steps. Mocked responses are listed in the report; scenes a mock answered in get a "simulated data" caption. Refused for "style": "verification".'),
       mocks: { type: 'array', items: { type: 'string', pattern: '^[A-Za-z0-9_-]+$' }, description: 'Mock sets from the platform\'s mocks/ folder, applied off camera before the first scene (needs allowMocks).' },
       video,
-      slides: obj('How slide scenes look.', { theme: { enum: ['dark', 'light'], description: 'Default dark.' }, accent: str('Accent colour (CSS), e.g. "#1f6fd1".'), footer: str('Footer text on every slide.') }),
+      slides: slideStyle,
       pages: str('Stand-alone tours only: a folder of static pages (relative to the tour file) served on a free local port for the run. It is the tour\'s baseUrl, so goto paths are files in it ("index.html?s=2"). Copied into the run folder with the tour.'),
       comment: str('A note for people.'), style: str('Generation hint (verification, demo, training, explainer); the engine ignores it, except that an explainer gets no review of criteria.'),
       generatedBy: str('Which planner wrote it.'), plannedAt: str('When it was generated.'), draft: bool('Generated with gaps; recording refuses unless --allow-draft.'),
@@ -362,7 +379,7 @@ export const SCHEMAS = {
   }),
   platform: file('platform', 'AutoFeatureTour platform (platforms/<name>/platform.json)', 'How the app behaves wherever it runs.', {
     type: 'object', additionalProperties: false,
-    properties: { ...$schemaProp, comment: str('A note for people.'), ready, errors, appErrors, ignore: appErrors.properties.ignore, mask, pronounce, viewport, voice: str('SAPI voice.'),
+    properties: { ...$schemaProp, comment: str('A note for people.'), ready, errors, appErrors, ignore: appErrors.properties.ignore, mask, pronounce, viewport, slides: slideStyle, voice: str('SAPI voice.'),
       ignoreHTTPSErrors: bool('Accept self-signed certificates.'), startPath: str('Where sessions and discovery start (default /).'),
       discover: obj('Discovery hints.', { paths: { type: 'array', items: { type: 'string' }, description: 'Extra paths to crawl.' } }),
       timeouts, retries: num('Retries for actions that time out (default 1).'), trace: bool('false: no trace.zip.'), video, workarounds, data: { type: 'object', description: 'Values for {data.<key>} in login steps, fixtures and tours (credentials: username, password…). Strings may use {env:NAME}. Environment data overrides the platform data; fixture data overrides both.' } },

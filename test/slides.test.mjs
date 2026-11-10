@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isSlide, needsBrowser, outline, servePages, slideHtml } from '../src/slides.mjs';
+import { isSlide, narrationWarnings, needsBrowser, outline, revealTimes, servePages, slideHtml } from '../src/slides.mjs';
+import { spokenText } from '../src/script.mjs';
 import { loadTourJson } from '../src/declarative.mjs';
 import { check, writeSchemaCopy } from '../src/schema.mjs';
 
@@ -21,13 +22,64 @@ test('outline: a title slide, one slide per section, bullets, code and narration
   assert.equal(title, 'Spike');
   assert.deepEqual(scenes.map(s => s.title), ['Spike', 'Concern', 'Built', 'Next']);
   assert.equal(scenes[0].slide.subtitle, 'What we tried.');
-  assert.deepEqual(scenes[1].slide.bullets, ['It might not fit.', 'It does fit.']);
+  // Prose stays prose (body), in full; lists are bullets; blocks keep the document's order.
+  assert.equal(scenes[1].slide.body, 'It might not fit. It does fit.');
   assert.deepEqual(scenes[2].slide.bullets, ['a validator', '**17** tests']);
   assert.equal(scenes[2].slide.code, 'POST /x');
+  assert.deepEqual(Object.keys(scenes[2].slide), ['heading', 'bullets', 'code']);
   assert.match(scenes[2].narration, /a validator\. 17 tests\./);
   assert.ok(scenes.every(s => s.narration && isSlide(s)));
   // Headings inside code blocks are not sections.
   assert.equal(outline('# A\n\n## B\n\n```\n## not a heading\n```\n\n## C\n\ntext\n').scenes.length, 3);
+});
+
+test('outline: tables, blockquotes as callouts, "Say:" narration, short titles', () => {
+  const md = [
+    '# Deck', '', '## Results: five of six passed', 'Say: Five of the six samples passed.', 'The sixth is a real finding.', '',
+    'Sample runs:', '', '| Case | Result |', '|---|---|', '| One | valid ✓ |', '| Two | invalid ✗ |', '', '> The mismatch is a rule ambiguity.', '',
+    '## Next', '<!-- say: Two things are left. -->', '- confirm the contract', '- add to CI', '',
+  ].join('\n');
+  const { scenes, said } = outline(md);
+  assert.equal(said, true);
+  const r = scenes.find(s => s.slide.table);
+  assert.equal(r.title, 'Results');
+  assert.equal(r.slide.heading, 'Results: five of six passed');
+  assert.equal(r.narration, 'Five of the six samples passed. The sixth is a real finding.');
+  assert.deepEqual(r.slide.table, { head: ['Case', 'Result'], rows: [['One', 'valid ✓'], ['Two', 'invalid ✗']] });
+  assert.equal(r.slide.callout, 'The mismatch is a rule ambiguity.');
+  assert.deepEqual(Object.keys(r.slide), ['heading', 'body', 'table', 'callout']);
+  assert.ok(!JSON.stringify(r.slide).includes('Five of the six')); // narration never on the slide
+  assert.equal(scenes.at(-1).narration, 'Two things are left.');
+});
+
+test('slides: blocks in written order, tones, callout apart from the footer note, reveal items', () => {
+  const html = slideHtml({ number: 1, title: 'T', slide: { kicker: 'K', code: 'x = 1', bullets: ['✓ ok', { text: 'meh', tone: 'warn' }, 'plain'],
+    stats: [{ value: '13K', label: 'tokens' }], callout: { text: 'Takeaway', tone: 'ok' }, note: 'source', reveal: true } });
+  assert.ok(html.indexOf('<pre') < html.indexOf('<ul>'), 'code before bullets, as written');
+  assert.match(html, /<li class="ok"/);
+  assert.match(html, /<li class="warn"/);
+  assert.match(html, /class="callout ok"/);
+  assert.match(html, /<span class="note">source<\/span>/);
+  assert.match(html, /class="kicker">K</);
+  assert.equal((html.match(/data-i="/g) ?? []).length, 6); // code, 3 bullets, a stat, the callout
+});
+
+test('revealTimes: one item per sentence, or fractions as written', () => {
+  const t = revealTimes(true, 3, 'Aaaa. Bbbb. Cccc.');
+  assert.equal(t[0], 0);
+  assert.ok(t[1] > 0 && t[2] > t[1] && t[2] < 1);
+  assert.deepEqual(revealTimes([0, 0.5], 3), [0, 0.5, 0.5]);
+});
+
+test('narration: warnings for what a voice misreads; ranges and arrows are said', () => {
+  const w = narrationWarnings('About 13K tokens (roughly). See RMS-4923 → done, e.g. now.');
+  assert.ok(w.some(x => x.startsWith('"13K"')));
+  assert.ok(w.some(x => x.startsWith('"RMS-4923"')));
+  assert.ok(w.some(x => x.includes('symbol')));
+  assert.ok(w.some(x => x.includes('parentheses')));
+  assert.ok(w.some(x => x.includes('abbreviation')));
+  assert.deepEqual(narrationWarnings('RMS-4923 is done.', { 'RMS-4923': 'R M S forty-nine twenty-three' }), []);
+  assert.equal(spokenText('60–80 KB, a → b'), '60 to 80 KB, a to b');
 });
 
 test('slideHtml escapes text and keeps the little inline markdown', () => {

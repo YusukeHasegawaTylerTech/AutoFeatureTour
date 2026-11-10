@@ -90,11 +90,22 @@ const FONT = ['C:/Windows/Fonts/segoeui.ttf', '/usr/share/fonts/truetype/dejavu/
  * when there is no clip. Every segment gets identical encoding so concat can join them without re-encoding.
  * scene.seconds is the narration length plus the tail. Returns the segment's file name (in outDir).
  */
-export async function muxScene({ scene, clip, image, outDir, size = [1920, 1080], background = '0x1b2a41' }) {
+export async function muxScene({ scene, clip, image, frames, outDir, size = [1920, 1080], background = '0x1b2a41' }) {
   const [w, h] = size;
   const common = `scale=${w}:${h}:flags=lanczos:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p`;
   let length, inputs, video;
-  if (image && fs.existsSync(image)) {
+  if (frames?.length) {
+    // A slide that builds in ("reveal"): each frame from its moment in the narration (a fraction of it) to the next.
+    length = scene.seconds;
+    const said = scene.narrationSeconds ?? length;
+    const at = frames.map(f => Math.min(length, f.at * said));
+    const list = frames.map((f, k) => `file '${f.file.replace(/\\/g, '/').replace(/'/g, "'\\''")}'\nduration ${num(Math.max(0.04, (k + 1 < frames.length ? at[k + 1] : length) - at[k]))}`);
+    // The concat demuxer needs the last file again to hold its duration.
+    fs.writeFileSync(path.join(outDir, `${scene.id}-frames.txt`), `${list.join('\n')}\nfile '${frames.at(-1).file.replace(/\\/g, '/').replace(/'/g, "'\\''")}'\n`, 'utf8');
+    inputs = ['-f', 'concat', '-safe', '0', '-i', `${scene.id}-frames.txt`];
+    video = `[0:v]${common},tpad=stop_mode=clone:stop_duration=${num(length)}[v]`;
+    console.log(`${scene.id}  slide, ${frames.length} steps  ${num(length)}s`);
+  } else if (image && fs.existsSync(image)) {
     // A slide (src/slides.mjs): the still, for as long as its narration lasts.
     length = scene.seconds;
     inputs = ['-loop', '1', '-framerate', '30', '-t', num(length), '-i', image];

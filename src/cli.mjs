@@ -81,7 +81,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { saveLogin } from './auth.mjs';
 import { ConfigError, loadTourJson, materialize, missingCredentials } from './declarative.mjs';
 import { check as checkSchema, schemaFor, schemaRef, schemasDir, schemaTypes, writeSchemaCopy } from './schema.mjs';
-import { OUTLINE_SCHEMA, OUTLINE_SYSTEM, outline, renderSlides } from './slides.mjs';
+import { contactSheet, narrationWarnings, OUTLINE_SCHEMA, OUTLINE_SYSTEM, outline, renderSlides } from './slides.mjs';
 import { appSettingsFor } from './cli-app.mjs';
 import { platformCommand } from './platform-cli.mjs';
 import { call, parseArg, waitCall, readSessions, Session, sessionName, sessionsDir, startDaemon } from './session.mjs';
@@ -110,7 +110,7 @@ import { log, newRunDir, num, parseArgs, run, sleep } from './util.mjs';
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 /**
@@ -139,8 +139,8 @@ async function generateExplainer(args) {
     // Images the document points at come along, relative to the run folder's tour.json.
     for (const s of scenes) if (s.slide.image) s.slide.image = path.relative(out, s.slide.image).split(path.sep).join('/');
     if (args.platform) loadPlatform(toolRoot, args.platform); // fails early on a typo
-    const tour = { $schema: schemaRef(out, 'tour'), name, ...(args.platform ? { platform: args.platform } : {}), style: 'explainer',
-      comment: `Generated from ${path.basename(docFile)} (${by}). Edit the slides and narration, add app scenes (steps) between them if useful, then aft run it.`,
+    const tour = { $schema: schemaRef(out, 'tour'), name, ...(args.platform ? { platform: args.platform } : {}), style: 'explainer', slides: { theme: 'dark' }, pronounce: {},
+      comment: `Generated from ${path.basename(docFile)} (${by}). Edit the slides and narration, add app scenes (steps) between them if useful, then aft run it.${by === 'outline' && !heuristic.said ? ' The narration is the document\'s text: write "Say: …" under each heading in the document to give each slide its own spoken words.' : ''}`,
       generatedBy: by, plannedAt: new Date().toISOString(), scenes };
     const tourFile = path.join(out, 'tour.json');
     fs.writeFileSync(tourFile, JSON.stringify(tour, null, 2) + '\n');
@@ -285,6 +285,7 @@ async function loadTour(file, args) {
     def.platformDir = p.dir;
     def.pronounce = { ...p.platform.pronounce, ...def.pronounce };
     for (const k of ['voice', 'viewport', 'mask']) def[k] ??= p.platform[k];
+    def.slides = { ...p.platform.slides, ...def.slides }; // the platform's slide look (a team theme), the tour's on top
   }
   return { def, dir: path.dirname(abs) };
 }
@@ -429,19 +430,25 @@ async function validate(def, tourDir, outDir, args) {
  * warnings, entries } (entries: one validation line per slide). A slide that can't be drawn is a TOOLING failure.
  */
 async function drawSlides(def, scenes, tourDir, outDir) {
-  const todo = scenes.filter(s => s.slide && !s.offCamera);
-  if (!todo.length) return { files: {}, warnings: [], entries: [] };
+  const filmed = scenes.filter(s => !s.offCamera);
+  // What a voice would misread in the narration, for every filmed scene (slides or not).
+  const spoken = filmed.flatMap(s => narrationWarnings(s.narration, def.pronounce).map(w => `${s.id} narration: ${w}`));
+  const todo = filmed.filter(s => s.slide);
+  if (!todo.length) return { files: {}, frames: {}, warnings: spoken, entries: [] };
   let r;
-  try { r = await renderSlides(todo, { outDir, dir: tourDir, style: def.slides, log }); } catch (e) {
+  try { r = await renderSlides(todo, { outDir, dir: tourDir, style: def.slides, log, total: filmed.length }); } catch (e) {
     if (/slide image/.test(e.message)) throw new ConfigError(e.message);
     throw new Failure('tooling', `couldn't draw the slides: ${e.message}`);
   }
+  const sheet = contactSheet(outDir, todo, r.files);
   const entries = todo.map(s => {
     const w = r.warnings.find(x => x.startsWith(`${s.id}:`));
     return { scene: s.id, step: '-', action: 'slide', ok: true, ...(w ? { warning: w } : {}), spec: { slide: s.slide.heading ?? s.title } };
   });
-  for (const w of r.warnings) log(`warning: ${w}`);
-  return { ...r, entries };
+  const warnings = [...r.warnings, ...spoken];
+  for (const w of warnings) log(`warning: ${w}`);
+  log(`slides: ${sheet}`);
+  return { ...r, warnings, entries, sheet };
 }
 
 /**
@@ -486,6 +493,14 @@ function keepSource(def, tourDir, outDir) {
 // ---- Render (narrate → record → cut → mux → join) ----------------------------------------------------------------
 
 async function render(def, tourDir, outDir, args) {
+  // --slides-only: the slides as pictures (and slides/index.html, the whole deck), in seconds: no voice, no video.
+  if (args.slidesOnly) {
+    const scenes = scenesOf(def, tourDir);
+    const r = await drawSlides(def, scenes, tourDir, outDir);
+    if (!r.sheet) throw new UsageError('--slides-only: this tour has no slide scenes');
+    console.log(`slides: ${r.sheet}`);
+    return { slides: Object.values(r.files), sheet: r.sheet, warnings: r.warnings };
+  }
   requireFfmpeg();
   const tail = args.tail !== undefined ? Number(args.tail) : 0.75;
   const provider = args.speech ?? (args.voice === 'silent' ? 'silent' : defaultProvider());
@@ -538,7 +553,7 @@ async function render(def, tourDir, outDir, args) {
 
   const segments = [];
   for (const s of filmed) {
-    const seg = await muxScene({ scene: s, clip: s.slide ? null : path.join(clipsDir, `${s.id}.mp4`), image: slides.files[s.id], outDir });
+    const seg = await muxScene({ scene: s, clip: s.slide ? null : path.join(clipsDir, `${s.id}.mp4`), image: slides.files[s.id], frames: slides.frames?.[s.id], outDir });
     segments.push(seg.file);
     s.length = seg.length;
   }
@@ -1152,10 +1167,17 @@ const commands = {
         s.slide.image = `assets/${path.basename(to)}`;
       }
     } else scenes = [
-      { title: name, narration: `This is ${name}.`, slide: { heading: name, subtitle: 'What this video explains' } },
-      { title: 'The point', narration: 'Say what each slide shows, in a few spoken sentences.', slide: { bullets: ['One point per bullet', 'Short enough to read while it is said'] } },
+      // A starter deck: one slide per layout, to copy from (every field is in the schema, with descriptions).
+      { title: 'Title', narration: `This is ${name}. Here is what it covers.`, slide: { heading: name, subtitle: 'What this video explains, in one line' } },
+      { title: 'Points', narration: 'Bullets build in, one per sentence. This one passed. This one is partly there. This one failed.',
+        slide: { kicker: 'Section 1 · Points', bullets: ['✓ Something that works', '△ Something partly there', '✗ Something that failed'], reveal: true } },
+      { title: 'Numbers', narration: 'Big numbers, with what they mean.', slide: { stats: [{ value: '13K', label: 'tokens in a rule set' }, { value: '1M', label: 'tokens a model accepts', tone: 'ok' }] } },
+      { title: 'Comparison', narration: 'Two cards side by side, and the takeaway underneath.',
+        slide: { columns: [{ heading: 'Before', tone: 'bad', bullets: ['What people assumed'] }, { heading: 'After', tone: 'ok', bullets: ['What is actually true'] }], callout: { text: 'The **takeaway** goes in a callout.', tone: 'ok' } } },
+      { title: 'Results', narration: 'A table, and a flow from input to result.',
+        slide: { table: { head: ['Case', 'Result'], rows: [['Sample one', '✓ pass'], ['Sample two', '✗ fail']] }, flow: ['Input', 'One call', 'Decision'], note: 'Source: where the numbers came from' } },
     ];
-    const tour = { $schema: schemaRef(dir, 'tour'), name, style: 'explainer', scenes };
+    const tour = { $schema: schemaRef(dir, 'tour'), name, style: 'explainer', slides: { theme: 'dark' }, pronounce: {}, scenes };
     if (args.pages) {
       fs.mkdirSync(path.join(dir, 'pages'), { recursive: true });
       const page = path.join(dir, 'pages', 'index.html');

@@ -624,19 +624,46 @@ own notes don't have yet.
 
 Not every video is a tour of an app: findings, a spike write-up, a design review, release notes. A scene with
 **`"slide"`** instead of steps is a still drawn by a headless browser (no app, login or network) and narrated like any
-scene: `{ "title", "narration", "slide": { "heading", "subtitle", "bullets": [], "body", "code", "image", "note" } }`
-(`**bold**`, `*italic*`, `` `code` `` in text; `image` relative to the tour). `"slides": { "theme": "dark" | "light",
-"accent", "footer" }` on the tour styles them. A tour of slides only needs no platform or baseUrl; `render` and `run`
-both make the video, and `validate` draws every slide and warns when text doesn't fit. Slides can sit between recorded
-scenes of a platform tour (a title, a summary, the context before a demo): only the recorded scenes use the browser.
-`"style": "explainer"` turns off the review (there are no criteria to weigh).
+scene. Slides are designed by hand in the tour file (the schema describes every field):
+
+- `kicker` (a small label above), `heading` (default: the scene title), `subtitle`;
+- content blocks, **drawn in the order they are written**: `body` (paragraphs), `bullets`, `code`, `table`
+  (`{ head, rows }`), `columns` (side-by-side cards `{ heading, body, bullets, tone }`), `stats` (big numbers
+  `{ value, label, tone }`), `flow` (boxes joined by arrows), `callout` (the takeaway, in a coloured box), `image`
+  (beside the rest when written last);
+- `note`: small print in the footer (a source, a date), never a takeaway;
+- tones `ok` / `warn` / `bad` / `info` on bullets, cells, rows, cards, stats, flow boxes and callouts, as
+  `{ "text", "tone" }` or a leading (or trailing) ✓ △ ✗ ℹ;
+- `reveal`: the slide builds in, each bullet, row, card, stat or box in turn: `true` (one per narration sentence) or
+  fractions of the narration (`[0, 0.3, 0.6]`);
+- `theme`, `accent` per slide; `"slides": { "theme", "accent", "footer" }` on the tour, or in platform.json for a
+  team's look (the tour's win). Text accepts `**bold**`, `*italic*` and `` `code` ``.
+
+A tour of slides only needs no platform or baseUrl; `render` and `run` both make the video. `aft render <tour>
+--slides-only` draws the slides in seconds (no voice, no video) with `slides/index.html`, the whole deck on one page,
+for a fast layout loop. `validate` draws them too, and warns when content doesn't fit, when a footer note wraps, and when
+a narration has what a voice misreads ("13K", ticket ids, symbols, "a/b", parentheses, "e.g."; add `pronounce`
+entries or write it as said). Ranges ("60–80") and arrows ("→") are said as "to". Slides can sit between recorded scenes
+of a platform tour (a title, a summary, context before a demo): only the recorded scenes use the browser. `"style":
+"explainer"` turns off the review (there are no criteria to weigh).
+
+**From a document, no AI:** `generate --from` / `scratch --from` turn markdown into slides. The first heading is the
+title slide; each section is a slide. Lists become bullets, tables become tables, `>` quotes become callouts, prose
+becomes body and code blocks become code, in document order. Write each slide's spoken words in the document, under its heading, as
+`Say: …` lines (or `<!-- say: … -->`). They are the narration and never appear on the slide. Without them, the narration is the
+section's text and the generated tour's comment says so. Scene titles are the heading up to a ":" or "—".
 
 ```
-aft generate --from findings.md [--llm claude]   # a document's outline as slide scenes → <run>/tour.json (Claude: sends the document)
-aft scratch foia-findings --from findings.md     # the same, in scratch/foia-findings/ (git-ignored, kept, "$schema" works)
+aft scratch foia-findings --from findings.md     # in scratch/foia-findings/ (git-ignored, kept, "$schema" works)
+aft scratch demo                                 # a starter deck: one slide per layout, to copy from
 aft scratch demo --pages                         # plus scratch/demo/pages/index.html, recorded in the browser
+aft render scratch/demo/demo.tour.json --slides-only   # the deck as pictures: slides/index.html
+aft generate --from findings.md [--llm claude]   # the same into a run folder (Claude: sends the document)
 aft scratch                                      # the list
 ```
+
+A tour with a `story` id names its run folder `<id>-<name>`: add the story before the first run, or `latest.json` and
+`runs.jsonl` start again under the new name.
 
 **`"pages": "<folder>"`** (stand-alone tours only) serves the tour's own static pages on a free local port for each run,
 as its baseUrl: `goto` paths and scene `url`s are files in it (`"index.html?s=2"`), and steps and checks work on them as

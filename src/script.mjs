@@ -26,5 +26,7 @@ export function parseScript(file) {
 export function spokenText(narration, pronounce = {}) {
   let text = narration.replace(/[*_`]/g, '');
   for (const [k, v] of Object.entries(pronounce)) text = text.split(k).join(v);
+  // Ranges and arrows, as said: "60–80" is "60 to 80", "a → b" is "a to b".
+  text = text.replace(/(\d)\s*–\s*(\d)/g, '$1 to $2').replace(/\s*→\s*/g, ' to ');
   return text;
 }
