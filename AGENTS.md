@@ -47,6 +47,7 @@ aft run      platforms/todomvc/tours/track-and-filter.tour.json             # re
 aft run      my.tour.json --target qa                                       # another environment of the tour's platform
 aft run      my.tour.json --base-url http://localhost:3000/                 # a one-off URL (or BASE_URL=...)
 aft run      my.tour.json --speech silent                        # headless/CI: silent audio, captions carry the narration
+aft run      my.tour.json --voice zira --rate 1                  # another narrator for this run; aft voices lists them
 aft all      --story story.md --platform todomvc --llm claude                # story → script → dry run → video
 aft batch    platforms/todomvc/tours/ --reset --speech silent                # several tours in order, one reset first
 aft ui                                                                       # the local web UI (ui/README.md); Ctrl+C stops it
@@ -64,6 +65,13 @@ undone), `artifacts.json` + `artifacts/` (what the run pinned), `slides/` (each 
 tour as it ran, with its slide images, upload files and `pages` folder, so `aft run <run>/source/<tour>.json` renders
 it again wherever the original was). On failure: `screens/failure.png`,
 `trace-failed.zip`, `recording-failed.webm`. `out/<name>/latest.json` points at the newest successful run.
+
+**Voices:** `aft voices` lists the installed narrators (Windows SAPI; Settings > Time & language > Speech adds more).
+Which one speaks a scene, first match wins: the scene's `"voice"`, `--voice`, the tour's `"voice"`, the platform's
+`"voice"`, the system default. Speaking rate (`-10` slow to `10` fast) follows the same order with `"rate"` /
+`--rate`. Short names work (`"Zira"`, `"david"`; `aft voices --try zira` shows the match); a name that matches no
+installed voice, or several, stops the run before anything is spoken, listing the installed ones. A per-scene voice
+gives a second narrator (a dialogue, a quoted user). The UI's Tours page has voice and rate pickers for a run.
 
 **Video trimming:** long waits (page loads and busy indicators, `waitFor`, `waitForResponse`, dismissed known issues)
 are recorded in `timings.json` (`scenes[].waits`) and cut from the video, keeping a 0.3 s lead-in; the narration is
@@ -691,7 +699,8 @@ Say: Agents don't save tokens.
 Reveal: dim                      # per slide: yes | dim | no | 0, 0.3, 0.6
 Hold: 2
 Note: Measured on the spike branch
-                                 # also: Use: closing (a shared slide), Theme: light, Accent: #c53030
+                                 # also: Use: closing (a shared slide), Theme: light, Accent: #c53030,
+                                 # Voice: David, Rate: -2 (this section's narrator; voice:/rate: in front matter for all)
 ```
 
 Edited the tour by hand anyway? `aft scratch <name> --from doc.md --update` regenerates from the document and keeps

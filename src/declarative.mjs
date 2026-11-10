@@ -234,11 +234,12 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
     story: raw.story,
     raw: cfg0,
     voice: cfg0.voice,
+    rate: cfg0.rate,
     pronounce: cfg0.pronounce,
     viewport: cfg0.viewport,
     mask: cfg0.mask,
     video: cfg0.video,
-    scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration ?? '', offCamera: s.camera === false, ...(s.slide ? { slide: s.slide } : {}), ...(s.hold != null ? { hold: s.hold } : {}) })),
+    scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration ?? '', offCamera: s.camera === false, ...(s.slide ? { slide: s.slide } : {}), ...(s.hold != null ? { hold: s.hold } : {}), ...(s.voice ? { voice: s.voice } : {}), ...(s.rate != null ? { rate: s.rate } : {}) })),
     /** How slide scenes look (src/slides.mjs), and the static pages folder, if any. */
     slides: cfg0.slides ?? {},
     pagesDir,

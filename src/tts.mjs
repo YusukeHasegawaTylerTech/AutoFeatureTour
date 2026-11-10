@@ -32,6 +32,27 @@ export async function speak({ text, wav, voice, rate = 0, provider = defaultProv
   }
 }
 
+let installed = null;
+/** The installed voices (SAPI names); [] where there is no SAPI. */
 export async function listVoices() {
-  return (await ps(['-List'])).split(/\r?\n/).filter(Boolean);
+  if (process.platform !== 'win32') return [];
+  installed ??= (await ps(['-List'])).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  return installed;
+}
+
+/**
+ * A voice as written ("Zira", "microsoft david", the full name) → the installed voice's name. Exact match first, then
+ * case-insensitive, then a unique substring. Throws, listing the installed voices, when none or several match.
+ */
+export async function resolveVoice(name, { provider = defaultProvider() } = {}) {
+  if (!name || provider !== 'sapi') return name || undefined;
+  const voices = await listVoices();
+  const want = String(name).trim().toLowerCase();
+  const hit = voices.find(v => v === name) ?? voices.find(v => v.toLowerCase() === want);
+  if (hit) return hit;
+  const some = voices.filter(v => v.toLowerCase().includes(want));
+  if (some.length === 1) return some[0];
+  const list = voices.length ? voices.map(v => `"${v}"`).join(', ') : 'none (add one in Windows Settings > Time & language > Speech)';
+  throw new Error(some.length ? `voice "${name}" matches several voices: ${some.map(v => `"${v}"`).join(', ')}; be more specific`
+    : `no voice "${name}" is installed (installed: ${list}). aft voices lists them; --speech silent needs none`);
 }

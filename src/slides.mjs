@@ -324,7 +324,9 @@ const sentencesOf = p => plain(p).split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/).filter
 const shortTitle = h => { const p = plain(h).split(/\s*(?::|\s[—–-]\s)\s*/)[0]; return p.length >= 3 ? p : plain(h); };
 const SAY = /^\s*(?:say|narration)\s*:\s*/i;
 /** Per-slide directive lines (never shown): Reveal:, Hold:, Note:, Use:, Theme:, Accent:. */
-const DIRECTIVE = /^\s*(reveal|hold|note|use|theme|accent|layout|url)\s*:\s*(.*)$/i;
+const DIRECTIVE = /^\s*(reveal|hold|note|use|theme|accent|layout|url|voice|rate)\s*:\s*(.*)$/i;
+/** "Voice: Zira" / "Rate: 2" (a section, or the front matter) → { voice, rate }. */
+const voiceOf = d => ({ ...(d.voice ? { voice: d.voice } : {}), ...(d.rate !== undefined && d.rate !== '' && Number.isFinite(Number(d.rate)) ? { rate: Number(d.rate) } : {}) });
 
 /**
  * A ```steps block: one step per line, JSON ({ "click": "Save" }) or shorthand: goto <path> · click | dblclick |
@@ -536,7 +538,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
       const t = split0 ? plain(split0[1]) : shortTitle(heading);
       if (say.length) said = true;
       scenes.push({ title: t, narration: say.join(' ') || heading, ...(directives.url ? { url: directives.url } : {}), steps,
-        ...(directives.hold !== undefined && Number.isFinite(Number(directives.hold)) ? { hold: Number(directives.hold) } : {}) });
+        ...(directives.hold !== undefined && Number.isFinite(Number(directives.hold)) ? { hold: Number(directives.hold) } : {}), ...voiceOf(directives) });
       continue;
     }
     let slide = { heading };
@@ -596,7 +598,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
       ...(b ?? []).map(x => plain(x).replace(/[.;:]?$/, '.'))].filter(Boolean).join(' ') || heading;
     const title = sec.title ? (split ? 'Overview' : shortTitle(heading)) : split ? plain(split[1]) : shortTitle(heading);
     const hold = directives.hold !== undefined && Number.isFinite(Number(directives.hold)) ? { hold: Number(directives.hold) } : {};
-    scenes.push({ title, ...(narration !== undefined ? { narration } : {}), slide, ...hold });
+    scenes.push({ title, ...(narration !== undefined ? { narration } : {}), slide, ...hold, ...voiceOf(directives) });
   }
   let dropped = 0;
   if (scenes.length > maxScenes) {
@@ -610,7 +612,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
 export function deckSettings(meta = {}) {
   const slides = Object.fromEntries(['theme', 'accent', 'footer'].filter(k => meta[k]).map(k => [k, meta[k]]));
   const app = Object.fromEntries(['platform', 'env', 'role', 'pages'].filter(k => meta[k]).map(k => [k, meta[k]]));
-  return { ...app, slides: { theme: 'dark', ...slides }, pronounce: meta.pronounce ?? {}, ...(meta.voice ? { voice: meta.voice } : {}), ...(meta.name ? { name: meta.name } : {}) };
+  return { ...app, slides: { theme: 'dark', ...slides }, pronounce: meta.pronounce ?? {}, ...voiceOf(meta), ...(meta.name ? { name: meta.name } : {}) };
 }
 
 

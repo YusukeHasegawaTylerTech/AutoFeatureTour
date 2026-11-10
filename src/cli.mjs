@@ -49,6 +49,7 @@
 //                                                    wait for it (no id: the running one, else the last) and print its
 //                                                    result, same exit code; AFT_CALL_TIMEOUT=<s> caps a call's wait
 //   aft ui       [--port 4777] [--no-open] [--root <checkout>]   the local web UI (ui/server.mjs; Ctrl+C stops it)
+//   aft voices   [--try <name>]                      the installed narrators (tour "voice", a scene's "voice", --voice; short names work)
 //   aft --list-voices | --help | --version
 //
 // Git Bash rewrites arguments that start with / (a path like #/case/1 or /orders) into Windows paths; aft refuses
@@ -104,13 +105,13 @@ import { CLASSES, classify, exitCode, Failure, summaryLine } from './failures.mj
 import { criteriaOf, finalize, progress } from './triage.mjs';
 import { review as reviewOf } from './review.mjs';
 import { suggestFix } from './fix.mjs';
-import { defaultProvider, estimateSeconds, listVoices, speak } from './tts.mjs';
+import { defaultProvider, estimateSeconds, listVoices, resolveVoice, speak } from './tts.mjs';
 import { log, newRunDir, num, parseArgs, run, sleep } from './util.mjs';
 
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'try', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 /**
@@ -330,7 +331,7 @@ async function loadTour(file, args) {
     try { p = loadPlatform(toolRoot, def.platform, { from: path.dirname(abs) }); } catch (e) { throw new ConfigError(e.message); }
     def.platformDir = p.dir;
     def.pronounce = { ...p.platform.pronounce, ...def.pronounce };
-    for (const k of ['voice', 'viewport', 'mask']) def[k] ??= p.platform[k];
+    for (const k of ['voice', 'rate', 'viewport', 'mask']) def[k] ??= p.platform[k];
     def.slides = { ...p.platform.slides, ...def.slides }; // the platform's slide look (a team theme), the tour's on top
   }
   return { def, dir: path.dirname(abs) };
@@ -340,7 +341,7 @@ const runName = (def, args) => args.name ?? (def.story?.id && !def.name.startsWi
 
 function scenesOf(def, tourDir) {
   return def.scenes
-    ? def.scenes.map((s, i) => ({ number: i + 1, id: `scene-${String(i + 1).padStart(2, '0')}`, title: s.title, narration: s.narration ?? '', cues: [], ...(s.offCamera ? { offCamera: true } : {}), ...(s.slide ? { slide: s.slide } : {}), ...(s.hold != null ? { hold: s.hold } : {}) }))
+    ? def.scenes.map((s, i) => ({ number: i + 1, id: `scene-${String(i + 1).padStart(2, '0')}`, title: s.title, narration: s.narration ?? '', cues: [], ...(s.offCamera ? { offCamera: true } : {}), ...(s.slide ? { slide: s.slide } : {}), ...(s.hold != null ? { hold: s.hold } : {}), ...(s.voice ? { voice: s.voice } : {}), ...(s.rate != null ? { rate: s.rate } : {}) }))
     : parseScript(path.resolve(tourDir, def.script));
 }
 
@@ -557,10 +558,19 @@ async function render(def, tourDir, outDir, args) {
 
   // Off-camera scenes run (and are checked) but have no narration, clip or caption.
   const filmed = scenes.filter(s => !s.offCamera);
+  // Which voice says each scene: the scene's own "voice", else --voice, else the tour's (or its platform's); names
+  // may be short ("Zira"). Checked before anything is spoken, so a typo fails at once with the installed list.
+  const voiceOf = async s => {
+    const v = s.voice ?? (args.voice === 'silent' ? undefined : args.voice) ?? def.voice;
+    try { return await resolveVoice(v, { provider }); } catch (e) { throw new ConfigError(`${s.voice ? `${s.id}: ` : ''}${e.message}`); }
+  };
+  const rateOf = s => Number(s.rate ?? args.rate ?? def.rate ?? 0);
+  for (const s of filmed) s.voiceName = await voiceOf(s);
+  const used = [...new Set(filmed.map(s => s.voiceName ?? '(system default)'))];
+  if (provider === 'sapi') log(`voice${used.length > 1 ? 's' : ''}: ${used.join(', ')}`);
   for (const s of filmed) {
     s.wav = path.join(outDir, `${s.id}.wav`);
-    await speak({ text: spokenText(s.narration, def.pronounce), wav: s.wav, voice: args.voice === 'silent' ? undefined : args.voice ?? def.voice,
-      rate: Number(args.rate ?? 0), provider });
+    await speak({ text: spokenText(s.narration, def.pronounce), wav: s.wav, voice: s.voiceName, rate: rateOf(s), provider });
     s.narrationSeconds = await duration(s.wav);
     s.seconds = s.narrationSeconds + (s.hold != null ? Number(s.hold) : tail); // "hold": this scene's pause after its narration
   }
@@ -1285,6 +1295,20 @@ const commands = {
     fs.writeFileSync(tourFile, JSON.stringify(tour, null, 2) + '\n');
     if (!json) console.log(`wrote ${tourFile}\nnext: edit it, then  aft render "${tourFile}" --slides-only  (preview)  or  aft run "${tourFile}"`);
     return { tour: tourFile, dir, scenes: tour.scenes.length, ...(kept ? { kept } : {}) };
+  },
+
+  /** `aft voices [--try "<name>"]`: the installed narrators; --try resolves a short name ("Zira") to one. */
+  async voices(args) {
+    const voices = await listVoices();
+    const provider = defaultProvider();
+    if (args.try) {
+      let voice;
+      try { voice = await resolveVoice(String(args.try), { provider }); } catch (e) { throw new UsageError(e.message); }
+      if (!json) console.log(voice);
+      return { voices, voice };
+    }
+    if (!json) console.log(voices.length ? voices.join('\n') : `no installed voices (speech provider: ${provider}); use --speech silent`);
+    return { voices, provider };
   },
 
   async schema(args) {

@@ -326,6 +326,8 @@ const slide = obj('A still slide instead of steps: drawn without a browser or ap
 const slideStyle = obj('How slide scenes look (a platform\'s apply to its tours; the tour\'s win).', { theme: { enum: ['dark', 'light'], description: 'Default dark.' }, accent: str('Accent colour (CSS), e.g. "#1f6fd1".'), footer: str('Footer text on every slide.') });
 const scene = obj('One scene: narration over the steps that show it.', {
   slide,
+  voice: str('The narrator of this scene, when it is not the tour narrator (a second voice, for a dialogue or a quote). Wins over --voice.'),
+  rate: num('Speaking rate of this scene, -10 to 10 (wins over --rate).', { minimum: -10, maximum: 10 }),
   title: str('Shown on title cards and in reports.'), narration: str('What the narrator says; the scene lasts as long as it does. Required unless "camera": false.'),
   camera: bool('false: off camera. The scene runs for real (unpaced, no narration needed), its checks still count and it is in the report and storyboard, but it is not in the video.'),
   url: str('Path opened off camera just before the scene starts.'), criteria: { type: 'array', items: { anyOf: [{ type: 'integer' }, { type: 'string' }] }, description: 'Acceptance criteria this scene demonstrates (1-based).' },
@@ -366,7 +368,7 @@ export const SCHEMAS = {
       fixtures: { type: 'array', items: { type: 'string', pattern: '^[A-Za-z0-9_-]+$' }, description: 'Fixtures from the platform\'s fixtures/: data ({data.x}), setup/teardown and off-camera steps.' },
       story, scenes: { type: 'array', minItems: 1, items: scene, description: 'The scenes, in order.' },
       timeouts, retries: num('Retries for actions that time out (default 1).'), onError: { enum: ['fail', 'skip'], description: '"skip": an action that can\'t be done is skipped (checks still fail). Default fail.' },
-      hooks, voice: str('SAPI voice name.'), pronounce, viewport, trace: bool('false: no trace.zip (it holds network traffic and DOM).'),
+      hooks, voice: str('The narrator: an installed voice (aft voices lists them); a short name works ("Zira"). --voice overrides it; the voice of a scene wins over both.'), rate: num('Speaking rate, -10 (slow) to 10 (fast); default 0. --rate overrides it.', { minimum: -10, maximum: 10 }), pronounce, viewport, trace: bool('false: no trace.zip (it holds network traffic and DOM).'),
       allowMocks: bool('Permit "mock" steps. Mocked responses are listed in the report; scenes a mock answered in get a "simulated data" caption. Refused for "style": "verification".'),
       mocks: { type: 'array', items: { type: 'string', pattern: '^[A-Za-z0-9_-]+$' }, description: 'Mock sets from the platform\'s mocks/ folder, applied off camera before the first scene (needs allowMocks).' },
       video,
@@ -386,7 +388,7 @@ export const SCHEMAS = {
   }),
   platform: file('platform', 'AutoFeatureTour platform (platforms/<name>/platform.json)', 'How the app behaves wherever it runs.', {
     type: 'object', additionalProperties: false,
-    properties: { ...$schemaProp, comment: str('A note for people.'), ready, errors, appErrors, ignore: appErrors.properties.ignore, mask, pronounce, viewport, slides: slideStyle, voice: str('SAPI voice.'),
+    properties: { ...$schemaProp, comment: str('A note for people.'), ready, errors, appErrors, ignore: appErrors.properties.ignore, mask, pronounce, viewport, slides: slideStyle, voice: str('The default narrator for the tours of this platform (aft voices lists them).'), rate: num('Default speaking rate, -10 to 10.', { minimum: -10, maximum: 10 }),
       ignoreHTTPSErrors: bool('Accept self-signed certificates.'), startPath: str('Where sessions and discovery start (default /).'),
       discover: obj('Discovery hints.', { paths: { type: 'array', items: { type: 'string' }, description: 'Extra paths to crawl.' } }),
       timeouts, retries: num('Retries for actions that time out (default 1).'), trace: bool('false: no trace.zip.'), video, workarounds, data: { type: 'object', description: 'Values for {data.<key>} in login steps, fixtures and tours (credentials: username, password…). Strings may use {env:NAME}. Environment data overrides the platform data; fixture data overrides both.' } },

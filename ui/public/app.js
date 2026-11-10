@@ -306,9 +306,11 @@ const views = {
   },
 
   async tours() {
-    const ps = await api('/api/platforms');
+    const [ps, vs] = await Promise.all([api('/api/platforms'), api('/api/voices').catch(() => ({ voices: [] }))]);
     $app.innerHTML = `<h2>Tours</h2>
-      <div class="toolbar"><label>speech <select id="speech"><option value="">default</option><option>silent</option></select></label></div>
+      <div class="toolbar"><label>speech <select id="speech"><option value="">default</option><option>silent</option></select></label>
+        <label title="The narrator for this run (a scene's own voice still wins). Default: the tour's or platform's voice.">voice <select id="voice"><option value="">tour's voice</option>${vs.voices.map(v => `<option>${h(v)}</option>`).join('')}</select></label>
+        <label title="Speaking rate, -10 (slow) to 10 (fast); empty: the tour's">rate <input id="rate" type="number" min="-10" max="10" step="1" style="width:4em" placeholder="tour"></label></div>
       ${ps.map(p => `<div class="card"><h3>${h(p.name)} <span class="muted">env: ${h(p.environments.join(', ') || '—')}${p.default ? ` (default ${h(p.default)})` : ''}</span>
         <button data-check="${h(p.name)}">platform check</button></h3>
         <table>${p.tours.map(t => `<tr><td>${h(t.file)}</td><td style="text-align:right">
@@ -321,7 +323,10 @@ const views = {
     $app.querySelectorAll('button[data-tour]').forEach(b => (b.onclick = () => {
       const env = $app.querySelector(`select[data-env="${CSS.escape(b.dataset.tour)}"]`).value;
       const speech = $app.querySelector('#speech').value;
-      startJob([b.dataset.cmd, b.dataset.tour, ...(env ? ['--target', env] : []), ...(speech && b.dataset.cmd !== 'validate' ? ['--speech', speech] : [])]);
+      const voice = $app.querySelector('#voice').value, rate = $app.querySelector('#rate').value;
+      const spoken = b.dataset.cmd !== 'validate';
+      startJob([b.dataset.cmd, b.dataset.tour, ...(env ? ['--target', env] : []), ...(speech && spoken ? ['--speech', speech] : []),
+        ...(voice && spoken && speech !== 'silent' ? ['--voice', voice] : []), ...(rate !== '' && spoken ? ['--rate', rate] : [])]);
     }));
     $app.querySelectorAll('button[data-check]').forEach(b => (b.onclick = () => startJob(['platform', 'check', b.dataset.check])));
   },

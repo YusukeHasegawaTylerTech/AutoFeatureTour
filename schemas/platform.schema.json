@@ -198,7 +198,20 @@
     },
     "voice": {
       "type": "string",
-      "description": "SAPI voice."
+      "description": "The default narrator for the tours of this platform (aft voices lists them)."
+    },
+    "rate": {
+      "description": "Default speaking rate, -10 to 10.",
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": -10,
+          "maximum": 10
+        },
+        {
+          "$ref": "common.schema.json#/$defs/placeholder"
+        }
+      ]
     },
     "ignoreHTTPSErrors": {
       "type": "boolean",

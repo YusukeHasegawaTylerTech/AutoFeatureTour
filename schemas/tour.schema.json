@@ -516,6 +516,23 @@
             },
             "additionalProperties": false
           },
+          "voice": {
+            "type": "string",
+            "description": "The narrator of this scene, when it is not the tour narrator (a second voice, for a dialogue or a quote). Wins over --voice."
+          },
+          "rate": {
+            "description": "Speaking rate of this scene, -10 to 10 (wins over --rate).",
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": -10,
+                "maximum": 10
+              },
+              {
+                "$ref": "common.schema.json#/$defs/placeholder"
+              }
+            ]
+          },
           "title": {
             "type": "string",
             "description": "Shown on title cards and in reports."
@@ -1047,7 +1064,20 @@
     },
     "voice": {
       "type": "string",
-      "description": "SAPI voice name."
+      "description": "The narrator: an installed voice (aft voices lists them); a short name works (\"Zira\"). --voice overrides it; the voice of a scene wins over both."
+    },
+    "rate": {
+      "description": "Speaking rate, -10 (slow) to 10 (fast); default 0. --rate overrides it.",
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": -10,
+          "maximum": 10
+        },
+        {
+          "$ref": "common.schema.json#/$defs/placeholder"
+        }
+      ]
     },
     "pronounce": {
       "type": "object",

@@ -254,3 +254,22 @@ test('round 5: glyphs come off the text, Layout: bullets, reveal rule, captions,
   assert.throws(() => m.stepsOf('dance wildly'), /unknown action "dance"/);
   assert.match(m.slideHtml({ number: 1, title: 't', slide: { chart: scenes[3].slide.chart } }), /class="cbar ok"/);
 });
+
+test('voices: per scene in the tour and in markdown; short names resolve', async () => {
+  const m = await import('../src/slides.mjs');
+  assert.deepEqual(check('tour', { voice: 'Zira', rate: 1, scenes: [{ title: 'A', narration: 'n', voice: 'David', rate: -2, slide: {} }] }), []);
+  assert.ok(check('tour', { rate: 20, scenes: [{ title: 'A', narration: 'n' }] }).length);
+  const { scenes, meta } = m.outline('---\nvoice: Zira\nrate: 1\n---\n# D\n\n## One\nSay: hi.\n\n## Two\nSay: there.\nVoice: David\nRate: -2\n');
+  assert.deepEqual(m.deckSettings(meta).voice, 'Zira');
+  assert.equal(m.deckSettings(meta).rate, 1);
+  assert.equal(scenes[1].voice, undefined);
+  assert.deepEqual([scenes[2].voice, scenes[2].rate], ['David', -2]);
+  const { listVoices, resolveVoice } = await import('../src/tts.mjs');
+  assert.equal(await resolveVoice('anything', { provider: 'silent' }), 'anything'); // silent: no voice needed
+  const voices = await listVoices();
+  if (voices.length) {
+    const v = voices[0];
+    assert.equal(await resolveVoice(v.toLowerCase()), v);
+    await assert.rejects(resolveVoice('no-such-voice-xyz'), /is installed \(installed: /);
+  }
+});
