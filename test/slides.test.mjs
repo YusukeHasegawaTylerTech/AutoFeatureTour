@@ -424,8 +424,8 @@ test('the video and captions are named after the run', async () => {
   const { videoName, findVideo } = await import('../src/util.mjs');
   const dir = path.join(tmp(), 'RMS-4923-x', '20261110-115734-qqsn');
   fs.mkdirSync(dir, { recursive: true });
-  assert.equal(videoName(dir), 'RMS-4923-x-20261110-115734-qqsn.mp4');
-  assert.equal(videoName(dir, 'vtt'), 'RMS-4923-x-20261110-115734-qqsn.vtt');
+  assert.equal(videoName(dir), 'tour_RMS-4923-x-20261110-115734-qqsn.mp4');
+  assert.equal(videoName(dir, 'vtt'), 'tour_RMS-4923-x-20261110-115734-qqsn.vtt');
   assert.equal(findVideo(dir), null);
   fs.writeFileSync(path.join(dir, 'scene-01.mp4'), '');  // a segment is not the video
   fs.writeFileSync(path.join(dir, 'tour.mp4'), '');      // a run made before: still found

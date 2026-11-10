@@ -218,7 +218,7 @@ function listRuns() {
       if (!info) continue;
       const run = { id: `${name}/${id}`, name, command: info.command, status: info.status, startedAt: info.startedAt,
         finishedAt: info.finishedAt, seconds: info.seconds, error: info.error, input: info.input, class: info.class ?? classOf(info.error),
-        // The video and its captions: <name>-<run id>.mp4 / .vtt (tour.mp4 / tour.vtt in runs made before).
+        // The video and its captions: tour_<name>-<run id>.mp4 / .vtt (tour.mp4 / tour.vtt in runs made before).
         ...videoFiles(path.join(base, id)) };
       // A dry run (validate) finishes "done" even when steps failed: the verdict is in validation.json.
       const v = info.command === 'validate' && info.status === 'done' ? readJson(path.join(base, id, 'validation.json')) : null;

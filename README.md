@@ -3,7 +3,7 @@
 Narrated feature-tour videos of web apps, from a user story or a hand-written script:
 
 ```
-story ──generate──► tour.json + script.md ──validate──► every step resolved ──run──► <name>-<run id>.mp4 + .vtt
+story ──generate──► tour.json + script.md ──validate──► every step resolved ──run──► tour_<name>-<run id>.mp4 + .vtt
  (or a URL + brief)  (editable, reviewable)    (dry run, no video)               (paced to narration)
 ```
 
@@ -98,7 +98,7 @@ out/<story-id-or-tour>/<YYYYMMDD-HHMMSS>-<id>/     one folder per command, never
   discovery.json    screens/  (generate, auto, all)
   tour.json         script.md                      the script and its narration
   validation.md     validation.json                validate / all
-  <name>-<run id>.mp4  <name>-<run id>.vtt  recording.webm  clips/  scene-NN.wav  timings.json  screens/scene-NN.png
+  tour_<name>-<run id>.mp4  tour_<name>-<run id>.vtt  recording.webm  clips/  scene-NN.wav  timings.json  screens/scene-NN.png
   report.json  report.md                         every run: result, failing step, first cause, criteria
   trace.zip         npx playwright show-trace <file>   (trace-failed.zip, screens/failure.png, recording-failed.webm on failure)
   triage/           on failure: the portable bundle (report, script, ARIA snapshot, screenshot, trace, console/network, PROMPT.md)
