@@ -415,6 +415,61 @@
                 "type": "string",
                 "description": "An image (png, jpg, gif, svg, webp), relative to the tour file: beside the other content when it is written last, else a block of its own."
               },
+              "chart": {
+                "type": "object",
+                "description": "Horizontal bars (a ```chart block in markdown: \"label | value\" lines).",
+                "properties": {
+                  "bars": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "items": {
+                      "type": "object",
+                      "description": "A bar.",
+                      "properties": {
+                        "label": {
+                          "type": "string",
+                          "description": "What it is."
+                        },
+                        "value": {
+                          "type": "number",
+                          "description": "Its length."
+                        },
+                        "tone": {
+                          "enum": [
+                            "ok",
+                            "warn",
+                            "bad",
+                            "info"
+                          ],
+                          "description": "Colour: ok (green), warn (amber), bad (red), info (accent)."
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "label",
+                        "value"
+                      ]
+                    }
+                  },
+                  "unit": {
+                    "type": "string",
+                    "description": "Shown after each value (\"ms\", \"tokens\")."
+                  },
+                  "max": {
+                    "type": "number",
+                    "description": "The full-length value (default: the largest)."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "bars"
+                ]
+              },
+              "caption": {
+                "type": "string",
+                "description": "A line under the image (in markdown, the alt text of the image)."
+              },
               "imageSide": {
                 "type": "boolean",
                 "description": "false: an image written last is a block below the rest, not beside it."

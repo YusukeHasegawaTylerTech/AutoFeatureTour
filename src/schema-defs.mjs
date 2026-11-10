@@ -311,6 +311,10 @@ const slide = obj('A still slide instead of steps: drawn without a browser or ap
   flow: { type: 'array', items: tonedText, minItems: 2, maxItems: 9, description: 'Boxes left to right. Between boxes: an arrow, or a connector written as its own item: "+", "=", "→", "&", "or", "vs" (["Rules", "+", "Form", "→", "Decision"]).' },
   callout: { description: 'The takeaway, in a coloured box: text, or { "text", "tone" } (default info).', anyOf: [{ type: 'string' }, obj('A callout.', { text: str('The text.'), tone }, { required: ['text'] })] },
   image: str('An image (png, jpg, gif, svg, webp), relative to the tour file: beside the other content when it is written last, else a block of its own.'),
+  chart: obj('Horizontal bars (a ```chart block in markdown: "label | value" lines).', {
+    bars: { type: 'array', minItems: 1, maxItems: 10, items: obj('A bar.', { label: str('What it is.'), value: { type: 'number', description: 'Its length.' }, tone }, { required: ['label', 'value'] }) },
+    unit: str('Shown after each value ("ms", "tokens").'), max: { type: 'number', description: 'The full-length value (default: the largest).' } }, { required: ['bars'] }),
+  caption: str('A line under the image (in markdown, the alt text of the image).'),
   imageSide: bool('false: an image written last is a block below the rest, not beside it.'),
   note: str('Small print in the footer (a source, a date). For a takeaway, use "callout".'),
   reveal: { description: 'Build the slide in: each bullet, row, card, stat, flow box or paragraph appears in turn. true: one per sentence of the narration; a list: when each appears, as fractions of the narration ([0, 0.3, 0.6]).',

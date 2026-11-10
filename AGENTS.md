@@ -661,7 +661,15 @@ section's text and the generated tour's comment says so. A heading "Topic: claim
 kicker "Topic" and heading "Claim" (capitalised; the scene title is the topic, "Overview" for the title slide). A list
 whose every item is `**Label:** text` (2 to 4) becomes `columns`, and one whose every item starts with a bold number
 (`**80 MB** a day`) becomes `stats`. A paragraph like `Rules + Form → Decision ✓` becomes a `flow`. A ✓ △ ✗ ℹ at
-the start or end of a bullet, cell, card text, stat or quote sets its tone (in a table, the whole row's).
+the start or end of a bullet, cell, card text, stat or quote sets its tone (in a table, the whole row's) and is taken
+off the text (the colour says it). `Layout: bullets` keeps a `**Label:**` or bold-number list as bullets.
+`![caption](shot.png)` is an image with its caption. A ```` ```chart ```` block is a bar chart: `label | value` lines
+(a unit after the number, or `unit: ms`; a third column or a glyph for the tone; `max: 100` for the scale). A
+```` ```steps ```` block makes the section a **recorded scene** instead of a slide, on the platform's app or the
+deck's `pages`: one step per line, JSON or shorthand (`goto index.html`, `click Review with AI`, `fill Request text:
+…`, `select Status: Open`, `check`, `hover`, `press Enter`, `wait 1`, `verify Saved`, `verify url /done`), with
+`Url: <path>` to open first. `reveal: auto` builds in any slide with two or more blocks, or one block of two or more
+items (bullets, cards, stats, flow boxes, table rows, chart bars).
 
 The markdown can be the whole design, so the tour never needs editing:
 
@@ -669,8 +677,9 @@ The markdown can be the whole design, so the tour never needs editing:
 ---
 footer: RMS-4923 · spike/foia-request-validation
 theme: dark                      # accent, voice, name, max-scenes too
-reveal: auto                     # build in every slide with 2+ items (or: dim, off)
+reveal: auto                     # build in (see above), or: dim, off
 pronounce: FOIA=Foya, RMS=R M S
+pages: pages                     # static pages for ```steps scenes (relative to the document); or platform:, env:, role:
 ---
 # RMS-4923 · Records Requests: Research on context limits
 

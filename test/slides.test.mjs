@@ -238,3 +238,19 @@ test('a shared-slide scene needs no title', () => {
   assert.deepEqual(check('tour', { scenes: [{ slide: { use: 'closing' } }] }), []);
   assert.ok(check('tour', { scenes: [{ narration: 'x' }] }).length);
 });
+
+test('round 5: glyphs come off the text, Layout: bullets, reveal rule, captions, steps and chart blocks', async () => {
+  const m = await import('../src/slides.mjs');
+  assert.deepEqual(m.toned('a guess △'), { text: 'a guess', tone: 'warn' });
+  assert.deepEqual(m.toned('✓ done'), { text: 'done', tone: 'ok' });
+  const h = m.slideHtml({ number: 1, title: 't', slide: { columns: [{ heading: 'A', body: 'x ℹ' }, { heading: 'B' }], callout: '△ c', stats: [{ value: '1', label: 'l ✓' }] } });
+  assert.ok(!/[△✓ℹ]/.test(h), 'no glyph left on the slide');
+  const md = '# D\n\n## Items\n- **A:** one\n- **B:** two\nLayout: bullets\n\n## Mixed\n```js\nx\n```\n\n> takeaway\n\n## Chart\n```chart\nunit: ms\nA | 10\nB | 20 | ok\n```\n\n## Live: try it\nUrl: index.html\n```steps\nclick Save\nfill Name: Ann\nverify Saved\n```\nSay: Watch.\n';
+  const { scenes } = m.outline(`---\nreveal: auto\n---\n${md}`);
+  assert.deepEqual(scenes[1].slide.bullets, ['**A:** one', '**B:** two']);
+  assert.equal(scenes[2].slide.reveal, true); // two blocks
+  assert.deepEqual(scenes[3].slide.chart, { unit: 'ms', bars: [{ label: 'A', value: 10 }, { label: 'B', value: 20, tone: 'ok' }] });
+  assert.deepEqual(scenes[4], { title: 'Live', narration: 'Watch.', url: 'index.html', steps: [{ click: 'Save' }, { fill: 'Name', text: 'Ann' }, { verify: { text: 'Saved' } }] });
+  assert.throws(() => m.stepsOf('dance wildly'), /unknown action "dance"/);
+  assert.match(m.slideHtml({ number: 1, title: 't', slide: { chart: scenes[3].slide.chart } }), /class="cbar ok"/);
+});

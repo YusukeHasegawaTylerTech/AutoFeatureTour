@@ -167,7 +167,8 @@ async function generateExplainer(args) {
   const text = fs.readFileSync(docFile, 'utf8');
   const docDir = path.dirname(docFile);
   const max = args.maxScenes ? Number(args.maxScenes) : undefined;
-  const heuristic = outline(text, { dir: docDir, ...(max ? { maxScenes: max } : {}) });
+  let heuristic;
+  try { heuristic = outline(text, { dir: docDir, ...(max ? { maxScenes: max } : {}) }); } catch (e) { throw new UsageError(`${path.basename(docFile)}: ${e.message}`); }
   if (heuristic.dropped) log(`warning: --max-scenes ${max}: the last ${heuristic.dropped} section(s) of ${path.basename(docFile)} were left out`);
   if (!heuristic.scenes.length) throw new UsageError(`${args.from}: nothing to outline (no headings or text)`);
   const name = safeName(args.name ?? heuristic.meta.name ?? heuristic.title);
@@ -180,9 +181,11 @@ async function generateExplainer(args) {
       scenes = r.scenes.slice(0, max ?? Infinity).map(s => ({ title: s.title, narration: s.narration, slide: { heading: s.slide.heading ?? s.title, ...s.slide } }));
     } else if (args.llm) throw new UsageError(`Unknown planner "${args.llm}" (claude)`);
     // Images the document points at come along, relative to the run folder's tour.json.
-    for (const s of scenes) if (s.slide.image) s.slide.image = path.relative(out, s.slide.image).split(path.sep).join('/');
+    for (const s of scenes) if (s.slide?.image) s.slide.image = path.relative(out, s.slide.image).split(path.sep).join('/');
     if (args.platform) loadPlatform(toolRoot, args.platform); // fails early on a typo
-    const tour = { $schema: schemaRef(out, 'tour'), name, ...(args.platform ? { platform: args.platform } : {}), style: 'explainer', ...(({ name: _n, ...d }) => d)(deckSettings(heuristic.meta)),
+    const { name: _n, ...deck } = deckSettings(heuristic.meta);
+    if (deck.pages) deck.pages = path.relative(out, path.resolve(docDir, deck.pages)).split(path.sep).join('/'); // as written: relative to the document
+    const tour = { $schema: schemaRef(out, 'tour'), name, ...deck, ...(args.platform ? { platform: args.platform } : {}), style: 'explainer',
       comment: `Generated from ${path.basename(docFile)} (${by}). Edit the slides and narration, add app scenes (steps) between them if useful, then aft run it.${by === 'outline' && !heuristic.said ? ' The narration is the document\'s text: write "Say: …" under each heading in the document to give each slide its own spoken words.' : ''}`,
       generatedBy: by, plannedAt: new Date().toISOString(), scenes };
     const tourFile = path.join(out, 'tour.json');
@@ -1227,12 +1230,20 @@ const commands = {
       const docFile = path.resolve(String(args.from));
       if (!fs.existsSync(docFile)) throw new UsageError(`--from ${args.from}: no such file`);
       let meta, dropped;
-      ({ scenes, meta, dropped } = outline(fs.readFileSync(docFile, 'utf8'), { dir: path.dirname(docFile), ...(args.maxScenes ? { maxScenes: Number(args.maxScenes) } : {}) }));
+      try { ({ scenes, meta, dropped } = outline(fs.readFileSync(docFile, 'utf8'), { dir: path.dirname(docFile), ...(args.maxScenes ? { maxScenes: Number(args.maxScenes) } : {}) })); }
+      catch (e) { throw new UsageError(`${path.basename(docFile)}: ${e.message}`); }
       if (dropped) log(`warning: --max-scenes ${scenes.length}: the last ${dropped} section(s) of ${path.basename(docFile)} were left out`);
-      // Deck settings from the document's front matter (footer, theme, accent, voice, pronounce).
+      // Deck settings from the document's front matter (footer, theme, accent, voice, pronounce, platform, pages).
       const { name: _n, ...settings } = deckSettings(meta);
       deck = settings;
-      for (const s of scenes) if (s.slide.image) {
+      // "pages:" is relative to the document; the scratch folder gets its own copy.
+      if (deck.pages) {
+        const from = path.resolve(path.dirname(docFile), deck.pages);
+        if (!fs.existsSync(from)) throw new UsageError(`${path.basename(docFile)}: pages: ${deck.pages} not found (relative to the document)`);
+        fs.cpSync(from, path.join(dir, 'pages'), { recursive: true });
+        deck.pages = 'pages';
+      }
+      for (const s of scenes) if (s.slide?.image) {
         fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
         const to = path.join(dir, 'assets', path.basename(s.slide.image));
         fs.copyFileSync(s.slide.image, to);
@@ -1498,7 +1509,7 @@ main().catch(e => {
   const code = CLASSES[cls]?.exit ?? 1;
   if (cls === 'error' && !(e instanceof UsageError) && !(e instanceof ConfigError)) console.error(e.stack ?? e);
   // Config errors (schema problems) list every problem, one per line; the rest are one line.
-  else if (e instanceof ConfigError) console.error(`error: ${e.message}`);
+  else if (e instanceof ConfigError || e instanceof UsageError) console.error(`error: ${e.message}`);
   else console.error(`error: ${summaryLine(Object.assign(e, { failure: e.failure ?? cls }))}`);
   if (json) {
     const args = parseArgs(process.argv.slice(2));

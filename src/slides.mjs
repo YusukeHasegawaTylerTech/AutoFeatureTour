@@ -17,7 +17,7 @@ import { freePort } from './util.mjs';
 
 export const SLIDE_SIZE = { width: 1920, height: 1080 };
 /** Content blocks, drawn in the order the slide lists them. */
-export const BLOCKS = ['body', 'bullets', 'code', 'table', 'columns', 'stats', 'flow', 'callout', 'image'];
+export const BLOCKS = ['body', 'bullets', 'code', 'table', 'columns', 'stats', 'flow', 'chart', 'callout', 'image'];
 export const TONES = ['ok', 'warn', 'bad', 'info'];
 
 /** Scenes that are slides (have "slide"); the rest are recorded in the browser (or off camera). */
@@ -35,11 +35,14 @@ export function toned(x) {
   if (x && typeof x === 'object') return { text: String(x.text ?? ''), tone: x.tone };
   const s = String(x ?? '');
   const m = s.match(/^\s*([✓✔△⚠✗✘×ℹ])\s*/u) ?? s.match(/\s([✓✔△⚠✗✘×ℹ])\s*$/u);
-  return m ? { text: s, tone: GLYPH[m[1]] } : { text: s };
+  // The glyph gives the tone and comes off the text: the colour says it.
+  return m ? { text: (s.slice(0, m.index) + s.slice(m.index + m[0].length)).trim(), tone: GLYPH[m[1]] } : { text: s };
 }
 
 /** The tone a ✓ △ ✗ ℹ at the start or end of any of these texts gives, else undefined. */
 const glyphTone = (...texts) => texts.map(t => (t == null ? undefined : toned(String(t)).tone)).find(Boolean);
+/** Text without its tone glyph. */
+const bare = t => (t == null ? t : toned(String(t)).text);
 /** A table row's tone from a glyph in any of its cells (the whole row takes it). */
 const rowTone = cells => glyphTone(...cells.map(c => (typeof c === 'object' ? c.text : c)));
 
@@ -64,7 +67,7 @@ const CONNECTORS = { '+': '+', '=': '=', '→': '→', '->': '→', '&': '&amp;'
 let item = 0;
 const it = () => ` data-i="${item++}"`;
 
-function block(kind, v, { dir, reveal }) {
+function block(kind, v, { dir, reveal, caption }) {
   const r = reveal ? it : () => '';
   switch (kind) {
     case 'body': return `<div class="body">${String(v).split(/\n\s*\n/).map(p => p.trim()).filter(Boolean).map(p => `<p${r()}>${inline(p).replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
@@ -78,8 +81,8 @@ function block(kind, v, { dir, reveal }) {
         `<tr class="${row.tone ?? rowTone(row.cells) ?? ''}"${r()}>${row.cells.map(c => cell(c, 'td')).join('')}</tr>`).join('')}</tbody></table>`;
     }
     // A card builds in, then each of its bullets.
-    case 'columns': return `<div class="columns">${v.map(c => `<div class="col ${c.tone ?? glyphTone(c.heading, c.body) ?? ''}"${r()}>${c.heading ? `<h3>${inline(c.heading)}</h3>` : ''}${c.body ? `<p>${inline(c.body)}</p>` : ''}${c.bullets?.length ? `<ul>${c.bullets.map(toned).map(b => `<li class="${b.tone ?? ''}"${r()}>${inline(b.text)}</li>`).join('')}</ul>` : ''}</div>`).join('')}</div>`;
-    case 'stats': return `<div class="stats">${v.map(s => `<div class="stat ${s.tone ?? glyphTone(s.value, s.label) ?? ''}"${r()}><div class="value">${inline(s.value)}</div><div class="label">${inline(s.label ?? '')}</div></div>`).join('')}</div>`;
+    case 'columns': return `<div class="columns">${v.map(c => `<div class="col ${c.tone ?? glyphTone(c.heading, c.body) ?? ''}"${r()}>${c.heading ? `<h3>${inline(bare(c.heading))}</h3>` : ''}${c.body ? `<p>${inline(bare(c.body))}</p>` : ''}${c.bullets?.length ? `<ul>${c.bullets.map(toned).map(b => `<li class="${b.tone ?? ''}"${r()}>${inline(b.text)}</li>`).join('')}</ul>` : ''}</div>`).join('')}</div>`;
+    case 'stats': return `<div class="stats">${v.map(s => `<div class="stat ${s.tone ?? glyphTone(s.value, s.label) ?? ''}"${r()}><div class="value">${inline(bare(s.value))}</div><div class="label">${inline(bare(s.label ?? ''))}</div></div>`).join('')}</div>`;
     case 'flow': {
       // Boxes and connectors: "+", "=", "→" (or "->") between boxes as written; two boxes in a row get "→".
       const out = [];
@@ -94,8 +97,14 @@ function block(kind, v, { dir, reveal }) {
       }
       return `<div class="flow">${out.join('')}</div>`;
     }
-    case 'callout': { const c = typeof v === 'string' ? { text: v } : v; return `<div class="callout ${c.tone ?? glyphTone(c.text) ?? 'info'}"${r()}>${inline(c.text)}</div>`; }
-    case 'image': { const f = slideImage(v, dir); return `<div class="img"${r()}><img src="data:${MIME[path.extname(f).toLowerCase()]};base64,${fs.readFileSync(f).toString('base64')}"></div>`; }
+    case 'callout': { const c = typeof v === 'string' ? { text: v } : v; return `<div class="callout ${c.tone ?? glyphTone(c.text) ?? 'info'}"${r()}>${inline(bare(c.text))}</div>`; }
+    case 'image': { const f = slideImage(v, dir); return `<figure class="img"${r()}><img src="data:${MIME[path.extname(f).toLowerCase()]};base64,${fs.readFileSync(f).toString('base64')}">${caption ? `<figcaption>${inline(caption)}</figcaption>` : ''}</figure>`; }
+    case 'chart': {
+      // Horizontal bars, scaled to the largest value (or "max").
+      const max = v.max ?? (Math.max(...v.bars.map(b => b.value), 0) || 1);
+      const fmt = n => `${Number.isInteger(n) ? n.toLocaleString('en-US') : n}${v.unit ? ` ${v.unit}` : ''}`;
+      return `<div class="chart">${v.bars.map(b => { const t = toned(b.label); return `<div class="cbar ${b.tone ?? t.tone ?? ''}"${r()}><div class="blabel">${inline(t.text)}</div><div class="track"><div class="fill" style="width:${Math.max(0.5, Math.min(100, (b.value / max) * 100)).toFixed(1)}%"></div></div><div class="bvalue">${esc(fmt(b.value))}</div></div>`; }).join('')}</div>`;
+    }
     default: return '';
   }
 }
@@ -110,9 +119,9 @@ export function slideHtml({ number, title, slide }, { dir = '.', style = {}, tot
   // Blocks in the order they are written in the slide; an image beside text when it comes last and there is text.
   const kinds = Object.keys(s).filter(k => BLOCKS.includes(k) && s[k] != null && !(Array.isArray(s[k]) && !s[k].length));
   const side = kinds.at(-1) === 'image' && kinds.length > 1 && s.imageSide !== false;
-  const html = kinds.filter(k => !(side && k === 'image')).map(k => block(k, s[k], { dir, reveal: !!s.reveal })).join('');
+  const html = kinds.filter(k => !(side && k === 'image')).map(k => block(k, s[k], { dir, reveal: !!s.reveal, caption: s.caption })).join('');
   const titleOnly = !kinds.length;
-  const content = side ? `<div class="split"><div class="text">${html}</div>${block('image', s.image, { dir, reveal: !!s.reveal })}</div>` : `<div class="text">${html}</div>`;
+  const content = side ? `<div class="split"><div class="text">${html}</div>${block('image', s.image, { dir, reveal: !!s.reveal, caption: s.caption })}</div>` : `<div class="text">${html}</div>`;
   const t = theme;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
   * { box-sizing: border-box; margin: 0; }
@@ -152,7 +161,13 @@ export function slideHtml({ number, title, slide }, { dir = '.', style = {}, tot
   .callout.ok { border-left-color: ${t.ok}; } .callout.warn { border-left-color: ${t.warn}; } .callout.bad { border-left-color: ${t.bad}; }
   .split { display: flex; gap: 64px; width: 100%; } .split > .img { flex: 0 0 44%; }
   .img { display: flex; align-items: center; justify-content: center; min-height: 0; flex: 1; }
-  .img img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 12px; }
+  .img img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 12px; min-height: 0; }
+  figure.img { flex-direction: column; margin: 0; gap: 16px; } figcaption { font-size: 28px; color: ${t.dim}; text-align: center; }
+  .chart { display: flex; flex-direction: column; gap: 22px; font-size: 32px; }
+  .cbar { display: grid; grid-template-columns: 30% 1fr 300px; gap: 24px; align-items: center; }
+  .track { height: 44px; background: ${t.panel}; border-radius: 10px; overflow: hidden; } .fill { height: 100%; background: ${t.accent}; border-radius: 10px; }
+  .cbar.ok .fill { background: ${t.ok}; } .cbar.warn .fill { background: ${t.warn}; } .cbar.bad .fill { background: ${t.bad}; }
+  .bvalue { font-weight: 650; white-space: nowrap; text-align: right; }
   footer { display: flex; gap: 40px; justify-content: space-between; align-items: flex-end; color: ${t.dim}; font-size: 24px; margin-top: 20px; }
   footer .note { flex: 1; min-width: 0; } footer .page { white-space: nowrap; }
   body.title { justify-content: center; } body.title main { display: none; }
@@ -309,7 +324,60 @@ const sentencesOf = p => plain(p).split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/).filter
 const shortTitle = h => { const p = plain(h).split(/\s*(?::|\s[—–-]\s)\s*/)[0]; return p.length >= 3 ? p : plain(h); };
 const SAY = /^\s*(?:say|narration)\s*:\s*/i;
 /** Per-slide directive lines (never shown): Reveal:, Hold:, Note:, Use:, Theme:, Accent:. */
-const DIRECTIVE = /^\s*(reveal|hold|note|use|theme|accent)\s*:\s*(.*)$/i;
+const DIRECTIVE = /^\s*(reveal|hold|note|use|theme|accent|layout|url)\s*:\s*(.*)$/i;
+
+/**
+ * A ```steps block: one step per line, JSON ({ "click": "Save" }) or shorthand: goto <path> · click | dblclick |
+ * hover | point | check | uncheck | focus | clear <target> · fill | type <target>: <text> · select <target>: <option>
+ * · press <key> · wait <seconds> · verify <text> · verify url <path> · waitFor <target>. Blank lines and # comments are
+ * skipped. A target is what a string step target is (a name, a label, a placeholder, #css).
+ */
+export function stepsOf(code) {
+  const out = [];
+  for (const raw of code.split('\n')) {
+    const l = raw.trim();
+    if (!l || l.startsWith('#') || l.startsWith('//')) continue;
+    if (l.startsWith('{')) { try { out.push(JSON.parse(l)); continue; } catch (e) { throw new Error(`steps: not valid JSON: ${l} (${e.message})`); } }
+    const m = l.match(/^(\w+)\s+(.*)$/);
+    if (!m) throw new Error(`steps: "${l}": expected <action> <target>, or a JSON step`);
+    const [, verb, rest] = m;
+    const pair = () => { const i = rest.indexOf(': '); if (i < 0) throw new Error(`steps: "${l}": expected ${verb} <target>: <text>`); return [rest.slice(0, i).trim(), rest.slice(i + 2)]; };
+    switch (verb.toLowerCase()) {
+      case 'goto': out.push({ goto: rest }); break;
+      case 'click': case 'dblclick': case 'hover': case 'point': case 'check': case 'uncheck': case 'focus': case 'clear':
+        out.push({ [verb.toLowerCase()]: rest }); break;
+      case 'waitfor': out.push({ waitFor: rest }); break;
+      case 'fill': case 'type': { const [t, text] = pair(); out.push({ [verb.toLowerCase()]: t, text }); break; }
+      case 'select': { const [t, option] = pair(); out.push({ select: t, option }); break; }
+      case 'press': out.push({ press: rest }); break;
+      case 'wait': out.push({ wait: Number(rest) }); break;
+      case 'verify': { const u = rest.match(/^url\s+(.*)$/i); out.push(u ? { verify: { url: u[1] } } : { verify: { text: rest } }); break; }
+      default: throw new Error(`steps: "${l}": unknown action "${verb}" (write it as a JSON step)`);
+    }
+  }
+  return out;
+}
+
+/**
+ * A ```chart block: "label | value" per line (value a number, with a unit after it if you like: "80 MB"), an
+ * optional third column for a tone; "unit: ms" or "max: 100" lines set the scale. → { bars: [{ label, value, tone }],
+ * unit, max }.
+ */
+export function chartOf(code) {
+  const chart = { bars: [] };
+  for (const raw of code.split('\n')) {
+    const l = raw.trim();
+    if (!l || l.startsWith('#')) continue;
+    const set = l.match(/^(unit|max)\s*:\s*(.+)$/i);
+    if (set) { chart[set[1].toLowerCase()] = set[1].toLowerCase() === 'max' ? Number(set[2]) : set[2].trim(); continue; }
+    const [label, value, tone] = l.split('|').map(x => x.trim());
+    const n = parseFloat(String(value ?? '').replace(/,/g, ''));
+    if (!label || !Number.isFinite(n)) throw new Error(`chart: "${l}": expected <label> | <number>`);
+    chart.bars.push({ label, value: n, ...(TONES.includes(tone) ? { tone } : toned(label).tone ? { tone: toned(label).tone } : {}) });
+    if (!chart.unit && /[a-z%]/i.test(value.replace(/[\d.,\s]/g, ''))) chart.unit = value.replace(/^[\d.,\s]+/, '').trim();
+  }
+  return chart;
+}
 const cap = s => s.replace(/^\p{Ll}/u, c => c.toUpperCase());
 
 /** "yes", "dim", "no", or fractions ("0, 0.3, 0.6") → { reveal, dim }. */
@@ -383,14 +451,16 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
     .replace(/<!--\s*(?:say|narration)\s*:\s*([\s\S]*?)-->/gi, (_, t) => `Say: ${t.replace(/\s+/g, ' ').trim()}`)
     .split('\n');
   const blocks = [];
-  let fence = null;
+  let fence = null, lang = '';
   for (const l of lines) {
-    if (fence) { if (/^\s*(```|~~~)/.test(l)) { blocks.push({ code: fence.join('\n') }); fence = null; } else fence.push(l); continue; }
-    if (/^\s*(```|~~~)/.test(l)) { fence = []; continue; }
+    // Fenced blocks keep their language: ```steps (a recorded scene's steps) and ```chart are not code.
+    if (fence) { if (/^\s*(```|~~~)/.test(l)) { blocks.push({ code: fence.join('\n'), lang }); fence = null; } else fence.push(l); continue; }
+    const open = l.match(/^\s*(?:```|~~~)\s*([\w-]*)/);
+    if (open) { fence = []; lang = open[1].toLowerCase(); continue; }
     const h = l.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
     blocks.push(h ? { level: h[1].length, heading: h[2] } : { line: l });
   }
-  if (fence) blocks.push({ code: fence.join('\n') });
+  if (fence) blocks.push({ code: fence.join('\n'), lang });
   const levels = [...new Set(blocks.filter(b => b.level).map(b => b.level))].sort();
   const level = levels.find(lv => blocks.filter(b => b.level === lv).length > 1) ?? levels[0];
   const titleBlock = blocks.find(b => b.level && b.level < (level ?? 7)) ?? (blocks.filter(b => b.level === level).length === 1 ? blocks.find(b => b.level === level) : null);
@@ -407,6 +477,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
     const parts = []; // [{ kind, value }] in document order
     const say = [];
     const directives = {};
+    const steps = [];
     let para = [], quote = [], table = [], saying = false;
     const last = kind => (parts.at(-1)?.kind === kind ? parts.at(-1) : null);
     const flush = () => {
@@ -421,7 +492,13 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
       para = []; quote = []; table = [];
     };
     for (const b of body) {
-      if (b.code !== undefined) { flush(); parts.push({ kind: 'code', value: b.code }); continue; }
+      if (b.code !== undefined) {
+        flush();
+        if (b.lang === 'steps') steps.push(...stepsOf(b.code));
+        else if (b.lang === 'chart') parts.push({ kind: 'chart', value: chartOf(b.code) });
+        else parts.push({ kind: 'code', value: b.code });
+        continue;
+      }
       if (b.heading) { flush(); (last('bullets') ?? parts[parts.push({ kind: 'bullets', value: [] }) - 1]).value.push(plain(b.heading)); continue; }
       const l = b.line;
       // "Say:" starts the narration; the lines right after it (up to a blank line) continue it.
@@ -430,8 +507,8 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
       if (d) { flush(); saying = false; directives[d[1].toLowerCase()] = d[2].trim(); continue; }
       if (saying && l.trim() && !/^\s*([-*+]|\d+[.)]|>|\||!\[)/.test(l)) { say.push(l.trim()); continue; }
       saying = false;
-      const img = l.match(/^\s*!\[[^\]]*\]\(([^)\s]+)[^)]*\)\s*$/);
-      if (img) { flush(); if (!/^[a-z]+:/i.test(img[1])) parts.push({ kind: 'image', value: img[1] }); continue; }
+      const img = l.match(/^\s*!\[([^\]]*)\]\(([^)\s]+)[^)]*\)\s*$/);
+      if (img) { flush(); if (!/^[a-z]+:/i.test(img[2])) parts.push({ kind: 'image', value: img[2], caption: img[1].trim() }); continue; }
       if (/^\s*\|/.test(l)) { if (para.length || quote.length) flush(); table.push(l); continue; }
       const item = l.match(/^\s*(?:[-*+]|\d+[.)])\s+(.*)/);
       if (item) { flush(); (last('bullets') ?? parts[parts.push({ kind: 'bullets', value: [] }) - 1]).value.push(item[1].trim()); continue; }
@@ -442,7 +519,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
       para.push(l.trim());
     }
     flush();
-    return { parts, say, directives };
+    return { parts, say, directives, steps };
   };
 
   const docTitle = plain(titleBlock?.heading ?? sections.find(s => s.heading)?.heading ?? 'Overview');
@@ -450,9 +527,18 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
   const scenes = [];
   let said = false;
   for (const sec of sections) {
-    const { parts, say, directives } = parse(sec.body);
-    if (!sec.heading && !parts.length && !say.length && !Object.keys(directives).length) continue;
+    const { parts, say, directives, steps } = parse(sec.body);
+    if (!sec.heading && !parts.length && !say.length && !Object.keys(directives).length && !steps.length) continue;
     const heading = plain(sec.heading ?? docTitle);
+    // A ```steps block: a recorded scene (the app or the tour's pages), not a slide. "Url:" opens a path first.
+    if (steps.length) {
+      const split0 = heading.match(/^([^:]{2,60}):\s+(\S.*)$/);
+      const t = split0 ? plain(split0[1]) : shortTitle(heading);
+      if (say.length) said = true;
+      scenes.push({ title: t, narration: say.join(' ') || heading, ...(directives.url ? { url: directives.url } : {}), steps,
+        ...(directives.hold !== undefined && Number.isFinite(Number(directives.hold)) ? { hold: Number(directives.hold) } : {}) });
+      continue;
+    }
     let slide = { heading };
     const bodies = parts.filter(p => p.kind === 'body');
     if (sec.title) {
@@ -461,7 +547,11 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
     }
     for (const p of parts) {
       let v = p.value;
-      if (p.kind === 'image') { if (!fs.existsSync(path.resolve(dir, v))) continue; v = path.resolve(dir, v); }
+      if (p.kind === 'image') {
+        if (!fs.existsSync(path.resolve(dir, v)) || slide.image) continue;
+        v = path.resolve(dir, v);
+        if (p.caption) slide.caption = p.caption;
+      }
       if (p.kind === 'code') v = v.split('\n').slice(0, 14).join('\n');
       if (p.kind === 'bullets') v = v.slice(0, 8);
       if (p.kind === 'body' && slide.body) { slide.body += `\n\n${v}`; continue; }
@@ -473,8 +563,9 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
     if (split) Object.assign(slide, { kicker: split[1], heading: cap(split[2]) });
     // Lists that are really cards or numbers: every item "**Label:** text" (2 to 4) → columns;
     // every item "**a number** phrase" (2 to 4) → stats. In the list's place.
+    // "Layout: bullets" keeps a list as bullets.
     const b = slide.bullets;
-    if (b && b.length >= 2 && b.length <= 4) {
+    if (b && b.length >= 2 && b.length <= 4 && !/^bullets?$/i.test(directives.layout ?? '')) {
       const labelled = b.map(x => x.match(/^\*\*([^*]{1,40}?):?\*\*:?\s+(\S.*)$/));
       const numbers = b.map(x => x.match(/^\*\*([^*]{1,14})\*\*\s+(\S.*)$/)).map(m => (m && /\d/.test(m[1]) ? m : null));
       const replace = (key, value) => { const e = Object.entries(slide).map(([k, v]) => (k === 'bullets' ? [key, value] : [k, v])); for (const k of Object.keys(slide)) delete slide[k]; Object.assign(slide, Object.fromEntries(e)); };
@@ -487,9 +578,12 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
       const { heading: _h, ...rest } = slide;
       slide = { use: directives.use, ...(parts.length ? slide : rest) };
     }
-    const items = (slide.bullets?.length ?? 0) + (slide.columns?.length ?? 0) + (slide.stats?.length ?? 0) + (slide.flow?.length ?? 0) + (slide.table?.rows?.length ?? 0);
+    // reveal: auto builds in a slide with two or more content blocks, or one block of two or more items (bullets,
+    // cards, stats, flow boxes, table rows, chart bars).
+    const items = (slide.bullets?.length ?? 0) + (slide.columns?.length ?? 0) + (slide.stats?.length ?? 0) + (slide.flow?.length ?? 0) + (slide.table?.rows?.length ?? 0) + (slide.chart?.bars?.length ?? 0);
+    const blockCount = BLOCKS.filter(k => k in slide).length;
     if (directives.reveal) Object.assign(slide, revealOf(directives.reveal));
-    else if (autoReveal && items >= 2) Object.assign(slide, autoReveal);
+    else if (autoReveal && (items >= 2 || blockCount >= 2)) Object.assign(slide, autoReveal);
     if (slide.reveal === false) delete slide.reveal;
     if (directives.note) slide.note = directives.note;
     if (directives.theme) slide.theme = directives.theme.toLowerCase() === 'light' ? 'light' : 'dark';
@@ -512,10 +606,11 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
   return { title: docTitle, scenes, said, meta, dropped };
 }
 
-/** The tour-level settings front matter gives: { slides, pronounce, voice, name }. */
+/** The tour-level settings front matter gives: { platform, env, role, pages (as written), slides, pronounce, voice, name }. */
 export function deckSettings(meta = {}) {
   const slides = Object.fromEntries(['theme', 'accent', 'footer'].filter(k => meta[k]).map(k => [k, meta[k]]));
-  return { slides: { theme: 'dark', ...slides }, pronounce: meta.pronounce ?? {}, ...(meta.voice ? { voice: meta.voice } : {}), ...(meta.name ? { name: meta.name } : {}) };
+  const app = Object.fromEntries(['platform', 'env', 'role', 'pages'].filter(k => meta[k]).map(k => [k, meta[k]]));
+  return { ...app, slides: { theme: 'dark', ...slides }, pronounce: meta.pronounce ?? {}, ...(meta.voice ? { voice: meta.voice } : {}), ...(meta.name ? { name: meta.name } : {}) };
 }
 
 
