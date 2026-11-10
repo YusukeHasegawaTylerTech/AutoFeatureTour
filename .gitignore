@@ -10,3 +10,5 @@ auth/
 models/
 # Platforms are local configuration (one folder per app), never committed; shared examples may get their own home later.
 platforms/
+# Scratch tours (aft scratch <name>): one-off videos and experiments, local only.
+scratch/

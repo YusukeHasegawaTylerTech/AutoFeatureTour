@@ -220,7 +220,7 @@ for (const [k, v] of Object.entries(ACTIONS)) common.$defs[`action_${k}`] = v;
 // ---- Files ---------------------------------------------------------------------------------------------------------
 
 const file = (name, title, description, schema) => ({ $schema: `https://json-schema.org/draft/${D}/schema`, $id: `${BASE}/${name}.schema.json`, title, description, ...schema });
-const $schemaProp = { $schema: str('This file\'s schema, for editors: a relative path to schemas/<type>.schema.json.') };
+const $schemaProp = { $schema: str('This file\'s schema, for editors: a relative path to schemas/<type>.schema.json, or its $id URL (https://autofeaturetour.local/schemas/v1/<type>.schema.json). `aft schema <type> --write <folder>` puts a copy beside a file kept outside the checkout. The loader ignores it.') };
 
 const timeouts = obj('Milliseconds per kind of step.', {
   action: num('Actions: finding and acting on an element (default 10000).'), verify: num('Checks (default 15000).'),
@@ -292,7 +292,17 @@ const environment = obj('One deployment of the app.', {
   workarounds: { ...workarounds, description: 'Known issues in this environment, merged with the platform\'s by name: a new name adds a rule here only; the same name refines it (partial entries are merged over the platform rule, "off": true disables it here).' },
 }, { required: ['baseUrl'] });
 
+const slide = obj('A still slide instead of steps: drawn without a browser or app (no url, steps or camera), narrated like any scene. A tour can be all slides (an explainer) or mix slides with recorded scenes.', {
+  heading: str('The heading (default: the scene title). **bold**, *italic* and `code` work in every text field.'),
+  subtitle: str('A line under the heading (a title slide).'),
+  bullets: { type: 'array', items: { type: 'string' }, maxItems: 8, description: 'Points, one per line on the slide.' },
+  body: str('Paragraphs of text (blank lines separate them).'),
+  code: str('A code or text excerpt, monospaced.'),
+  image: str('An image (png, jpg, gif, svg, webp), relative to the tour file: beside the text, or the whole slide when there is no text.'),
+  note: str('Small print in the footer (a source, a date).'),
+});
 const scene = obj('One scene: narration over the steps that show it.', {
+  slide,
   title: str('Shown on title cards and in reports.'), narration: str('What the narrator says; the scene lasts as long as it does. Required unless "camera": false.'),
   camera: bool('false: off camera. The scene runs for real (unpaced, no narration needed), its checks still count and it is in the report and storyboard, but it is not in the video.'),
   url: str('Path opened off camera just before the scene starts.'), criteria: { type: 'array', items: { anyOf: [{ type: 'integer' }, { type: 'string' }] }, description: 'Acceptance criteria this scene demonstrates (1-based).' },
@@ -336,7 +346,9 @@ export const SCHEMAS = {
       allowMocks: bool('Permit "mock" steps. Mocked responses are listed in the report; scenes a mock answered in get a "simulated data" caption. Refused for "style": "verification".'),
       mocks: { type: 'array', items: { type: 'string', pattern: '^[A-Za-z0-9_-]+$' }, description: 'Mock sets from the platform\'s mocks/ folder, applied off camera before the first scene (needs allowMocks).' },
       video,
-      comment: str('A note for people.'), style: str('Generation hint (verification, demo, training); the engine ignores it.'),
+      slides: obj('How slide scenes look.', { theme: { enum: ['dark', 'light'], description: 'Default dark.' }, accent: str('Accent colour (CSS), e.g. "#1f6fd1".'), footer: str('Footer text on every slide.') }),
+      pages: str('Stand-alone tours only: a folder of static pages (relative to the tour file) served on a free local port for the run. It is the tour\'s baseUrl, so goto paths are files in it ("index.html?s=2"). Copied into the run folder with the tour.'),
+      comment: str('A note for people.'), style: str('Generation hint (verification, demo, training, explainer); the engine ignores it, except that an explainer gets no review of criteria.'),
       generatedBy: str('Which planner wrote it.'), plannedAt: str('When it was generated.'), draft: bool('Generated with gaps; recording refuses unless --allow-draft.'),
       needs: { type: 'array', items: { type: 'string' }, description: 'What a draft still needs.' },
       workarounds: { ...workarounds, description: 'Known issues for this story only, after the platform\'s and environment\'s rules (the same name refines one, "off": true turns it off for this story). Mark a real app issue worked around for now with "issue".' },

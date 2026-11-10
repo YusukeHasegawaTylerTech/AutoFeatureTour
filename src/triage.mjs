@@ -230,7 +230,8 @@ export async function finalize({ outDir, def = {}, steps = [], tour = null, erro
     bundle: cls === 'ok' ? null : path.join(outDir, 'triage'),
   };
   // Evidence per criterion, findings and the story's decisions about them (src/review.mjs).
-  report.review = reviewOf({ raw: def.raw, steps, criteria: report.criteria, firings: report.workarounds, mocks: report.mocks, passed: cls === 'ok', complete, fixtures, artifacts });
+  // An explainer (slides, no acceptance criteria to show) has nothing for a review to weigh.
+  report.review = def.raw?.style === 'explainer' ? null : reviewOf({ raw: def.raw, steps, criteria: report.criteria, firings: report.workarounds, mocks: report.mocks, passed: cls === 'ok', complete, fixtures, artifacts });
   const sec = secretValues(secrets);
   write(path.join(outDir, 'report.json'), report, sec);
   write(path.join(outDir, 'report.md'), markdown({ ...report, bundle: null }, entry, causes), sec);

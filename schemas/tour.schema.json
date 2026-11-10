@@ -11,7 +11,7 @@
   "properties": {
     "$schema": {
       "type": "string",
-      "description": "This file's schema, for editors: a relative path to schemas/<type>.schema.json."
+      "description": "This file's schema, for editors: a relative path to schemas/<type>.schema.json, or its $id URL (https://autofeaturetour.local/schemas/v1/<type>.schema.json). `aft schema <type> --write <folder>` puts a copy beside a file kept outside the checkout. The loader ignores it."
     },
     "name": {
       "type": "string",
@@ -74,6 +74,45 @@
         "type": "object",
         "description": "One scene: narration over the steps that show it.",
         "properties": {
+          "slide": {
+            "type": "object",
+            "description": "A still slide instead of steps: drawn without a browser or app (no url, steps or camera), narrated like any scene. A tour can be all slides (an explainer) or mix slides with recorded scenes.",
+            "properties": {
+              "heading": {
+                "type": "string",
+                "description": "The heading (default: the scene title). **bold**, *italic* and `code` work in every text field."
+              },
+              "subtitle": {
+                "type": "string",
+                "description": "A line under the heading (a title slide)."
+              },
+              "bullets": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8,
+                "description": "Points, one per line on the slide."
+              },
+              "body": {
+                "type": "string",
+                "description": "Paragraphs of text (blank lines separate them)."
+              },
+              "code": {
+                "type": "string",
+                "description": "A code or text excerpt, monospaced."
+              },
+              "image": {
+                "type": "string",
+                "description": "An image (png, jpg, gif, svg, webp), relative to the tour file: beside the text, or the whole slide when there is no text."
+              },
+              "note": {
+                "type": "string",
+                "description": "Small print in the footer (a source, a date)."
+              }
+            },
+            "additionalProperties": false
+          },
           "title": {
             "type": "string",
             "description": "Shown on title cards and in reports."
@@ -670,13 +709,39 @@
       },
       "additionalProperties": false
     },
+    "slides": {
+      "type": "object",
+      "description": "How slide scenes look.",
+      "properties": {
+        "theme": {
+          "enum": [
+            "dark",
+            "light"
+          ],
+          "description": "Default dark."
+        },
+        "accent": {
+          "type": "string",
+          "description": "Accent colour (CSS), e.g. \"#1f6fd1\"."
+        },
+        "footer": {
+          "type": "string",
+          "description": "Footer text on every slide."
+        }
+      },
+      "additionalProperties": false
+    },
+    "pages": {
+      "type": "string",
+      "description": "Stand-alone tours only: a folder of static pages (relative to the tour file) served on a free local port for the run. It is the tour's baseUrl, so goto paths are files in it (\"index.html?s=2\"). Copied into the run folder with the tour."
+    },
     "comment": {
       "type": "string",
       "description": "A note for people."
     },
     "style": {
       "type": "string",
-      "description": "Generation hint (verification, demo, training); the engine ignores it."
+      "description": "Generation hint (verification, demo, training, explainer); the engine ignores it, except that an explainer gets no review of criteria."
     },
     "generatedBy": {
       "type": "string",

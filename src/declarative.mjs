@@ -50,6 +50,7 @@ import { probe, startProcess, stopProcess, waitForHttp } from './recorder.mjs';
 import { Failure } from './failures.mjs';
 import { fillArtifacts, runSteps, settle, StopRun } from './steps.mjs';
 import { freePort } from './util.mjs';
+import { isSlide, needsBrowser, servePages, slideImage } from './slides.mjs';
 
 /** Opens a sign-in check page; a load timeout is an APP failure (as for a goto step), not a tool error. */
 async function openCheckPage(page, url, timeout, where) {
@@ -80,12 +81,16 @@ function fill(value, vars) {
 
 export function validate(cfg, file) {
   const problems = [];
-  if (!cfg.baseUrl) problems.push('no target: name a "platform" (its environments.json has the baseUrl), or pass --base-url <url> / set BASE_URL');
+  // A tour of slides only needs no app; "pages" is its own (served for the run).
+  if (!cfg.baseUrl && !cfg.pages && needsBrowser(cfg.scenes))
+    problems.push('no target: name a "platform" (its environments.json has the baseUrl), pass --base-url <url> / set BASE_URL, or give "pages" (a folder of static pages)');
   if (!Array.isArray(cfg.scenes) || !cfg.scenes.length) problems.push('scenes must be a non-empty array');
   (cfg.scenes ?? []).forEach((s, i) => {
     if (!s.title) problems.push(`scenes[${i}].title is required`);
     if (!s.narration && s.camera !== false) problems.push(`scenes[${i}].narration is required (or "camera": false: an off-camera scene)`);
     if (s.steps && !Array.isArray(s.steps)) problems.push(`scenes[${i}].steps must be an array`);
+    if (isSlide(s)) for (const k of ['steps', 'url', 'camera'])
+      if (k in s && !(k === 'steps' && !s.steps?.length)) problems.push(`scenes[${i}]: a slide scene has no "${k}" (it is drawn, not recorded)`);
   });
   if (problems.length) throw new ConfigError(`${file}:\n  ${problems.join('\n  ')}`);
 }
@@ -213,6 +218,12 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
   const cfg0 = composed.cfg;
   validate(cfg0, file);
   const dir = path.dirname(path.resolve(file));
+  // "pages": the tour's own static site, served on a free port for each run (its baseUrl unless one is given).
+  const pagesDir = cfg0.pages ? path.resolve(dir, cfg0.pages) : null;
+  if (pagesDir && !fs.existsSync(path.join(pagesDir))) throw new ConfigError(`${file}: "pages" folder ${pagesDir} not found`);
+  for (const [i, s] of raw.scenes.entries()) if (s.slide?.image) {
+    try { slideImage(s.slide.image, dir); } catch (e) { throw new ConfigError(`${file}: scenes[${i}].slide: ${e.message}`); }
+  }
   return {
     name: raw.name,
     platform: composed.platform?.name,
@@ -224,7 +235,12 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
     viewport: cfg0.viewport,
     mask: cfg0.mask,
     video: cfg0.video,
-    scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration ?? '', offCamera: s.camera === false })),
+    scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration ?? '', offCamera: s.camera === false, ...(s.slide ? { slide: s.slide } : {}) })),
+    /** How slide scenes look (src/slides.mjs), and the static pages folder, if any. */
+    slides: cfg0.slides ?? {},
+    pagesDir,
+    /** false: every scene is a slide, so nothing needs a browser, an app or a login. */
+    needsBrowser: needsBrowser(cfg0.scenes),
     /** Warnings about the tour as written (data left untagged on a shared environment). */
     warnings: sharedWarnings(cfg0),
     /** The saved login of a role in the tour's environment (a stage hands off as another role). */
@@ -235,7 +251,10 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
       // A stage (src/stage.mjs): stop at a point, keep the browser, services and data until `aft stage end`.
       const stage = ctx.stage ?? null;
       const tag = runTag(ctx.outDir);
-      const { cfg, vars } = await materialize(cfg0, { tag });
+      // The tour's own pages: served for this run only (--base-url / BASE_URL still win), stopped when it ends.
+      const pages = pagesDir && !baseUrl && !process.env.BASE_URL ? await servePages(pagesDir) : null;
+      if (pages) { ctx.log(`pages: ${pagesDir} served at ${pages.url}/`); ctx.closePages = pages.close; }
+      const { cfg, vars } = await materialize(pages ? { ...cfg0, baseUrl: pages.url } : cfg0, { tag });
       // Values marked secret (resolved from the environment) are scrubbed from every report and bundle file.
       ctx.secrets?.push(...secretsOf(cfg));
       const log = ctx.log;
@@ -302,6 +321,11 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
           await setupBrowser(t, cfg.fixtureBrowser ?? [], { ledger, opts, log });
           for (const [i, s] of cfg.scenes.entries()) {
             const id = ctx.scenes[i].id;
+            // A slide is drawn, not recorded (src/slides.mjs): nothing happens in the browser for it.
+            if (isSlide(s)) {
+              if (ctx.range?.scenes !== undefined && i >= ctx.range.scenes) throw new StopRun(ctx.range.scenes ? `stopped after scene ${ctx.range.scenes}` : 'stopped after setup');
+              continue;
+            }
             // A stage's stop point by scene: range.scenes = n runs the first n scenes (0: setup only).
             if (ctx.range?.scenes !== undefined && i >= ctx.range.scenes)
               throw new StopRun(ctx.range.scenes ? `stopped after scene ${ctx.range.scenes}` : 'stopped after setup');
@@ -329,6 +353,7 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
           const r = await undoAll(ledger, { undoHooks, log }).catch(e => { log(`teardown failed: ${e.message}`); return null; });
           if (r?.failed) log(`${r.failed} undo step(s) failed: data left behind (see ledger.json; aft cleanup ${ctx.outDir})`);
           for (const p of services.procs) stopProcess(p);
+          await ctx.closePages?.(); // a stage keeps serving its pages until the process ends
         }
         ctx.fixtures = ledger.summary();
         ctx.artifacts = writeArtifacts(ctx.outDir, t.artifacts, ledger);

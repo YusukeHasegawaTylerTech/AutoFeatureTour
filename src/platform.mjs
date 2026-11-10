@@ -35,7 +35,7 @@ export class PlatformError extends Error {}
 
 /** Keys that belong to the platform; a platform tour may not set them. */
 export const PLATFORM_KEYS = ['baseUrl', 'environments', 'launch', 'attach', 'login', 'ready', 'errors', 'appErrors', 'ignore', 'mask',
-  'ignoreHTTPSErrors', 'startPath', 'discover', 'target'];
+  'ignoreHTTPSErrors', 'startPath', 'discover', 'target', 'pages'];
 
 /** Where platforms live: AFT_PLATFORMS, else the nearest platforms/ above `from`, else the tool's own. */
 export function platformsDir(toolRoot, from) {
@@ -125,7 +125,9 @@ export function platformAuthFile(toolRoot, platform, env, role = 'default') {
 /** Refuses platform settings in a tour that names a platform; absolute URLs anywhere in it too. */
 export function checkTour(raw, file) {
   const bad = PLATFORM_KEYS.filter(k => k in raw);
-  const problems = bad.map(k => `"${k}" belongs in the platform (platforms/${raw.platform}/), not in a tour`);
+  const problems = bad.map(k => (k === 'pages'
+    ? '"pages" is for stand-alone tours (no platform); in a platform tour, use slide scenes ("slide") for content that isn\'t the app'
+    : `"${k}" belongs in the platform (platforms/${raw.platform}/), not in a tour`));
   const urls = JSON.stringify(raw.scenes ?? []).match(/https?:\/\/[^"\s]+/g) ?? [];
   if (urls.length) problems.push(`absolute URLs in scenes (${[...new Set(urls)].slice(0, 3).join(', ')}): use paths relative to the environment's baseUrl`);
   if (problems.length) throw new PlatformError(`${file}:\n  ${problems.join('\n  ')}`);

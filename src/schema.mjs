@@ -3,7 +3,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 
 export const schemasDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'schemas');
@@ -23,8 +23,29 @@ function compiler() {
 export const schemaFor = type => { if (![...TYPES, 'common'].includes(type)) throw new Error(`No schema "${type}" (${TYPES.join(', ')})`); return load(type); };
 export const schemaTypes = () => [...TYPES];
 
-/** "$schema" value for a file in dir: the relative path to schemas/<type>.schema.json, with forward slashes. */
-export const schemaRef = (dir, type) => path.relative(dir, path.join(schemasDir, `${type}.schema.json`)).split(path.sep).join('/');
+/**
+ * "$schema" value for a file in dir: the relative path to schemas/<type>.schema.json, with forward slashes; a
+ * file:// URL when there is no relative path (another drive).
+ */
+export const schemaRef = (dir, type) => {
+  const abs = path.join(schemasDir, `${type}.schema.json`);
+  const rel = path.relative(dir, abs);
+  return path.isAbsolute(rel) ? pathToFileURL(abs).href : rel.split(path.sep).join('/');
+};
+
+/**
+ * Copies a schema and the shared definitions into <dir>/.aft-schemas/ (without their $id, so editors resolve
+ * "common.schema.json" beside it), for files kept outside the checkout. Returns the "$schema" value for a file in dir.
+ */
+export function writeSchemaCopy(dir, type) {
+  const to = path.join(dir, '.aft-schemas');
+  fs.mkdirSync(to, { recursive: true });
+  for (const t of new Set([type, 'common'])) {
+    const { $id, ...s } = schemaFor(t);
+    fs.writeFileSync(path.join(to, `${t}.schema.json`), JSON.stringify({ ...s, 'x-id': $id }, null, 2) + '\n');
+  }
+  return `.aft-schemas/${type}.schema.json`;
+}
 
 const ACTION_KEYS = () => Object.keys(load('common').$defs).filter(k => k.startsWith('action_')).map(k => k.slice(7));
 

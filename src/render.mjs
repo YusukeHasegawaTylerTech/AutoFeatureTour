@@ -90,11 +90,17 @@ const FONT = ['C:/Windows/Fonts/segoeui.ttf', '/usr/share/fonts/truetype/dejavu/
  * when there is no clip. Every segment gets identical encoding so concat can join them without re-encoding.
  * scene.seconds is the narration length plus the tail. Returns the segment's file name (in outDir).
  */
-export async function muxScene({ scene, clip, outDir, size = [1920, 1080], background = '0x1b2a41' }) {
+export async function muxScene({ scene, clip, image, outDir, size = [1920, 1080], background = '0x1b2a41' }) {
   const [w, h] = size;
   const common = `scale=${w}:${h}:flags=lanczos:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p`;
   let length, inputs, video;
-  if (clip && fs.existsSync(clip)) {
+  if (image && fs.existsSync(image)) {
+    // A slide (src/slides.mjs): the still, for as long as its narration lasts.
+    length = scene.seconds;
+    inputs = ['-loop', '1', '-framerate', '30', '-t', num(length), '-i', image];
+    video = `[0:v]${common}[v]`;
+    console.log(`${scene.id}  slide  ${num(length)}s`);
+  } else if (clip && fs.existsSync(clip)) {
     length = Math.max(await duration(clip), scene.seconds);
     inputs = ['-i', clip];
     video = `[0:v]${common},tpad=stop_mode=clone:stop_duration=${num(length)}[v]`;

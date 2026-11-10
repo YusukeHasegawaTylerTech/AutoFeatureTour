@@ -88,8 +88,12 @@ function exportTourImpl(source, { toolRoot, outRoot = path.join(toolRoot, 'out')
     });
     return step;
   });
+  // A tour's own static pages make it stand-alone: imports go into a platform, which refuses "pages".
+  if (raw.pages) throw new PlatformError(`${file}: a tour with "pages" is stand-alone and can't be imported into a platform; share its run's source/ folder instead (aft run <run>/source/<tour>.json)`);
   const { platform: _p, env: _e, ...tour } = raw;
-  tour.scenes = raw.scenes.map(s => ({ ...s, steps: flatten(s.steps) }));
+  // Slide images travel embedded, like upload files.
+  tour.scenes = raw.scenes.map(s => ({ ...s, ...(s.slide?.image ? { slide: { ...s.slide, image: embed(path.resolve(dir, s.slide.image), 'slide') } } : {}),
+    ...(s.steps ? { steps: flatten(s.steps) } : {}) }));
   const doc = {
     schema: EXPORT_SCHEMA,
     name: raw.name,
@@ -122,7 +126,7 @@ function importTourImpl(bundleFile, { toolRoot, platform, name, force = false })
   if (fs.existsSync(tourFile) && !force) throw new PlatformError(`${tourFile} exists; pass --force to replace it, or --name <other>`);
 
   const rel = f => `${name}-files/${f}`;
-  const scenes = doc.tour.scenes.map(s => ({ ...s, steps: (s.steps ?? []).map(st => ({
+  const scenes = doc.tour.scenes.map(s => ({ ...s, ...(s.slide?.image ? { slide: { ...s.slide, image: rel(s.slide.image) } } : {}), steps: (s.steps ?? []).map(st => ({
     ...st,
     ...(st.code ? { code: rel(st.code) } : {}),
     ...(st.upload ? { files: [st.files].flat().map(rel) } : {}),

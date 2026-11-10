@@ -8,7 +8,7 @@
   "properties": {
     "$schema": {
       "type": "string",
-      "description": "This file's schema, for editors: a relative path to schemas/<type>.schema.json."
+      "description": "This file's schema, for editors: a relative path to schemas/<type>.schema.json, or its $id URL (https://autofeaturetour.local/schemas/v1/<type>.schema.json). `aft schema <type> --write <folder>` puts a copy beside a file kept outside the checkout. The loader ignores it."
     },
     "description": {
       "type": "string",

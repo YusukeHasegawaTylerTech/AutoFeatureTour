@@ -11,7 +11,10 @@
 //   aft converse <run> [--say "…"] [--answer q3=Approve ...] | --record N [--after-step J] | --steps [--drop-last] | --stop
 //                | --accept p1 | --reject p1 | --finish [--force] | --end [--keep]    continue it (no flag: its state)
 //   aft all      --story <file|text> --base-url <url> [--llm claude]   generate → validate → run, one run folder
-//   aft render   <tour>  [--record]                   narration over clips/title cards, or a recording
+//   aft render   <tour>  [--record]                   narration over slides, clips or title cards, or a recording
+//   aft generate --from <doc.md> [--llm claude] [--platform <name>] [--max-scenes 12]
+//                                                    an explainer: a document's outline as narrated slide scenes (no app)
+//   aft scratch  [<name>] [--from <doc.md>] [--pages] [--force]   one-off tours in scratch/<name>/ (git-ignored); no name: the list
 //   aft discover <url>   [--max-pages 12]             crawl screens (used by generate/auto)
 //   aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm claude]
 //   aft auto     <url> [--prompt ...]                 discover → plan → run, no story needed
@@ -20,7 +23,8 @@
 //   aft suggest-fix <run folder> --finding "<id>" [--llm claude]   AI proposal for a failure (a step, or a story workaround); writes nothing to the tour
 //   aft login    --platform <name> | <tour.json> [--target <env>] [--role <name>] [--manual]   save auth/<platform>/<env>/<role>.json
 //   aft platform list | init <name> [--base-url <url>] [--no-login] | discover <name> | check <name>   onboard an app (AGENTS.md, Platforms)
-//   aft schema   [tour|platform|environments|login|fragment|fixture]   print a definition file's JSON Schema (no type: the list)
+//   aft schema   [tour|platform|environments|login|fragment|fixture]   print a definition file's JSON Schema (no type: the list);
+//                                                    --write <folder>: a copy in <folder>/.aft-schemas/ for files outside the checkout
 //   aft validate <platform.json|environments.json|login.json|fragment|fixture|tour> --schema-only   check a file against its schema
 //   aft cleanup  [<run folder>] [--platform p] [--target env] [--tag <prefix>] [--older-than 2d] [--all] [--dry-run]
 //                                                    finish the undo of runs that left data behind (crash, Ctrl+C, failed teardown);
@@ -76,7 +80,8 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { saveLogin } from './auth.mjs';
 import { ConfigError, loadTourJson, materialize, missingCredentials } from './declarative.mjs';
-import { check as checkSchema, schemaFor, schemasDir, schemaTypes } from './schema.mjs';
+import { check as checkSchema, schemaFor, schemaRef, schemasDir, schemaTypes, writeSchemaCopy } from './schema.mjs';
+import { OUTLINE_SCHEMA, OUTLINE_SYSTEM, outline, renderSlides } from './slides.mjs';
 import { appSettingsFor } from './cli-app.mjs';
 import { platformCommand } from './platform-cli.mjs';
 import { call, parseArg, waitCall, readSessions, Session, sessionName, sessionsDir, startDaemon } from './session.mjs';
@@ -86,7 +91,7 @@ import { exportTour, importTour } from './exchange.mjs';
 import { notesForPrompt, readNotes, snapshotNotes } from './notes.mjs';
 import { discover } from './discover.mjs';
 import { doctor } from './doctor.mjs';
-import { claude, inventoryFor, plan, readStory } from './plan.mjs';
+import { claude, inventoryFor, plan, readStory, toScriptMarkdown } from './plan.mjs';
 import { applyAnswers, decideProposal, finish, newConversation, openQuestions, parseAnswers, readConversation, recordedSteps, saveConversation, startRecording, stopRecording, turn, view as conversationView, writeDraft } from './converse.mjs';
 import { Tour } from './recorder.mjs';
 import { concat, cutClips, duration, muxScene, requireFfmpeg, trimPlan, writeCaptions } from './render.mjs';
@@ -105,8 +110,45 @@ import { log, newRunDir, num, parseArgs, run, sleep } from './util.mjs';
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
+
+/**
+ * `aft generate --from <doc.md>`: a document (findings, a spike write-up, release notes) as an explainer tour of
+ * slide scenes, in a new run folder (tour.json + script.md). No AI: the document's outline (src/slides.mjs outline);
+ * --llm claude: Claude writes the slides and the narration from it (it sends the document to Claude). --platform
+ * names the platform the tour belongs to (so app scenes can be added between the slides later).
+ */
+async function generateExplainer(args) {
+  const docFile = path.resolve(String(args.from));
+  if (!fs.existsSync(docFile)) throw new UsageError(`--from ${args.from}: no such file`);
+  const text = fs.readFileSync(docFile, 'utf8');
+  const docDir = path.dirname(docFile);
+  const max = Number(args.maxScenes ?? 12);
+  const heuristic = outline(text, { dir: docDir, maxScenes: max });
+  if (!heuristic.scenes.length) throw new UsageError(`${args.from}: nothing to outline (no headings or text)`);
+  const name = safeName(args.name ?? heuristic.title);
+  return withRun(name, args, 'generate', async out => {
+    let title = heuristic.title, scenes = heuristic.scenes, by = 'outline';
+    if (args.llm === 'claude') {
+      log('sending the document to Claude for slides and narration');
+      const r = await claude({ system: OUTLINE_SYSTEM, input: JSON.stringify({ maxScenes: max, document: text }), schema: OUTLINE_SCHEMA, cwd: out, model: args.model });
+      title = r.title; by = 'claude';
+      scenes = r.scenes.slice(0, max).map(s => ({ title: s.title, narration: s.narration, slide: { heading: s.slide.heading ?? s.title, ...s.slide } }));
+    } else if (args.llm) throw new UsageError(`Unknown planner "${args.llm}" (claude)`);
+    // Images the document points at come along, relative to the run folder's tour.json.
+    for (const s of scenes) if (s.slide.image) s.slide.image = path.relative(out, s.slide.image).split(path.sep).join('/');
+    if (args.platform) loadPlatform(toolRoot, args.platform); // fails early on a typo
+    const tour = { $schema: schemaRef(out, 'tour'), name, ...(args.platform ? { platform: args.platform } : {}), style: 'explainer',
+      comment: `Generated from ${path.basename(docFile)} (${by}). Edit the slides and narration, add app scenes (steps) between them if useful, then aft run it.`,
+      generatedBy: by, plannedAt: new Date().toISOString(), scenes };
+    const tourFile = path.join(out, 'tour.json');
+    fs.writeFileSync(tourFile, JSON.stringify(tour, null, 2) + '\n');
+    fs.writeFileSync(path.join(out, 'script.md'), toScriptMarkdown(tour));
+    log(`${scenes.length} slide scene(s) from ${path.basename(docFile)} (${by}); next: aft render "${tourFile}" (a preview), or aft run it`);
+    return { tour: tourFile, scenes: scenes.length, title, generatedBy: by };
+  });
+}
 
 class UsageError extends Error {}
 class UnreachableError extends Error {}
@@ -251,13 +293,14 @@ const runName = (def, args) => args.name ?? (def.story?.id && !def.name.startsWi
 
 function scenesOf(def, tourDir) {
   return def.scenes
-    ? def.scenes.map((s, i) => ({ number: i + 1, id: `scene-${String(i + 1).padStart(2, '0')}`, title: s.title, narration: s.narration ?? '', cues: [], ...(s.offCamera ? { offCamera: true } : {}) }))
+    ? def.scenes.map((s, i) => ({ number: i + 1, id: `scene-${String(i + 1).padStart(2, '0')}`, title: s.title, narration: s.narration ?? '', cues: [], ...(s.offCamera ? { offCamera: true } : {}), ...(s.slide ? { slide: s.slide } : {}) }))
     : parseScript(path.resolve(tourDir, def.script));
 }
 
 function newTour(def, outDir, scenes, args, extra = {}) {
+  // Slides are drawn, not recorded: the browser's narration plan has only the recorded scenes.
   return new Tour({ outDir, viewport: def.viewport, mask: def.mask, headless: !args.headed,
-    narration: scenes.filter(s => !s.offCamera).map(s => ({ id: s.id, seconds: s.seconds ?? estimateSeconds(s.narration) })), ...extra });
+    narration: scenes.filter(s => !s.offCamera && !s.slide).map(s => ({ id: s.id, seconds: s.seconds ?? estimateSeconds(s.narration) })), ...extra });
 }
 
 /** The run in progress, so a signal handler can still finalize its report and bundle. */
@@ -352,8 +395,11 @@ async function validate(def, tourDir, outDir, args) {
   // Script problems first: they need no app (scenes with nothing to do, steps the generator couldn't ground).
   const issues = def.raw ? scriptIssues(def.raw) : [];
   for (const i of issues) log(`script: ${i.scene}: ${i.error}`);
-  const ran = await recordWith(def, tourDir, outDir, scenes, args, { dryRun: true });
-  const report = [...issues, ...ran];
+  // Slides are drawn (outDir/slides/), so a text that doesn't fit shows up here; the browser runs only for the rest.
+  const slides = await drawSlides(def, scenes, tourDir, outDir);
+  const ran = def.needsBrowser === false ? Object.assign([], { firings: [], mocks: [], fixtures: [], artifacts: [] })
+    : await recordWith(def, tourDir, outDir, scenes, args, { dryRun: true });
+  const report = [...issues, ...slides.entries, ...ran];
   const failed = report.filter(r => !r.ok);
   const blocking = failed.filter(r => !r.optional && !r.knownIssue);
   const lines = [`# Validation: ${def.name}`, '', `${report.length} steps checked: ${report.length - failed.length} resolved, ${failed.length} failed` +
@@ -366,15 +412,75 @@ async function validate(def, tourDir, outDir, args) {
     lines.push(`| ${r.ok ? '✔' : r.optional ? '⚠' : '✘'} | ${r.scene} | ${r.step} | ${r.action} | \`${target.replace(/\|/g, '\\|')}\` | ${result.replace(/\|/g, '\\|')} |`);
   }
   // The same review as a run's (src/review.mjs): evidence per criterion, findings, the story's decisions.
-  const review = def.raw ? reviewOf({ raw: def.raw, steps: report, criteria: criteriaOf(def, report), firings: ran.firings ?? [], mocks: ran.mocks ?? [], passed: !blocking.length, complete: !ran.partial,
+  const review = def.raw && def.raw.style !== 'explainer' ? reviewOf({ raw: def.raw, steps: report, criteria: criteriaOf(def, report), firings: ran.firings ?? [], mocks: ran.mocks ?? [], passed: !blocking.length, complete: !ran.partial,
     fixtures: ran.fixtures ?? [], artifacts: ran.artifacts ?? [] }) : null;
-  if (def.warnings?.length) lines.splice(3, 0, '', ...def.warnings.map(w => '⚠ ' + w));
+  const warnings = [...(def.warnings ?? []), ...slides.warnings];
+  if (warnings.length) lines.splice(3, 0, '', ...warnings.map(w => '⚠ ' + w));
   if (review) lines.splice(3, 0, '', `**${review.label}**${review.open ? ` · ${review.open} finding(s) to decide` : ''}`, ...review.evidence.map(e => `- AC${e.id}: ${e.strength} (${e.reasons.join('; ')})`));
   fs.writeFileSync(path.join(outDir, 'validation.json'), JSON.stringify({ steps: report.length, failed: failed.length, blocking: blocking.length, report, review,
-    fixtures: ran.fixtures ?? [], artifacts: ran.artifacts ?? [], warnings: def.warnings ?? [] }, null, 2));
+    fixtures: ran.fixtures ?? [], artifacts: ran.artifacts ?? [], warnings }, null, 2));
   fs.writeFileSync(path.join(outDir, 'validation.md'), lines.join('\n') + '\n');
   console.log(lines.slice(2).join('\n'));
   return { steps: report.length, failed: failed.length, blocking: blocking.length, report: path.join(outDir, 'validation.md') };
+}
+
+/**
+ * Draws the tour's slide scenes into outDir/slides/ (src/slides.mjs). Returns { files: { <scene id>: png },
+ * warnings, entries } (entries: one validation line per slide). A slide that can't be drawn is a TOOLING failure.
+ */
+async function drawSlides(def, scenes, tourDir, outDir) {
+  const todo = scenes.filter(s => s.slide && !s.offCamera);
+  if (!todo.length) return { files: {}, warnings: [], entries: [] };
+  let r;
+  try { r = await renderSlides(todo, { outDir, dir: tourDir, style: def.slides, log }); } catch (e) {
+    if (/slide image/.test(e.message)) throw new ConfigError(e.message);
+    throw new Failure('tooling', `couldn't draw the slides: ${e.message}`);
+  }
+  const entries = todo.map(s => {
+    const w = r.warnings.find(x => x.startsWith(`${s.id}:`));
+    return { scene: s.id, step: '-', action: 'slide', ok: true, ...(w ? { warning: w } : {}), spec: { slide: s.slide.heading ?? s.title } };
+  });
+  for (const w of r.warnings) log(`warning: ${w}`);
+  return { ...r, entries };
+}
+
+/**
+ * The tour as it ran, in <run>/source/: tour.json plus its own files (slide images, the "pages" folder, upload files)
+ * with paths rewritten into the copy, so `aft run <run>/source/tour.json` re-renders it later, wherever the original
+ * was (a temp folder, another checkout). Platform files (fragments, fixtures) stay with the platform, by name.
+ */
+function keepSource(def, tourDir, outDir) {
+  if (!def.tourFile || !/\.json$/i.test(def.tourFile)) return null;
+  const src = path.join(outDir, 'source');
+  const assets = path.join(src, 'assets');
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(def.tourFile, 'utf8')); } catch { return null; }
+  const taken = new Map();
+  const copy = abs => {
+    if (taken.has(abs)) return taken.get(abs);
+    let name = path.basename(abs), n = 1;
+    while ([...taken.values()].includes(`assets/${name}`)) name = `${path.parse(abs).name}-${++n}${path.extname(abs)}`;
+    fs.mkdirSync(assets, { recursive: true });
+    fs.copyFileSync(abs, path.join(assets, name));
+    taken.set(abs, `assets/${name}`);
+    return `assets/${name}`;
+  };
+  for (const s of raw.scenes ?? []) {
+    if (s.slide?.image) s.slide.image = copy(path.resolve(tourDir, s.slide.image));
+    for (const st of s.steps ?? []) if (st.upload) st.files = [st.files].flat().map(f => {
+      const abs = path.resolve(tourDir, f);
+      return fs.existsSync(abs) ? copy(abs) : f; // a platform fixture file: found by the platform again
+    });
+  }
+  fs.mkdirSync(src, { recursive: true });
+  // (Not when the run folder is inside the pages folder: that copy would contain itself.)
+  const inside = (a, b) => { const r = path.relative(b, a); return !r.startsWith('..') && !path.isAbsolute(r); };
+  if (def.pagesDir && !inside(outDir, def.pagesDir)) { fs.cpSync(def.pagesDir, path.join(src, 'pages'), { recursive: true }); raw.pages = 'pages'; }
+  else if (def.pagesDir) raw.pages = path.relative(src, def.pagesDir).split(path.sep).join('/');
+  raw.$schema = schemaRef(src, 'tour');
+  const file = path.join(src, path.basename(def.tourFile));
+  fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
+  return file;
 }
 
 // ---- Render (narrate → record → cut → mux → join) ----------------------------------------------------------------
@@ -396,9 +502,14 @@ async function render(def, tourDir, outDir, args) {
     s.seconds = s.narrationSeconds + tail;
   }
   log(`narration (${provider}): ${filmed.length} scenes, ${num(filmed.reduce((a, s) => a + s.seconds, 0))} s`);
+  const slides = await drawSlides(def, scenes, tourDir, outDir);
+  const source = keepSource(def, tourDir, outDir);
+  if (source) log(`source: ${source} (re-render with aft run on it)`);
 
   const clipsDir = path.resolve(args.clips ?? (args.record ? path.join(outDir, 'clips') : path.join(tourDir, 'clips', def.name)));
-  if (args.record) {
+  // A tour of slides only has nothing to record: no browser, app or login.
+  if (args.record && def.needsBrowser === false) log('slides only: nothing to record in a browser');
+  else if (args.record) {
     const issues = def.raw && !args.allowDraft ? scriptIssues(def.raw) : [];
     if (issues.length)
       throw new StepError(`the script isn't ready to record (${issues.length} issue(s)):\n  ${issues.map(i => `${i.scene}: ${i.error}`).join('\n  ')}\nFix tour.json (aft validate shows them too), or pass --allow-draft to record anyway.`);
@@ -427,7 +538,7 @@ async function render(def, tourDir, outDir, args) {
 
   const segments = [];
   for (const s of filmed) {
-    const seg = await muxScene({ scene: s, clip: path.join(clipsDir, `${s.id}.mp4`), outDir });
+    const seg = await muxScene({ scene: s, clip: s.slide ? null : path.join(clipsDir, `${s.id}.mp4`), image: slides.files[s.id], outDir });
     segments.push(seg.file);
     s.length = seg.length;
   }
@@ -720,6 +831,7 @@ const commands = {
   },
 
   async generate(args) {
+    if (args.from) return generateExplainer(args);
     const story = readStory(args.story);
     if (args.converse) return startConversation(args, story);
     const url = targetUrl(args);
@@ -1007,6 +1119,55 @@ const commands = {
     return platformCommand(args, { toolRoot, commands, appSettings, loginStepsFor, withRun, UsageError, envOf });
   },
 
+  /**
+   * `aft scratch [<name>] [--from doc.md] [--pages] [--force]`: the official place for one-off tours (an explainer, an
+   * experiment): scratch/<name>/<name>.tour.json in this checkout, git-ignored, kept across sessions, with a working
+   * "$schema". No name: lists them. --from: slides from a document's outline (its images copied into assets/);
+   * --pages: also a pages/ folder of static HTML, served for each run.
+   */
+  async scratch(args) {
+    const root = path.join(toolRoot, 'scratch');
+    const name = args._[1];
+    if (!name) {
+      const list = fs.existsSync(root) ? fs.readdirSync(root).filter(d => fs.existsSync(path.join(root, d, `${d}.tour.json`)))
+        .map(d => ({ name: d, tour: path.join(root, d, `${d}.tour.json`), modified: fs.statSync(path.join(root, d, `${d}.tour.json`)).mtime.toISOString() })) : [];
+      if (!json) for (const t of list) console.log(`${t.name.padEnd(32)} ${t.modified.slice(0, 16).replace('T', ' ')}  ${t.tour}`);
+      if (!json && !list.length) console.log('no scratch tours yet: aft scratch <name> [--from doc.md] [--pages]');
+      return { scratch: list };
+    }
+    if (safeName(name) !== name) throw new UsageError(`scratch names are letters, digits, - and _ (try "${safeName(name)}")`);
+    const dir = path.join(root, name);
+    const tourFile = path.join(dir, `${name}.tour.json`);
+    if (fs.existsSync(tourFile) && !args.force) throw new UsageError(`${tourFile} exists; edit it, or pass --force to start over`);
+    fs.mkdirSync(dir, { recursive: true });
+    let scenes;
+    if (args.from) {
+      const docFile = path.resolve(String(args.from));
+      if (!fs.existsSync(docFile)) throw new UsageError(`--from ${args.from}: no such file`);
+      ({ scenes } = outline(fs.readFileSync(docFile, 'utf8'), { dir: path.dirname(docFile), maxScenes: Number(args.maxScenes ?? 12) }));
+      for (const s of scenes) if (s.slide.image) {
+        fs.mkdirSync(path.join(dir, 'assets'), { recursive: true });
+        const to = path.join(dir, 'assets', path.basename(s.slide.image));
+        fs.copyFileSync(s.slide.image, to);
+        s.slide.image = `assets/${path.basename(to)}`;
+      }
+    } else scenes = [
+      { title: name, narration: `This is ${name}.`, slide: { heading: name, subtitle: 'What this video explains' } },
+      { title: 'The point', narration: 'Say what each slide shows, in a few spoken sentences.', slide: { bullets: ['One point per bullet', 'Short enough to read while it is said'] } },
+    ];
+    const tour = { $schema: schemaRef(dir, 'tour'), name, style: 'explainer', scenes };
+    if (args.pages) {
+      fs.mkdirSync(path.join(dir, 'pages'), { recursive: true });
+      const page = path.join(dir, 'pages', 'index.html');
+      if (!fs.existsSync(page)) fs.writeFileSync(page, `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>${name}</title></head>\n<body style="font: 32px system-ui; padding: 60px">\n  <h1>${name}</h1>\n  <p>Any static page: a mock-up, a diagram, a report. Tour steps act on it like on an app.</p>\n</body></html>\n`);
+      tour.pages = 'pages';
+      tour.scenes.push({ title: 'A page', narration: 'Pages are recorded in the browser, with the cursor and checks.', url: 'index.html', steps: [{ point: { role: 'heading', name } }, { verify: { role: 'heading', name } }] });
+    }
+    fs.writeFileSync(tourFile, JSON.stringify(tour, null, 2) + '\n');
+    if (!json) console.log(`wrote ${tourFile}\nnext: edit it, then  aft render "${tourFile}"  (preview)  or  aft run "${tourFile}"`);
+    return { tour: tourFile, dir, scenes: tour.scenes.length };
+  },
+
   async schema(args) {
     const type = args._[1];
     if (!type) {
@@ -1016,6 +1177,13 @@ const commands = {
     }
     let s;
     try { s = schemaFor(type); } catch (e) { throw new UsageError(e.message); }
+    // --write <folder>: a copy beside files kept outside the checkout (a temp folder, another repo).
+    if (args.write) {
+      const dir = path.resolve(args.write === true ? '.' : String(args.write));
+      const ref = writeSchemaCopy(dir, type);
+      if (!args.json) console.log(`wrote ${path.join(dir, '.aft-schemas')}; in a file in ${dir}: "$schema": "${ref}"`);
+      return { dir: path.join(dir, '.aft-schemas'), $schema: ref };
+    }
     // The schema itself, plus the shared definitions it refers to, so one call gives the whole format.
     const out = { ...s, $defs: { ...(s.$defs ?? {}) }, 'x-common': schemaFor('common') };
     if (!args.json) console.log(JSON.stringify(out, null, 2));

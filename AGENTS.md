@@ -60,7 +60,9 @@ Run folder contents: `tour.mp4` (the video), `tour.vtt` (captions), `recording.w
 `clips/` (per scene), `scene-NN.wav` (narration), `timings.json` (scene windows in the recording), `screens/`
 (a still per scene, discovery pages), `trace.zip` (Playwright trace), `tour.json` / `script.md` (generated
 scripts), `validation.md`, `notes.md` (the platform's notes as they were when the run started, if it has any), `discovery.json`, `run.json` (command, args, status; a dry run with blocking steps is `failed`), `ledger.json` (what was set up and
-undone), `artifacts.json` + `artifacts/` (what the run pinned). On failure: `screens/failure.png`,
+undone), `artifacts.json` + `artifacts/` (what the run pinned), `slides/` (each slide scene's still), `source/` (the
+tour as it ran, with its slide images, upload files and `pages` folder, so `aft run <run>/source/<tour>.json` renders
+it again wherever the original was). On failure: `screens/failure.png`,
 `trace-failed.zip`, `recording-failed.webm`. `out/<name>/latest.json` points at the newest successful run.
 
 **Video trimming:** long waits (page loads and busy indicators, `waitFor`, `waitForResponse`, dismissed known issues)
@@ -618,6 +620,33 @@ it had itself imported are left out). Import writes them to `platforms/<target>/
 over the target's own notes (an earlier imported copy is kept unless `--force`), and lists the finding ids the target's
 own notes don't have yet.
 
+## Explainers: slides, pages and scratch tours
+
+Not every video is a tour of an app: findings, a spike write-up, a design review, release notes. A scene with
+**`"slide"`** instead of steps is a still drawn by a headless browser (no app, login or network) and narrated like any
+scene: `{ "title", "narration", "slide": { "heading", "subtitle", "bullets": [], "body", "code", "image", "note" } }`
+(`**bold**`, `*italic*`, `` `code` `` in text; `image` relative to the tour). `"slides": { "theme": "dark" | "light",
+"accent", "footer" }` on the tour styles them. A tour of slides only needs no platform or baseUrl; `render` and `run`
+both make the video, and `validate` draws every slide and warns when text doesn't fit. Slides can sit between recorded
+scenes of a platform tour (a title, a summary, the context before a demo): only the recorded scenes use the browser.
+`"style": "explainer"` turns off the review (there are no criteria to weigh).
+
+```
+aft generate --from findings.md [--llm claude]   # a document's outline as slide scenes → <run>/tour.json (Claude: sends the document)
+aft scratch foia-findings --from findings.md     # the same, in scratch/foia-findings/ (git-ignored, kept, "$schema" works)
+aft scratch demo --pages                         # plus scratch/demo/pages/index.html, recorded in the browser
+aft scratch                                      # the list
+```
+
+**`"pages": "<folder>"`** (stand-alone tours only) serves the tour's own static pages on a free local port for each run,
+as its baseUrl: `goto` paths and scene `url`s are files in it (`"index.html?s=2"`), and steps and checks work on them as
+on an app. Use it for content slides can't hold (a mock-up, a diagram with a cursor); use slides for the rest.
+
+**Where one-off tours go:** `scratch/<name>/`, never a temp folder: a temp folder goes when the session does, and the
+run's `source/` copy is the only way back. Outside the checkout, `aft schema tour --write <folder>` writes
+`<folder>/.aft-schemas/` and prints the `"$schema"` to use. `aft export` embeds slide images; a tour with `pages` is
+stand-alone and can't be imported into a platform (share its run's `source/` folder).
+
 ## Rules
 
 - **Synthetic or test data only.** Local or dedicated QA/test environments are fine; never production or real
@@ -664,7 +693,7 @@ tour.json → a run (platform composition, launch/attach, login, hooks, fixtures
 fixtures, init · `platform-cli.mjs` `aft platform` · `session.mjs` / `session-daemon.mjs` sessions, snapshot, locate,
 try-step · `stage.mjs` / `stage-daemon.mjs` do / redo until here · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
 `plan.mjs` heuristic and Claude planners, stories · `converse.mjs` generate as a conversation · `capture.mjs` recording by hand ·
-`narrate-timing.mjs` scene timing · `render.mjs` ffmpeg · `tts.mjs` speech · `auth.mjs` saved logins ·
+`narrate-timing.mjs` scene timing · `render.mjs` ffmpeg · `slides.mjs` slide scenes, pages, document outlines · `tts.mjs` speech · `auth.mjs` saved logins ·
 `doctor.mjs` checks · `workarounds.mjs` known issues (merge, checkpoint, matching) · `review.mjs` evidence, findings,
 decisions, verdict · `fix.mjs` AI fix proposals (`suggest-fix`) · `ledger.mjs` ledger.json, run tags · `fixtures.mjs`
 hooks, fixture items, browser fixtures, artifacts, `aft cleanup` / `aft reset` · `batch.mjs` `aft batch` · `notes.mjs` platform notes · `daemon-calls.mjs` call ids, kept results. Tests: `npm test`.
