@@ -377,8 +377,8 @@
                   ]
                 },
                 "minItems": 2,
-                "maxItems": 6,
-                "description": "Boxes joined by arrows, left to right (\"Rules + form\" → \"One call\" → \"Decision and reasons\")."
+                "maxItems": 9,
+                "description": "Boxes left to right. Between boxes: an arrow, or a connector written as its own item: \"+\", \"=\", \"→\", \"&\", \"or\", \"vs\" ([\"Rules\", \"+\", \"Form\", \"→\", \"Decision\"])."
               },
               "callout": {
                 "description": "The takeaway, in a coloured box: text, or { \"text\", \"tone\" } (default info).",
@@ -449,6 +449,14 @@
               "accent": {
                 "type": "string",
                 "description": "This slide's accent colour (CSS)."
+              },
+              "dim": {
+                "type": "boolean",
+                "description": "With \"reveal\": earlier items fade as each new one appears, so the current point stands out."
+              },
+              "use": {
+                "type": "string",
+                "description": "A shared slide: platforms/<p>/slides/<name>.json, slides/<name>.json beside the tour, or a path to a .json file ({ \"title\", \"narration\", \"slide\" } or a slide). The other keys of this slide, and the narration of the scene, override it."
               }
             },
             "additionalProperties": false
@@ -500,6 +508,18 @@
           "todo": {
             "type": "string",
             "description": "Work left for a person; recording refuses until removed."
+          },
+          "hold": {
+            "description": "Seconds the scene stays after its narration ends (default: --tail, 0.75).",
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "$ref": "common.schema.json#/$defs/placeholder"
+              }
+            ]
           }
         },
         "additionalProperties": false,

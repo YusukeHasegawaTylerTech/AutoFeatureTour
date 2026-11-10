@@ -50,7 +50,7 @@ import { probe, startProcess, stopProcess, waitForHttp } from './recorder.mjs';
 import { Failure } from './failures.mjs';
 import { fillArtifacts, runSteps, settle, StopRun } from './steps.mjs';
 import { freePort } from './util.mjs';
-import { isSlide, needsBrowser, servePages, slideImage } from './slides.mjs';
+import { isSlide, needsBrowser, resolveSlideUses, servePages, slideImage } from './slides.mjs';
 
 /** Opens a sign-in check page; a load timeout is an APP failure (as for a goto step), not a tool error. */
 async function openCheckPage(page, url, timeout, where) {
@@ -216,6 +216,9 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
   const raw = readTourJson(file);
   const composed = composeTour(raw, { file, toolRoot, env, baseUrl, role });
   const cfg0 = composed.cfg;
+  // Shared slides ("slide": { "use": … }), filled in before anything checks the scenes.
+  try { resolveSlideUses(raw.scenes, { dir: path.dirname(path.resolve(file)), platformDir: composed.platform?.dir }); } catch (e) { throw new ConfigError(`${file}: ${e.message}`); }
+  (cfg0.scenes ?? []).forEach((s, i) => { const r = raw.scenes[i]; if (r?.slideFrom) Object.assign(s, { slide: r.slide, narration: s.narration ?? r.narration }); });
   validate(cfg0, file);
   const dir = path.dirname(path.resolve(file));
   // "pages": the tour's own static site, served on a free port for each run (its baseUrl unless one is given).
@@ -235,7 +238,7 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
     viewport: cfg0.viewport,
     mask: cfg0.mask,
     video: cfg0.video,
-    scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration ?? '', offCamera: s.camera === false, ...(s.slide ? { slide: s.slide } : {}) })),
+    scenes: raw.scenes.map((s, i) => ({ number: i + 1, title: s.title, narration: s.narration ?? '', offCamera: s.camera === false, ...(s.slide ? { slide: s.slide } : {}), ...(s.hold != null ? { hold: s.hold } : {}) })),
     /** How slide scenes look (src/slides.mjs), and the static pages folder, if any. */
     slides: cfg0.slides ?? {},
     pagesDir,

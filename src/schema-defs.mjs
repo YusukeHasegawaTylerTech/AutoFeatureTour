@@ -308,7 +308,7 @@ const slide = obj('A still slide instead of steps: drawn without a browser or ap
     items: obj('A card.', { heading: str('Card heading.'), body: str('Text.'), bullets: { type: 'array', items: tonedText }, tone }) },
   stats: { type: 'array', minItems: 1, maxItems: 4, description: 'Big numbers with a label ("13K" / "tokens in a 20-page rule set").',
     items: obj('A number.', { value: str('The number, as shown.'), label: str('What it is.'), tone }, { required: ['value'] }) },
-  flow: { type: 'array', items: tonedText, minItems: 2, maxItems: 6, description: 'Boxes joined by arrows, left to right ("Rules + form" → "One call" → "Decision and reasons").' },
+  flow: { type: 'array', items: tonedText, minItems: 2, maxItems: 9, description: 'Boxes left to right. Between boxes: an arrow, or a connector written as its own item: "+", "=", "→", "&", "or", "vs" (["Rules", "+", "Form", "→", "Decision"]).' },
   callout: { description: 'The takeaway, in a coloured box: text, or { "text", "tone" } (default info).', anyOf: [{ type: 'string' }, obj('A callout.', { text: str('The text.'), tone }, { required: ['text'] })] },
   image: str('An image (png, jpg, gif, svg, webp), relative to the tour file: beside the other content when it is written last, else a block of its own.'),
   imageSide: bool('false: an image written last is a block below the rest, not beside it.'),
@@ -316,6 +316,8 @@ const slide = obj('A still slide instead of steps: drawn without a browser or ap
   reveal: { description: 'Build the slide in: each bullet, row, card, stat, flow box or paragraph appears in turn. true: one per sentence of the narration; a list: when each appears, as fractions of the narration ([0, 0.3, 0.6]).',
     anyOf: [{ type: 'boolean' }, { type: 'array', items: { type: 'number', minimum: 0, maximum: 1 } }] },
   theme: { enum: ['dark', 'light'], description: 'This slide only.' }, accent: str('This slide\'s accent colour (CSS).'),
+  dim: bool('With "reveal": earlier items fade as each new one appears, so the current point stands out.'),
+  use: str('A shared slide: platforms/<p>/slides/<name>.json, slides/<name>.json beside the tour, or a path to a .json file ({ "title", "narration", "slide" } or a slide). The other keys of this slide, and the narration of the scene, override it.'),
 });
 const slideStyle = obj('How slide scenes look (a platform\'s apply to its tours; the tour\'s win).', { theme: { enum: ['dark', 'light'], description: 'Default dark.' }, accent: str('Accent colour (CSS), e.g. "#1f6fd1".'), footer: str('Footer text on every slide.') });
 const scene = obj('One scene: narration over the steps that show it.', {
@@ -326,6 +328,7 @@ const scene = obj('One scene: narration over the steps that show it.', {
   steps: ref('steps'), comment: str('A note for people.'),
   unresolved: { type: 'array', items: { type: 'string' }, description: 'Story items the generator could not map to the app; recording refuses until resolved.' },
   todo: str('Work left for a person; recording refuses until removed.'),
+  hold: num('Seconds the scene stays after its narration ends (default: --tail, 0.75).', { minimum: 0 }),
 }, { required: ['title'] });
 
 const story = obj('The user story the tour verifies.', {

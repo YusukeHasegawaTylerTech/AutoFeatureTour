@@ -14,7 +14,7 @@
 //   aft render   <tour>  [--record]                   narration over slides, clips or title cards, or a recording
 //   aft generate --from <doc.md> [--llm claude] [--platform <name>] [--max-scenes 12]
 //                                                    an explainer: a document's outline as narrated slide scenes (no app)
-//   aft scratch  [<name>] [--from <doc.md>] [--pages] [--force]   one-off tours in scratch/<name>/ (git-ignored); no name: the list
+//   aft scratch  [<name>] [--from <doc.md> | --from-tour <scratch name|tour>] [--pages] [--force]   one-off tours in scratch/<name>/ (git-ignored); no name: the list
 //   aft discover <url>   [--max-pages 12]             crawl screens (used by generate/auto)
 //   aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm claude]
 //   aft auto     <url> [--prompt ...]                 discover → plan → run, no story needed
@@ -110,7 +110,7 @@ import { log, newRunDir, num, parseArgs, run, sleep } from './util.mjs';
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 /**
@@ -294,7 +294,7 @@ const runName = (def, args) => args.name ?? (def.story?.id && !def.name.startsWi
 
 function scenesOf(def, tourDir) {
   return def.scenes
-    ? def.scenes.map((s, i) => ({ number: i + 1, id: `scene-${String(i + 1).padStart(2, '0')}`, title: s.title, narration: s.narration ?? '', cues: [], ...(s.offCamera ? { offCamera: true } : {}), ...(s.slide ? { slide: s.slide } : {}) }))
+    ? def.scenes.map((s, i) => ({ number: i + 1, id: `scene-${String(i + 1).padStart(2, '0')}`, title: s.title, narration: s.narration ?? '', cues: [], ...(s.offCamera ? { offCamera: true } : {}), ...(s.slide ? { slide: s.slide } : {}), ...(s.hold != null ? { hold: s.hold } : {}) }))
     : parseScript(path.resolve(tourDir, def.script));
 }
 
@@ -472,7 +472,9 @@ function keepSource(def, tourDir, outDir) {
     taken.set(abs, `assets/${name}`);
     return `assets/${name}`;
   };
-  for (const s of raw.scenes ?? []) {
+  for (const [i, s] of (raw.scenes ?? []).entries()) {
+    // A shared slide is copied in as it was used (the copy stands alone).
+    if (s.slide?.use && def.scenes?.[i]?.slide) { s.slide = { ...def.scenes[i].slide }; s.narration ??= def.scenes[i].narration; }
     if (s.slide?.image) s.slide.image = copy(path.resolve(tourDir, s.slide.image));
     for (const st of s.steps ?? []) if (st.upload) st.files = [st.files].flat().map(f => {
       const abs = path.resolve(tourDir, f);
@@ -514,7 +516,7 @@ async function render(def, tourDir, outDir, args) {
     await speak({ text: spokenText(s.narration, def.pronounce), wav: s.wav, voice: args.voice === 'silent' ? undefined : args.voice ?? def.voice,
       rate: Number(args.rate ?? 0), provider });
     s.narrationSeconds = await duration(s.wav);
-    s.seconds = s.narrationSeconds + tail;
+    s.seconds = s.narrationSeconds + (s.hold != null ? Number(s.hold) : tail); // "hold": this scene's pause after its narration
   }
   log(`narration (${provider}): ${filmed.length} scenes, ${num(filmed.reduce((a, s) => a + s.seconds, 0))} s`);
   const slides = await drawSlides(def, scenes, tourDir, outDir);
@@ -1154,6 +1156,27 @@ const commands = {
     const dir = path.join(root, name);
     const tourFile = path.join(dir, `${name}.tour.json`);
     if (fs.existsSync(tourFile) && !args.force) throw new UsageError(`${tourFile} exists; edit it, or pass --force to start over`);
+    // --from-tour <scratch name | tour file>: a new version of a deck, its folder (assets, pages, slides) copied too.
+    if (args.fromTour) {
+      const ref = String(args.fromTour);
+      const from = fs.existsSync(path.join(root, ref, `${ref}.tour.json`)) ? path.join(root, ref, `${ref}.tour.json`) : path.resolve(ref);
+      if (!fs.existsSync(from)) throw new UsageError(`--from-tour ${ref}: not a scratch tour or a tour file`);
+      const fromDir = path.dirname(from);
+      const scratchSource = path.dirname(fromDir) === root; // a scratch folder: everything in it belongs to the deck
+      fs.mkdirSync(dir, { recursive: true });
+      if (scratchSource) for (const e of fs.readdirSync(fromDir)) if (e !== path.basename(from)) fs.cpSync(path.join(fromDir, e), path.join(dir, e), { recursive: true });
+      const doc = JSON.parse(fs.readFileSync(from, 'utf8'));
+      // Outside scratch/, files the tour names stay where they are: point at them.
+      if (!scratchSource) {
+        const abs = p => path.relative(dir, path.resolve(fromDir, p)).split(path.sep).join('/');
+        if (doc.pages) doc.pages = abs(doc.pages);
+        for (const s of doc.scenes ?? []) if (s.slide?.image) s.slide.image = abs(s.slide.image);
+      }
+      Object.assign(doc, { $schema: schemaRef(dir, 'tour'), name, comment: [doc.comment, `Forked from ${path.relative(toolRoot, from).split(path.sep).join('/')} on ${new Date().toISOString().slice(0, 10)}.`].filter(Boolean).join(' ') });
+      fs.writeFileSync(tourFile, JSON.stringify(doc, null, 2) + '\n');
+      if (!json) console.log(`wrote ${tourFile} (from ${from})`);
+      return { tour: tourFile, dir, from, scenes: doc.scenes?.length ?? 0 };
+    }
     fs.mkdirSync(dir, { recursive: true });
     let scenes;
     if (args.from) {

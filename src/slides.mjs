@@ -53,6 +53,8 @@ const THEMES = {
   light: { bg: '#f7f8fb', fg: '#1b2a41', dim: '#5a6b82', panel: '#e8ecf3', line: '#c9d2e0', accent: '#1f6fd1', ok: '#1f8a52', warn: '#b7791f', bad: '#c53030', info: '#1f6fd1' },
 };
 
+const CONNECTORS = { '+': '+', '=': '=', '→': '→', '->': '→', '&': '&amp;', 'or': 'or', 'vs': 'vs' };
+
 /** Which item of a revealed slide each element is: data-i on everything that builds in. */
 let item = 0;
 const it = () => ` data-i="${item++}"`;
@@ -62,16 +64,31 @@ function block(kind, v, { dir, reveal }) {
   switch (kind) {
     case 'body': return `<div class="body">${String(v).split(/\n\s*\n/).map(p => p.trim()).filter(Boolean).map(p => `<p${r()}>${inline(p).replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
     case 'bullets': return `<ul>${v.map(toned).map(b => `<li class="${b.tone ?? ''}"${r()}>${inline(b.text)}</li>`).join('')}</ul>`;
-    case 'code': return `<pre${r()}>${esc(v)}</pre>`;
+    // Comments (// … and # … to the end of a line) are dimmed.
+    case 'code': return `<pre${r()}>${esc(v).split('\n').map(l => l.replace(/(^|\s)(\/\/.*|#(?![\w{]).*)$/, '$1<span class="cm">$2</span>')).join('\n')}</pre>`;
     case 'table': {
       const rows = (v.rows ?? []).map(row => (Array.isArray(row) ? { cells: row } : row));
       const cell = (c, tag) => { const t = toned(c); return `<${tag} class="${t.tone ?? ''}">${inline(t.text)}</${tag}>`; };
       return `<table>${v.head?.length ? `<thead><tr>${v.head.map(h => cell(h, 'th')).join('')}</tr></thead>` : ''}<tbody>${rows.map(row =>
         `<tr class="${row.tone ?? ''}"${r()}>${row.cells.map(c => cell(c, 'td')).join('')}</tr>`).join('')}</tbody></table>`;
     }
-    case 'columns': return `<div class="columns">${v.map(c => `<div class="col ${c.tone ?? ''}"${r()}>${c.heading ? `<h3>${inline(c.heading)}</h3>` : ''}${c.body ? `<p>${inline(c.body)}</p>` : ''}${c.bullets?.length ? `<ul>${c.bullets.map(toned).map(b => `<li class="${b.tone ?? ''}">${inline(b.text)}</li>`).join('')}</ul>` : ''}</div>`).join('')}</div>`;
+    // A card builds in, then each of its bullets.
+    case 'columns': return `<div class="columns">${v.map(c => `<div class="col ${c.tone ?? ''}"${r()}>${c.heading ? `<h3>${inline(c.heading)}</h3>` : ''}${c.body ? `<p>${inline(c.body)}</p>` : ''}${c.bullets?.length ? `<ul>${c.bullets.map(toned).map(b => `<li class="${b.tone ?? ''}"${r()}>${inline(b.text)}</li>`).join('')}</ul>` : ''}</div>`).join('')}</div>`;
     case 'stats': return `<div class="stats">${v.map(s => `<div class="stat ${s.tone ?? ''}"${r()}><div class="value">${inline(s.value)}</div><div class="label">${inline(s.label ?? '')}</div></div>`).join('')}</div>`;
-    case 'flow': return `<div class="flow">${v.map((f, i) => `${i ? '<div class="arrow">→</div>' : ''}<div class="step ${toned(f).tone ?? ''}"${r()}>${inline(toned(f).text)}</div>`).join('')}</div>`;
+    case 'flow': {
+      // Boxes and connectors: "+", "=", "→" (or "->") between boxes as written; two boxes in a row get "→".
+      const out = [];
+      let prevBox = false;
+      for (const f of v) {
+        const c = typeof f === 'string' ? f.trim() : null;
+        if (c && CONNECTORS[c]) { out.push(`<div class="arrow">${CONNECTORS[c]}</div>`); prevBox = false; continue; }
+        if (prevBox) out.push('<div class="arrow">→</div>');
+        const t = toned(f);
+        out.push(`<div class="step ${t.tone ?? ''}"${r()}>${inline(t.text)}</div>`);
+        prevBox = true;
+      }
+      return `<div class="flow">${out.join('')}</div>`;
+    }
     case 'callout': { const c = typeof v === 'string' ? { text: v } : v; return `<div class="callout ${c.tone ?? 'info'}"${r()}>${inline(c.text)}</div>`; }
     case 'image': { const f = slideImage(v, dir); return `<div class="img"${r()}><img src="data:${MIME[path.extname(f).toLowerCase()]};base64,${fs.readFileSync(f).toString('base64')}"></div>`; }
     default: return '';
@@ -113,7 +130,7 @@ export function slideHtml({ number, title, slide }, { dir = '.', style = {}, tot
   table { border-collapse: collapse; font-size: 34px; width: 100%; }
   th { text-align: left; color: ${t.dim}; font-weight: 600; font-size: 28px; text-transform: uppercase; letter-spacing: 0.05em; padding: 0 24px 14px 0; border-bottom: 2px solid ${t.line}; }
   td { padding: 16px 24px 16px 0; border-bottom: 1px solid ${t.line}; vertical-align: top; }
-  tr.ok td:first-child, td.ok { color: ${t.ok}; } tr.warn td:first-child, td.warn { color: ${t.warn}; } tr.bad td:first-child, td.bad { color: ${t.bad}; } td.info { color: ${t.info}; }
+  tr.ok td, td.ok { color: ${t.ok}; } tr.warn td, td.warn { color: ${t.warn}; } tr.bad td, td.bad { color: ${t.bad}; } tr.info td, td.info { color: ${t.info}; }
   .columns { display: flex; gap: 40px; } .col { flex: 1; min-width: 0; background: ${t.panel}; border-radius: 18px; padding: 32px 36px; border-top: 8px solid ${t.line}; font-size: 34px; }
   .col h3 { font-size: 38px; margin-bottom: 18px; } .col p { margin-bottom: 14px; }
   .col.ok { border-top-color: ${t.ok}; } .col.warn { border-top-color: ${t.warn}; } .col.bad { border-top-color: ${t.bad}; } .col.info { border-top-color: ${t.info}; }
@@ -122,7 +139,10 @@ export function slideHtml({ number, title, slide }, { dir = '.', style = {}, tot
   .stat.ok .value { color: ${t.ok}; } .stat.warn .value { color: ${t.warn}; } .stat.bad .value { color: ${t.bad}; }
   .flow { display: flex; align-items: stretch; gap: 20px; } .flow .step { flex: 1; min-width: 0; background: ${t.panel}; border-radius: 16px; padding: 28px; font-size: 32px; display: flex; align-items: center; justify-content: center; text-align: center; }
   .flow .arrow { display: flex; align-items: center; font-size: 56px; color: ${t.accent}; }
-  .flow .step.ok { outline: 4px solid ${t.ok}; } .flow .step.warn { outline: 4px solid ${t.warn}; } .flow .step.bad { outline: 4px solid ${t.bad}; }
+  .flow .step.ok { box-shadow: inset 0 0 0 4px ${t.ok}; } .flow .step.warn { box-shadow: inset 0 0 0 4px ${t.warn}; } .flow .step.bad { box-shadow: inset 0 0 0 4px ${t.bad}; } .flow .step.info { box-shadow: inset 0 0 0 4px ${t.info}; }
+  pre .cm { color: ${t.dim}; opacity: 0.8; }
+  .stat .value { white-space: nowrap; }
+  body.dim [data-i].past { opacity: 0.38; }
   .callout { border-left: 12px solid ${t.info}; background: ${t.panel}; border-radius: 12px; padding: 26px 34px; font-size: 38px; }
   .callout.ok { border-left-color: ${t.ok}; } .callout.warn { border-left-color: ${t.warn}; } .callout.bad { border-left-color: ${t.bad}; }
   .split { display: flex; gap: 64px; width: 100%; } .split > .img { flex: 0 0 44%; }
@@ -131,7 +151,8 @@ export function slideHtml({ number, title, slide }, { dir = '.', style = {}, tot
   footer { display: flex; gap: 40px; justify-content: space-between; align-items: flex-end; color: ${t.dim}; font-size: 24px; margin-top: 20px; }
   footer .note { flex: 1; min-width: 0; } footer .page { white-space: nowrap; }
   body.title { justify-content: center; } body.title main { display: none; }
-</style></head><body class="${titleOnly ? 'title' : ''}">
+  body.title footer { position: absolute; left: 140px; right: 140px; bottom: 72px; margin: 0; }
+</style></head><body class="${[titleOnly && 'title', s.dim && 'dim'].filter(Boolean).join(' ')}">
 <div class="bar"></div>${s.kicker ? `<div class="kicker">${inline(s.kicker)}</div>` : ''}<h1>${inline(s.heading ?? title)}</h1>${s.subtitle ? `<div class="sub">${inline(s.subtitle)}</div>` : ''}
 <main>${titleOnly ? '' : content}</main>
 <footer><span class="note">${[style.footer, s.note].filter(Boolean).map(inline).join(' · ')}</span><span class="page">${number}${total ? ` / ${total}` : ''}</span></footer>
@@ -174,13 +195,28 @@ export async function renderSlides(scenes, { outDir, dir, style, log = () => {},
     for (const s of todo) {
       await page.setContent(slideHtml(s, { dir, style, total: total ?? scenes.length }), { waitUntil: 'load' });
       const fit = await page.evaluate(() => {
-        const m = document.querySelector('main'), f = document.querySelector('footer .note');
+        // Big numbers shrink to fit their tile (down to half size); a value still too wide is reported.
+        const values = [...document.querySelectorAll('.stat .value')];
+        const tooWide = [];
+        for (const v of values) {
+          let size = parseFloat(getComputedStyle(v).fontSize);
+          const min = size / 2;
+          while (v.scrollWidth > v.clientWidth + 1 && size > min) { size -= 2; v.style.fontSize = `${size}px`; }
+          if (v.scrollWidth > v.clientWidth + 1) tooWide.push(v.textContent);
+        }
+        const lines = el => Math.round(el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight || '1'));
+        const m = document.querySelector('main'), f = document.querySelector('footer .note'), h = document.querySelector('h1');
         const over = el => !!el && (el.scrollHeight > el.clientHeight + 2 || el.scrollWidth > el.clientWidth + 2);
         return { main: over(m) || [...(m?.querySelectorAll('*') ?? [])].some(e => e.getBoundingClientRect().bottom > m.getBoundingClientRect().bottom + 2),
-          footer: !!f && f.getBoundingClientRect().height > 40 };
+          footer: !!f && f.getBoundingClientRect().height > 40, tooWide,
+          labels: [...document.querySelectorAll('.stat .label')].filter(l => l.textContent && lines(l) > 2).map(l => l.textContent),
+          heading: !!h && lines(h) > 2 };
       });
       if (fit.main) warnings.push(`${s.id}: the slide's content doesn't fit (shorten it, or split the scene)`);
       if (fit.footer) warnings.push(`${s.id}: the footer note wraps; "note" is small print (a source, a date): use "callout" for a takeaway`);
+      for (const v of fit.tooWide) warnings.push(`${s.id}: the stat "${v}" doesn't fit its tile even at half size (shorten it, or use fewer stats)`);
+      for (const l of fit.labels) warnings.push(`${s.id}: the stat label "${l}" runs over two lines (shorten it)`);
+      if (fit.heading) warnings.push(`${s.id}: the heading runs over two lines (shorten it, or move part of it to "kicker" or "subtitle")`);
       const file = path.join(slidesDir, `${s.id}.png`);
       await page.screenshot({ path: file });
       files[s.id] = file;
@@ -189,7 +225,15 @@ export async function renderSlides(scenes, { outDir, dir, style, log = () => {},
         const at = revealTimes(s.slide.reveal, count, s.narration);
         frames[s.id] = [];
         for (let k = 0; k < count; k++) {
-          await page.evaluate(n => { for (const e of document.querySelectorAll('[data-i]')) e.style.visibility = Number(e.dataset.i) <= n ? '' : 'hidden'; }, k);
+          // Items so far are shown; with "dim", the earlier ones are faded (not one that holds the current item).
+          await page.evaluate(n => {
+            const cur = document.querySelector(`[data-i="${n}"]`);
+            for (const e of document.querySelectorAll('[data-i]')) {
+              const i = Number(e.dataset.i);
+              e.style.visibility = i <= n ? '' : 'hidden';
+              e.classList.toggle('past', i < n && !e.contains(cur));
+            }
+          }, k);
           const f = path.join(slidesDir, `${s.id}-${String(k + 1).padStart(2, '0')}.png`);
           await page.screenshot({ path: f });
           frames[s.id].push({ file: f, at: at[k] });
@@ -357,12 +401,25 @@ export function outline(markdown, { dir = '.', maxScenes = 12 } = {}) {
       if (p.kind in slide && p.kind !== 'body') continue; // one block of a kind per slide; the rest stays in the document
       slide[p.kind] = v;
     }
+    // "Topic: claim" headings: the topic is the kicker (and the scene title), the claim the heading.
+    const split = !sec.title && heading.match(/^([^:]{2,40}):\s+(\S.*)$/);
+    if (split) Object.assign(slide, { kicker: split[1], heading: split[2] });
+    // Lists that are really cards or numbers: every item "**Label:** text" (2 to 4) → columns;
+    // every item "**a number** phrase" (2 to 4) → stats. In the list's place.
+    const b = slide.bullets;
+    if (b && b.length >= 2 && b.length <= 4) {
+      const labelled = b.map(x => x.match(/^\*\*([^*]{1,40}?):?\*\*:?\s+(\S.*)$/));
+      const numbers = b.map(x => x.match(/^\*\*([^*]{1,14})\*\*\s+(\S.*)$/)).map(m => (m && /\d/.test(m[1]) ? m : null));
+      const replace = (key, value) => { const e = Object.entries(slide).map(([k, v]) => (k === 'bullets' ? [key, value] : [k, v])); for (const k of Object.keys(slide)) delete slide[k]; Object.assign(slide, Object.fromEntries(e)); };
+      if (numbers.every(Boolean) && !slide.stats) replace('stats', numbers.map(m => ({ value: m[1], label: m[2] })));
+      else if (labelled.every(Boolean) && !slide.columns) replace('columns', labelled.map(m => ({ heading: m[1], body: m[2] })));
+    }
     // Spoken: the Say lines, else the prose and points as written.
     let narration;
     if (say.length) { narration = say.join(' '); said = true; }
     else narration = [slide.subtitle, ...parts.filter(p => p.kind === 'body' || p.kind === 'callout').map(p => plain(p.value)),
-      ...(slide.bullets ?? []).map(b => plain(b).replace(/[.;:]?$/, '.'))].filter(Boolean).join(' ') || heading;
-    scenes.push({ title: sec.title ? shortTitle(heading) : shortTitle(heading), narration, slide });
+      ...(b ?? []).map(x => plain(x).replace(/[.;:]?$/, '.'))].filter(Boolean).join(' ') || heading;
+    scenes.push({ title: shortTitle(heading), narration, slide });
   }
   if (scenes.length > maxScenes) {
     scenes.length = maxScenes;
@@ -394,3 +451,34 @@ numbers and units written as they are said ("thirteen thousand tokens", "sixty t
 markdown, no parentheses, no ticket ids. Scene titles are short (2 to 4 words). Start with a title slide (heading and
 subtitle only), end with a summary or next-steps slide. Keep what the document says: never add facts, numbers or
 conclusions it doesn't contain. Aim for 5 to 12 scenes.`;
+
+// ---- Shared slides ------------------------------------------------------------------------------------------------
+
+/**
+ * "slide": { "use": "<name or file>", …overrides }: a slide kept in a file of its own (a title or closing slide, a
+ * team's disclaimer), shared by several tours. A name is platforms/<p>/slides/<name>.json, else slides/<name>.json
+ * beside the tour; a path (with "/" or ".json") is relative to the tour. The file is { "title", "narration",
+ * "slide": {…} } or a slide alone. The scene's own keys (and the slide's other keys) win. Images in it are relative
+ * to the file. Mutates and returns scenes.
+ */
+export function resolveSlideUses(scenes, { dir, platformDir }) {
+  for (const [i, s] of (scenes ?? []).entries()) {
+    const use = s.slide?.use;
+    if (!use) continue;
+    const tries = /[\/]|\.json$/i.test(use) ? [path.resolve(dir, use)]
+      : [...(platformDir ? [path.join(platformDir, 'slides', `${use}.json`)] : []), path.join(dir, 'slides', `${use}.json`)];
+    const file = tries.find(f => fs.existsSync(f));
+    if (!file) throw new Error(`scenes[${i}].slide.use "${use}": no such shared slide (looked for ${tries.join(', ')})`);
+    let doc;
+    try { doc = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { throw new Error(`${file}: not valid JSON (${e.message})`); }
+    const shared = doc.slide ?? doc;
+    delete shared.$schema;
+    if (shared.image) shared.image = path.resolve(path.dirname(file), shared.image);
+    const { use: _u, ...own } = s.slide;
+    s.slide = { ...shared, ...own };
+    if (!s.title && doc.title) s.title = doc.title;
+    if (!s.narration && doc.narration) s.narration = doc.narration;
+    s.slideFrom = file;
+  }
+  return scenes;
+}

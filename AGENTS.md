@@ -629,15 +629,20 @@ scene. Slides are designed by hand in the tour file (the schema describes every 
 - `kicker` (a small label above), `heading` (default: the scene title), `subtitle`;
 - content blocks, **drawn in the order they are written**: `body` (paragraphs), `bullets`, `code`, `table`
   (`{ head, rows }`), `columns` (side-by-side cards `{ heading, body, bullets, tone }`), `stats` (big numbers
-  `{ value, label, tone }`), `flow` (boxes joined by arrows), `callout` (the takeaway, in a coloured box), `image`
-  (beside the rest when written last);
+  `{ value, label, tone }`, shrunk to fit their tile), `flow` (boxes left to right; write `"+"`, `"="`, `"&"`, `"or"`
+  or `"vs"` as an item between two boxes for that connector, else an arrow), `callout` (the takeaway, in a coloured
+  box), `image` (beside the rest when written last); comments in `code` (`// …`, `# …`) are dimmed;
 - `note`: small print in the footer (a source, a date), never a takeaway;
-- tones `ok` / `warn` / `bad` / `info` on bullets, cells, rows, cards, stats, flow boxes and callouts, as
-  `{ "text", "tone" }` or a leading (or trailing) ✓ △ ✗ ℹ;
-- `reveal`: the slide builds in, each bullet, row, card, stat or box in turn: `true` (one per narration sentence) or
-  fractions of the narration (`[0, 0.3, 0.6]`);
+- tones `ok` / `warn` / `bad` / `info` on bullets, cells, whole rows (`{ "cells", "tone" }`), cards, stats, flow
+  boxes and callouts, as `{ "text", "tone" }` or a leading (or trailing) ✓ △ ✗ ℹ;
+- `reveal`: the slide builds in, each bullet, row, card (then each bullet in it), stat or box in turn: `true` (one per
+  narration sentence) or fractions of the narration (`[0, 0.3, 0.6]`); `"dim": true` fades the earlier ones;
 - `theme`, `accent` per slide; `"slides": { "theme", "accent", "footer" }` on the tour, or in platform.json for a
-  team's look (the tour's win). Text accepts `**bold**`, `*italic*` and `` `code` ``.
+  team's look (the tour's win). Text accepts `**bold**`, `*italic*` and `` `code` ``;
+- **shared slides**: `"slide": { "use": "closing" }` takes `platforms/<p>/slides/closing.json`, else
+  `slides/closing.json` beside the tour, or a `.json` path (`{ "title", "narration", "slide" }` or a slide alone); the
+  slide's other keys and the scene's narration win. A run's `source/` copy has it filled in;
+- on the scene: `"hold": 2` keeps it on screen 2 s after its narration (default 0.75, `--tail`).
 
 A tour of slides only needs no platform or baseUrl; `render` and `run` both make the video. `aft render <tour>
 --slides-only` draws the slides in seconds (no voice, no video) with `slides/index.html`, the whole deck on one page,
@@ -651,12 +656,15 @@ of a platform tour (a title, a summary, context before a demo): only the recorde
 title slide; each section is a slide. Lists become bullets, tables become tables, `>` quotes become callouts, prose
 becomes body and code blocks become code, in document order. Write each slide's spoken words in the document, under its heading, as
 `Say: …` lines (or `<!-- say: … -->`). They are the narration and never appear on the slide. Without them, the narration is the
-section's text and the generated tour's comment says so. Scene titles are the heading up to a ":" or "—".
+section's text and the generated tour's comment says so. A heading "Topic: claim" becomes kicker "Topic" and
+heading "claim" (the scene title is the topic). A list whose every item is `**Label:** text` (2 to 4) becomes
+`columns`, and one whose every item starts with a bold number (`**80 MB** a day`) becomes `stats`.
 
 ```
 aft scratch foia-findings --from findings.md     # in scratch/foia-findings/ (git-ignored, kept, "$schema" works)
 aft scratch demo                                 # a starter deck: one slide per layout, to copy from
 aft scratch demo --pages                         # plus scratch/demo/pages/index.html, recorded in the browser
+aft scratch demo-v2 --from-tour demo             # a new version of a deck (its folder copied: assets, shared slides, pages)
 aft render scratch/demo/demo.tour.json --slides-only   # the deck as pictures: slides/index.html
 aft generate --from findings.md [--llm claude]   # the same into a run folder (Claude: sends the document)
 aft scratch                                      # the list

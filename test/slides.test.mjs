@@ -1,4 +1,4 @@
-// Slide scenes, a tour's own pages, document outlines, scratch tours and schema copies (src/slides.mjs and friends).
+// Slide scenes, shared slides, a tour's own pages, document outlines, scratch tours and schema copies (src/slides.mjs and friends).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -43,11 +43,12 @@ test('outline: tables, blockquotes as callouts, "Say:" narration, short titles',
   assert.equal(said, true);
   const r = scenes.find(s => s.slide.table);
   assert.equal(r.title, 'Results');
-  assert.equal(r.slide.heading, 'Results: five of six passed');
+  assert.equal(r.slide.heading, 'five of six passed');
+  assert.equal(r.slide.kicker, 'Results');
   assert.equal(r.narration, 'Five of the six samples passed. The sixth is a real finding.');
   assert.deepEqual(r.slide.table, { head: ['Case', 'Result'], rows: [['One', 'valid ✓'], ['Two', 'invalid ✗']] });
   assert.equal(r.slide.callout, 'The mismatch is a rule ambiguity.');
-  assert.deepEqual(Object.keys(r.slide), ['heading', 'body', 'table', 'callout']);
+  assert.deepEqual(Object.keys(r.slide), ['heading', 'body', 'table', 'callout', 'kicker']);
   assert.ok(!JSON.stringify(r.slide).includes('Five of the six')); // narration never on the slide
   assert.equal(scenes.at(-1).narration, 'Two things are left.');
 });
@@ -153,4 +154,35 @@ test('generate --from writes an explainer tour from a document', () => {
   assert.equal(tour.style, 'explainer');
   assert.equal(tour.scenes.length, 3);
   assert.deepEqual(check('tour', tour), []);
+});
+
+test('round 3: flow connectors, heading split, lists as columns or stats, row tones, dim, code comments', async () => {
+  const { slideHtml: html1, outline: ol } = await import('../src/slides.mjs');
+  const f = html1({ number: 1, title: 'T', slide: { flow: ['Rules', '+', 'Form', '→', 'Decision', 'Done'] } });
+  assert.deepEqual([...f.matchAll(/class="arrow">([^<]+)</g)].map(m => m[1]), ['+', '→', '→']);
+  const t = html1({ number: 1, title: 'T', slide: { table: { rows: [{ cells: ['a', 'b'], tone: 'warn' }] }, code: 'x = 1 // why', dim: true } });
+  assert.match(t, /<tr class="warn"/);
+  assert.match(t, /<span class="cm">\/\/ why<\/span>/);
+  assert.match(t, /<body class="dim">/);
+  const md = '# D\n\n## Network load: sending rules is fine\n\n- **60 KB** of text\n- **80 MB** a day\n\n## Agents\n\n- **Misconception:** agents remember\n- **Reality:** they do not\n';
+  const [, net, agents] = ol(md).scenes;
+  assert.equal(net.title, 'Network load');
+  assert.equal(net.slide.kicker, 'Network load');
+  assert.equal(net.slide.heading, 'sending rules is fine');
+  assert.deepEqual(net.slide.stats, [{ value: '60 KB', label: 'of text' }, { value: '80 MB', label: 'a day' }]);
+  assert.deepEqual(agents.slide.columns, [{ heading: 'Misconception', body: 'agents remember' }, { heading: 'Reality', body: 'they do not' }]);
+  assert.equal(agents.slide.bullets, undefined);
+});
+
+test('shared slides: "use" fills a slide from a file, the scene overrides it; hold is in the schema', () => {
+  const dir = tmp();
+  fs.mkdirSync(path.join(dir, 'slides'));
+  fs.writeFileSync(path.join(dir, 'slides', 'closing.json'), JSON.stringify({ narration: 'Thanks.', slide: { heading: 'Questions?', subtitle: 'shared' } }));
+  const doc = { scenes: [{ title: 'End', slide: { use: 'closing', subtitle: 'mine' }, hold: 2 }] };
+  assert.deepEqual(check('tour', doc), []);
+  const def = loadTourJson(write(dir, 's.tour.json', doc), { toolRoot: root });
+  assert.deepEqual(def.scenes[0].slide, { heading: 'Questions?', subtitle: 'mine' });
+  assert.equal(def.scenes[0].narration, 'Thanks.');
+  assert.equal(def.scenes[0].hold, 2);
+  assert.throws(() => loadTourJson(write(dir, 'u.tour.json', { scenes: [{ title: 'X', narration: 'n', slide: { use: 'nope' } }] }), { toolRoot: root }), /no such shared slide/);
 });
