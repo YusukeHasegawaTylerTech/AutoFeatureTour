@@ -514,7 +514,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
       }
       // "### F-1 · Title" findings (src/findings.mjs) become a table: id, finding, status (✓ confirmed, ✗ refuted,
       // △ partial, ℹ open); their "- key: value" lines are for the findings summary, not the slide.
-      const fh = b.heading && b.heading.match(/^([A-Za-z][A-Za-z0-9]*-\d+[A-Za-z0-9]*)\s*(?:[·:—–-]\s*)?(.*)$/);
+      const fh = b.heading && b.heading.match(/^([A-Za-z][A-Za-z0-9]*-[A-Za-z]*\d+[A-Za-z0-9]*)\s*(?:[·:—–-]\s*)?(.*)$/);
       if (fh) {
         flush();
         const t = last('findings') ?? parts[parts.push({ kind: 'findings', value: [] }) - 1];

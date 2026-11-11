@@ -1372,7 +1372,7 @@ const commands = {
       if (deck.pages) {
         const from = path.resolve(path.dirname(docFile), deck.pages);
         if (!fs.existsSync(from)) throw new UsageError(`${path.basename(docFile)}: pages: ${deck.pages} not found (relative to the document)`);
-        fs.cpSync(from, path.join(dir, 'pages'), { recursive: true });
+        if (path.resolve(from) !== path.resolve(dir, 'pages')) fs.cpSync(from, path.join(dir, 'pages'), { recursive: true });
         deck.pages = 'pages';
       }
       // The document is the spike's write-up: the deck's findings (findings.md), summarized in every run's findings/.
