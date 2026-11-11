@@ -81,6 +81,7 @@ aft doctor [--platform <name>] | --help | --version | --list-voices
 | `--on-error fail\|skip` | skip steps that can't be done instead of failing (a failed `verify` still fails) |
 | `--llm claude [--model <id>]` | plan with local `claude -p` instead of the built-in heuristic (see Data below) |
 | `--no-captions`, `--no-record` | skip the captions (.vtt); `auto` without recording |
+| `--from-stage [<name>] [--from-scene N]` | record only from scene N on, starting from a live `aft stage` of the tour: for iterating on later scenes of a tour that creates data (see below) |
 | anything else | passed to a `.tour.mjs` code tour as `ctx.options` (e.g. `--engine`, `--skip-build`) |
 
 **Exit codes:** 0 ok · 1 usage/config · 2 SCRIPT (an action couldn't be performed) · 3 UNREACHABLE · 4 CRITERION
@@ -89,6 +90,19 @@ A failed run writes no video; it writes a cause-first `report.md` and a **triage
 report, script with the failing step marked, ARIA snapshot, screenshot, trace, console and network errors per step,
 PROMPT.md), with secrets scrubbed. See [AGENTS.md](AGENTS.md#when-a-run-fails). Hand triage: `--headed --pause`,
 `--until-step N`, `--from-step N`, `--zip`. Everything is non-interactive unless you ask.
+
+**Iterating on a tour that creates data.** Each `aft run` performs every step, so a scene that creates a record does it
+again on every run, and may fail when the id is already in use (`--from-step` doesn't help: earlier steps still run,
+just fast). Stage the part that works once, then record only what you're changing, as often as you like:
+
+```
+aft stage my.tour.json --until-scene 2          # setup + scenes 1-2 once; the record exists, the browser stays open
+aft run   my.tour.json --from-stage             # records scenes 3.. from there (repeat freely: nothing is re-created)
+aft stage end stage-my-tour-local               # undo the stage's data
+```
+
+The video starts at scene 3 and the run reports only scenes 3 onward; make the full video with a plain `aft run` when
+you're done (with `{run.tag}` or a `pin` cleanup so it repeats). See [AGENTS.md](AGENTS.md#staging-do--redo-until-here).
 
 ## Output
 

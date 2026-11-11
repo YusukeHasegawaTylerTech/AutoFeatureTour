@@ -15,6 +15,15 @@ already running for this checkout (`.sessions/ui.json`: pid, port, URL) or start
 then opens the UI in an Edge/Chrome app window. A server started that way (`--exit-with-ui`) stops on its own about 20 s
 (`AFT_UI_GRACE_SECONDS`) after the last UI page is closed, but never while a job (a run, a check) is still going.
 
+- **Start page help** (`ui/public/setup.js`): what this computer is missing, from `aft doctor`, in plain words (the
+  recording browser has an INSTALL IT button: `POST /api/setup/browser`; voice and AI helper are "good to know"), cached
+  per tab with ↻ CHECK AGAIN; test data that earlier runs left behind (not a live or kept stage's) with 🧹 CLEAN UP NOW
+  (`aft cleanup <run>` each); with no apps yet, a three-step welcome instead of an empty page.
+- **NEW APP** asks how people sign in: a username and password (the sign-in page form), a company sign-in (SSO/MFA:
+  OPEN THE SIGN-IN WINDOW runs `aft login --manual`, I'M SIGNED IN sends it Enter through `POST /api/jobs/<id>/enter`;
+  login.json keeps no steps, so an expired sign-in shows 🔑 SIGN IN AGAIN), or none. An address that doesn't look like
+  a test copy (not localhost, a private address, or a name with test/qa/dev/staging/uat/sandbox/demo…) needs a tick
+  saying it is one.
 - **NEW SCRIPT** (per app) / **NEW APP** ( name, web address, how its sign-in page looks, test username/password,
   TEST THE CONNECTION), name the script, then write scenes: title, narration, and steps picked from six picture buttons (🎥 on a scene or step turns it off camera; 📌 next to a field inserts a value an earlier pin step made, `{artifact.x.field}`)
   (open a page, click, type, press a key, check it shows, wait). **GENERATE** writes the scenes from a pasted story

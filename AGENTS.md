@@ -46,6 +46,7 @@ aft render   platforms/todomvc/tours/track-and-filter.tour.json             # pr
 aft run      platforms/todomvc/tours/track-and-filter.tour.json             # record (the platform's default environment)
 aft run      my.tour.json --target qa                                       # another environment of the tour's platform
 aft run      my.tour.json --base-url http://localhost:3000/                 # a one-off URL (or BASE_URL=...)
+aft run      my.tour.json --from-stage                          # record from scene N+1 of a live `aft stage --until-scene N` (see Staging)
 aft run      my.tour.json --speech silent                        # headless/CI: silent audio, captions carry the narration
 aft run      my.tour.json --voice zira --rate 1                  # another narrator for this run; aft voices lists them
 aft all      --story story.md --platform todomvc --llm claude                # story → script → dry run → video
@@ -539,8 +540,20 @@ aft stage end <name> [--keep] --json
 - The undo is deferred: ledger.json items stay `done` with `"stage": { "live": true }`; runs of the same tour don't undo a
   live stage's data (or one ended with `--keep`, `"kept": true`), only `stage end` or an explicit `aft cleanup <run>` does.
   `--keep` on a shared environment needs tagged data (`{run.tag}`).
+- **Record from a stage: `aft run <tour> --from-stage [<name>] [--from-scene N]`.** Why: a tour that creates data (a
+  record with a fixed id, a submitted request) re-creates it on every `aft run`, and `--from-step` still runs the
+  earlier steps (unpaced), so iterating on scene 5 means creating the record again each time, or failing because its
+  id is in use. Stage the part that works once (`aft stage <tour> --until-scene 4`), then `--from-stage` records
+  scenes 5.. as often as needed, each run in a new browser that starts from the stage's: its cookies and storage, its
+  page (unless the scene has a `url`), its `{run.tag}`, captured `{vars.x}` (also from `try-step` calls on the
+  stage), pins and data lookups. Fixture setup, fixture steps and the earlier scenes don't run, and the run never undoes
+  the stage's data (`stage end` does); pins made in the recorded scenes are the run's and undone after it. The stage
+  must be `staged`, of the same tour file and environment; the name defaults to `stage-<tour>-<env>` and `--from-scene`
+  to the scene after the stage's `--until-scene` (scene 1 after `--setup-only`; give it for a stage stopped partway
+  through a scene, `--step J` or `--until-step N`). The video and report cover only the recorded scenes (a warning in the
+  report says so), so the full video is a plain `aft run` at the end. Not with `--from-step` / `--until-step`.
 - A stage is a detached process (`src/stage-daemon.mjs`, log `<run>/stage.log`) with a session's control port:
-  `aft snapshot` / `locate` / `try-step --session stage-<tour>-<env>` work on it (it's only used when named).
+  `aft snapshot` / `locate` / `try-step --session stage-<tour>-<env>` (and `aft run --from-stage`) work on it (it's only used when named).
 - Run folder: run.json (`"command": "stage"`, status staging → staged | failed → ended), report.json, ledger.json,
   artifacts.json, `screens/stage.png`; `latest.json` is never touched. `aft stage list` and the UI's `GET /api/stages`
   read `.sessions/stage-*.json` (never the control token).

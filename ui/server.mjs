@@ -191,7 +191,7 @@ function pendingCleanup(platform) {
       const l = readJson(path.join(base, id, 'ledger.json'));
       if (!l || (platform && l.platform !== platform)) continue;
       const items = (l.items ?? []).filter(i => i.undo && OPEN_UNDO.has(i.status)).map(i => ({ name: i.name, kind: i.kind, status: i.status, error: i.undoError ?? null }));
-      if (items.length) runs.push({ id: `${name}/${id}`, env: l.env ?? null, tag: l.tag ?? null, startedAt: l.startedAt, items });
+      if (items.length) runs.push({ id: `${name}/${id}`, env: l.env ?? null, tag: l.tag ?? null, startedAt: l.startedAt, items, stage: l.stage?.live ? 'live' : l.stage?.kept ? 'kept' : null });
     }
   }
   return { runs, items: runs.reduce((n, r) => n + r.items.length, 0) };
@@ -261,11 +261,11 @@ const jobs = new Map();
 const ALLOWED = new Set(['validate', 'render', 'run', 'doctor', 'generate', 'platform', 'login', 'session', 'snapshot', 'locate', 'try-step', 'export', 'import', 'suggest-fix', 'cleanup', 'reset', 'stage', 'converse']);
 // import only reads files the UI saved itself (POST /api/upload-export), each in its own folder under out/.imports/
 const importsDir = path.join(outDir, '.imports');
-function startJob(args) {
+function startJob(args, { command = [cli, ...args, '--json'] } = {}) {
   const id = crypto.randomBytes(6).toString('hex');
   const job = { id, args, lines: [], done: false, result: null, listeners: new Set(), startedAt: new Date().toISOString() };
   jobs.set(id, job);
-  const child = spawn(process.execPath, [cli, ...args, '--json'], { windowsHide: true, cwd: root, env: { ...process.env, MSYS_NO_PATHCONV: '1', FORCE_COLOR: '0' } });
+  const child = spawn(process.execPath, command, { windowsHide: true, cwd: root, env: { ...process.env, MSYS_NO_PATHCONV: '1', FORCE_COLOR: '0' } });
   job.child = child;
   const emit = (ev, data) => { for (const l of job.listeners) l(ev, data); };
   let stdout = '', partial = '';
@@ -480,6 +480,16 @@ async function api(req, res, url) {
   }
   if (m === 'GET' && p === '/api/stages') return send(res, 200, listStages());
   if (m === 'POST' && p === '/api/stage-open') { const { name } = await body(req); const r = await openStage(String(name ?? '')); return send(res, r.status, r.body); }
+  // the start page's banners: test data runs left behind (all apps), and one-click fixes for the machine
+  if (m === 'GET' && p === '/api/cleanup-summary') {   // not a live stage's data (in use) or one kept on purpose
+    const runs = pendingCleanup(null).runs.filter(r => !r.stage);
+    return send(res, 200, { runs, items: runs.reduce((n, r) => n + r.items.length, 0) });
+  }
+  if (m === 'POST' && p === '/api/setup/browser') {   // npx playwright install chromium, as a job (the only non-aft job)
+    const pw = path.join(root, 'node_modules', 'playwright', 'cli.js');
+    if (!fs.existsSync(pw)) return send(res, 400, { error: 'Playwright is not installed here: run install.cmd' });
+    return send(res, 200, jobView(startJob(['install-browser'], { command: [pw, 'install', 'chromium'] })));
+  }
   if (m === 'GET' && p === '/api/jobs') return send(res, 200, [...jobs.values()].map(jobView).reverse());
   if (m === 'POST' && p === '/api/jobs') {
     const { args } = await body(req);
@@ -489,10 +499,12 @@ async function api(req, res, url) {
       return send(res, 400, { error: 'import takes a file uploaded through /api/upload-export' });
     return send(res, 200, jobView(startJob(args)));
   }
-  const jm = /^\/api\/jobs\/([a-f0-9]+)(\/events|\/stop)?$/.exec(p);
+  const jm = /^\/api\/jobs\/([a-f0-9]+)(\/events|\/stop|\/enter)?$/.exec(p);
   if (jm) {
     const job = jobs.get(jm[1]);
     if (!job) return send(res, 404, { error: 'no such job' });
+    // `aft login --manual` waits for Enter once the person has signed in in its browser window
+    if (m === 'POST' && jm[2] === '/enter') { if (!job.done) job.child?.stdin?.write('\n'); return send(res, 200, { sent: !job.done }); }
     if (m === 'POST' && jm[2] === '/stop') { job.child?.kill('SIGINT'); return send(res, 200, { stopping: true }); }
     if (jm[2] === '/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });

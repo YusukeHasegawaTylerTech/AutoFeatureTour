@@ -165,3 +165,31 @@ describe('aft stage', { concurrency: 1, timeout: 600000 }, () => {
     assert.deepEqual(readJson(path.join(r.json.runDir, 'ledger.json')).items.map(i => i.status), ['undone', 'undone']);
   });
 });
+
+describe('aft run --from-stage', () => {
+  test('records from the stage on: no setup again, the stage\'s captured values and tag, earlier scenes left out', async () => {
+    const t = setup([
+      { title: 'Create', narration: 'Create it.', url: '/ok', steps: [{ capture: { role: 'heading', name: 'Fixture' }, as: 'h' }] },
+      { title: 'Use it', narration: 'Use it.', steps: [{ verify: { role: 'heading', name: '{vars.h}' } }] },
+    ]);
+    const s = await t.stage('--until-scene', '1');
+    assert.equal(s.code, 0, s.log);
+    const creates = t.statelog().filter(l => l.startsWith('create'));
+    assert.equal(creates.length, 2);
+    const r = await cli(['run', t.file, '--from-stage', '--speech', 'silent', '--json'], t.env);
+    assert.equal(r.code, 0, r.log);
+    assert.deepEqual(t.statelog().filter(l => l.startsWith('create')), creates, 'setup ran once, on the stage');
+    assert.ok(!t.statelog().some(l => l.startsWith('delete')), 'the run undid nothing of the stage\'s');
+    const report = readJson(path.join(r.json.runDir, 'report.json'));
+    assert.ok(report.steps.every(x => !x.scene.startsWith('scene-01')), 'scene 1 was the stage\'s');
+    assert.ok(report.steps.some(x => x.scene === 'scene-02' && x.ok));
+    assert.ok(fs.existsSync(r.json.data.video));
+    // No matching stage: a usage error, nothing run.
+    const none = await cli(['run', t.file, '--from-stage', 'stage-nope', '--speech', 'silent', '--json'], t.env);
+    assert.equal(none.code, 1);
+    assert.match(none.json.error.message, /No live stage/);
+    const e = await t.end();
+    assert.equal(e.code, 0, e.log);
+    assert.equal(t.statelog().filter(l => l.startsWith('delete')).length, 2);
+  });
+});

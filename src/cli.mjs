@@ -64,7 +64,10 @@
 // --on-error fail|skip, --allow-draft (record a script that still has unresolved/empty scenes), --no-trim (keep long
 // waits in the video; see "video" in the tour/platform).
 // Hand triage: --headed --pause (stop at the failure with the Playwright inspector), --until-step N / --from-step N
-// (scene steps counted across the tour; steps before --from-step run fast and unpaced), --zip (triage.zip). Credentials: env vars or a .env file (never committed).
+// (scene steps counted across the tour; steps before --from-step run fast and unpaced), --zip (triage.zip).
+// Iterating on later scenes of a tour that creates data: aft run --from-stage [<name>] [--from-scene N] records only
+// scene N on, from a live aft stage of the tour (its browser state, {run.tag}, {vars.x}, pins); setup and the earlier
+// scenes aren't run again, so nothing is re-created (no "id already in use"); the stage's data is undone at stage end. Credentials: env vars or a .env file (never committed).
 //
 // Every command writes into its own run folder, out/<name>/<YYYYMMDD-HHMMSS>-<id>/ (story id in the name when there
 // is one), never reused; out/<name>/latest.json and runs.jsonl are pointers only.
@@ -113,7 +116,7 @@ import { log, newRunDir, num, parseArgs, run, sleep, videoName } from './util.mj
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'try', 'zip', 'pause', 'fromStep', 'untilStep', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'try', 'zip', 'pause', 'fromStep', 'untilStep', 'fromStage', 'fromScene', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 /** A spike's write-up in the standard form (src/findings.mjs); `aft scratch --from findings.md` makes the deck from it. */
@@ -457,18 +460,19 @@ function newTour(def, outDir, scenes, args, extra = {}) {
 /** The run in progress, so a signal handler can still finalize its report and bundle. */
 let active = null;
 
-async function recordWith(def, tourDir, outDir, scenes, args, { dryRun = false } = {}) {
+async function recordWith(def, tourDir, outDir, scenes, args, { dryRun = false, carry = null } = {}) {
   if (!def.record) throw new UsageError(`${def.name} has no record(ctx); render it without --record to use clips or title cards`);
   const tour = newTour(def, outDir, scenes, args, { dryRun });
   const options = Object.fromEntries(Object.entries(args).filter(([k]) => !ENGINE.has(k)));
   if (envOf(args)) options.env = envOf(args);
   const range = args.fromStep || args.untilStep ? { n: 0, from: Number(args.fromStep ?? 0), until: Number(args.untilStep ?? 0) } : null;
   const secrets = [];
-  const ctx = { tour, scenes, outDir, options, toolRoot, targetDir: tourDir, platformDir: def.platformDir ?? tourDir, log, run, dryRun, report: [], range, secrets };
+  const ctx = { tour, scenes, outDir, options, toolRoot, targetDir: tourDir, platformDir: def.platformDir ?? tourDir, log, run, dryRun, report: [], range, secrets, ...(carry ? { carry } : {}) };
   ctx.progress = () => { if (!dryRun) progress(outDir, def, ctx.report, secrets); };
   const started = Date.now();
+  const fromStage = carry ? [`from stage ${carry.name}: scenes 1-${carry.fromScene - 1} and the setup ran there (${carry.runDir}), not in this run; the video starts at scene ${carry.fromScene}`] : [];
   const done = async (error, extra = {}) => (dryRun ? null : finalize({ outDir, def, steps: ctx.report, tour, error, ms: Date.now() - started, zip: !!args.zip, secrets,
-    fixtures: ctx.fixtures ?? ctx.ledger?.summary() ?? [], artifacts: ctx.artifacts ?? [], ...extra, warnings: [...(def.warnings ?? []), ...(extra.warnings ?? [])] }));
+    fixtures: ctx.fixtures ?? ctx.ledger?.summary() ?? [], artifacts: ctx.artifacts ?? [], ...extra, warnings: [...(def.warnings ?? []), ...fromStage, ...(extra.warnings ?? [])] }));
   active = { outDir, tour, finalize: (error, extra) => done(error, extra), undo: o => ctx.undo?.(o) };
   try {
     await def.record(ctx);
@@ -507,6 +511,9 @@ async function recordWith(def, tourDir, outDir, scenes, args, { dryRun = false }
     for (const f of fs.readdirSync(outDir).filter(f => /^page@.*\.webm$/.test(f))) {
       try { fs.renameSync(path.join(outDir, f), path.join(outDir, 'recording-failed.webm')); } catch { /* still being written; keep its name */ }
     }
+    // The scene windows it did film, so their footage in recording-failed.webm can be cut and reused.
+    if (fs.existsSync(path.join(outDir, 'recording-failed.webm')) && tour.timings?.length && !fs.existsSync(path.join(outDir, 'timings.json')))
+      try { fs.writeFileSync(path.join(outDir, 'timings-failed.json'), JSON.stringify({ failed: true, scenes: tour.timings }, null, 2)); } catch { /* best effort */ }
   }
   return ctx.report;
 }
@@ -662,6 +669,34 @@ async function withFindings(def, outDir, done, fn) {
 
 // ---- Render (narrate → record → cut → mux → join) ----------------------------------------------------------------
 
+/**
+ * aft run --from-stage [<name>] [--from-scene N]: record only from scene N on, starting from a live stage of the same
+ * tour (aft stage --until-scene N-1). The stage did the setup and the earlier scenes once; their data stays the
+ * stage's (undone at aft stage end), so iterating on later scenes never re-creates it (no "id already in use").
+ * Returns what the run needs: the stage's run tag, captured {vars.x}, pins, data lookups, browser state and URL.
+ */
+async function carryFromStage(def, args) {
+  if (!args.record) throw new UsageError('--from-stage records: use it with aft run');
+  if (!def.raw) throw new UsageError("--from-stage needs a tour.json (code tours can't be staged)");
+  if (args.fromStep || args.untilStep) throw new UsageError('--from-stage counts by scene: use --from-scene N, not --from-step / --until-step');
+  const name = typeof args.fromStage === 'string' ? args.fromStage : stageName(def.name, def.env);
+  const s = readSessions(toolRoot).find(x => x.name === name);
+  if (!s?.alive || !s.port) throw new UsageError(`No live stage "${name}" (stages: ${listStages(toolRoot).filter(x => x.alive).map(x => x.name).join(', ') || 'none'}); start one: aft stage <tour> --until-scene <N-1>`);
+  const c = await call(s, 'carry', {});
+  if (c.error) throw new UsageError(`stage ${name}: ${c.error}`);
+  if (c.state !== 'staged') throw new UsageError(`stage ${name} is ${c.state}${c.state === 'failed' ? ' (it stopped at a failure)' : ''}: --from-stage needs a staged one`);
+  if (path.resolve(c.tourFile) !== path.resolve(def.tourFile)) throw new UsageError(`stage ${name} is of ${c.tourFile}, not ${def.tourFile}`);
+  if ((s.env ?? null) !== (def.env ?? null)) throw new UsageError(`stage ${name} is on ${s.env ?? 'the default environment'}, this run on ${def.env ?? 'the default'}: give --target ${s.env}`);
+  const p = c.point ?? {};
+  const fallback = p.setupOnly ? 1 : p.untilScene && !p.step ? p.untilScene + 1 : null;
+  const fromScene = args.fromScene !== undefined ? Number(args.fromScene) : fallback;
+  if (!fromScene) throw new UsageError(`stage ${name} stopped ${describePoint(p)}, partway through a scene: give --from-scene N (the first scene to record)`);
+  if (!Number.isInteger(fromScene) || fromScene < 1 || fromScene > def.raw.scenes.length) throw new UsageError(`--from-scene takes a scene number from 1 to ${def.raw.scenes.length} (got "${args.fromScene}")`);
+  if (fallback && fromScene !== fallback) log(`warning: stage ${name} stopped ${describePoint(p)}, but recording starts at scene ${fromScene}: the state may not match what that scene expects`);
+  log(`from stage ${name} (${c.reached ?? describePoint(p)}): recording scenes ${fromScene}-${def.raw.scenes.length}`);
+  return { ...c, name, fromScene };
+}
+
 async function render(def, tourDir, outDir, args) {
   // --slides-only: the slides as pictures (and slides/index.html, the whole deck), in seconds: no voice, no video.
   if (args.slidesOnly) {
@@ -674,7 +709,9 @@ async function render(def, tourDir, outDir, args) {
   requireFfmpeg();
   const tail = args.tail !== undefined ? Number(args.tail) : 0.75;
   const provider = args.speech ?? (args.voice === 'silent' ? 'silent' : defaultProvider());
-  const scenes = scenesOf(def, tourDir);
+  const carry = args.fromStage ? await carryFromStage(def, args) : null;
+  // --from-stage: the scenes the stage already did are neither recorded nor in the video.
+  const scenes = scenesOf(def, tourDir).filter(s => !carry || s.number >= carry.fromScene);
   fs.writeFileSync(path.join(outDir, 'script.md'), scenes.map(s => `## ${s.number}. ${s.title}\n\n${s.offCamera ? '(off camera: runs and is checked, not filmed)' : s.narration}\n`).join('\n'));
 
   // Off-camera scenes run (and are checked) but have no narration, clip or caption.
@@ -707,7 +744,7 @@ async function render(def, tourDir, outDir, args) {
     const issues = def.raw && !args.allowDraft ? scriptIssues(def.raw) : [];
     if (issues.length)
       throw new StepError(`the script isn't ready to record (${issues.length} issue(s)):\n  ${issues.map(i => `${i.scene}: ${i.error}`).join('\n  ')}\nFix tour.json (aft validate shows them too), or pass --allow-draft to record anyway.`);
-    const done = await recordWith(def, tourDir, outDir, scenes, args);
+    const done = await recordWith(def, tourDir, outDir, scenes, args, { carry });
     if (done.partial) { log(`partial run (${done.partial}): report written, no video rendered`); return { partial: true }; }
     const timingsFile = path.join(outDir, 'timings.json');
     const timingsDoc = JSON.parse(fs.readFileSync(timingsFile, 'utf8'));

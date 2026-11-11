@@ -4,6 +4,7 @@
 import { filmedScenes, mountMarkers, sceneStarts } from './media.js';
 import { mountLiveStages, mountStage, stageButton } from './stage.js';
 import { conversation } from './converse.js';
+import { leftoverBanner, looksLive, setupBanner } from './setup.js';
 
 export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES }) {
   const send = (method, url, data) => api(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
@@ -53,7 +54,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
     const es = new EventSource(`/api/jobs/${job.id}/events`);
     es.addEventListener('line', e => onLine?.(JSON.parse(e.data).replace(/^\d\d:\d\d:\d\d /, '')));
     es.addEventListener('done', e => { es.close(); onDone?.(JSON.parse(e.data)); });
-    return { stop: () => send('POST', `/api/jobs/${job.id}/stop`, {}), close: () => es.close() };
+    return { id: job.id, stop: () => send('POST', `/api/jobs/${job.id}/stop`, {}), close: () => es.close() };
   }
 
   // "scenes[0].narration is required" → "Scene 1: narration is required"
@@ -96,6 +97,16 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
   /** The "Sign-in details" card: one field per credential the app uses. Fills `box`. */
   async function signInCard(platform, box, { open = false, onSaved } = {}) {
     const d = await api(`/api/platform?name=${encodeURIComponent(platform)}`);
+    // company sign-in (login.json without steps): nothing to type here, the person signs in again in a window
+    if (d.files.some(f => f.rel === 'login.json')) try {
+      const l = await readTour(`platforms/${platform}/login.json`);
+      const steps = l.roles?.[l.default ?? Object.keys(l.roles ?? {})[0]]?.steps;
+      if (Array.isArray(steps) && !steps.length) {
+        box.innerHTML = `<div class="verdict wait">🔑 ${h(platform)} uses a company sign-in.<small>If the saved sign-in has expired, sign in again in a browser window.</small>
+          <div class="actions tight"><a class="chunky small c-green" href="#/newapp-sso/${encodeURIComponent(platform)}">🔑 SIGN IN AGAIN</a></div></div>`;
+        return;
+      }
+    } catch {}
     if (!d.env.length) { box.innerHTML = ''; return; }
     const label = n => /USER(NAME)?$|LOGIN$|EMAIL$/.test(n) ? 'Test username' : /PASSWORD|SECRET|TOKEN|KEY/.test(n) ? 'Test password' : pretty(n.toLowerCase());
     const secret = n => /PASSWORD|SECRET|TOKEN|KEY/.test(n);
@@ -334,21 +345,37 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         <div class="stepper"><b>1 Name</b> › 2 Sign-in › 3 Test</div>
         <label class="lbl">Its name</label><input class="big-input" id="name" placeholder="e.g. My app">
         <label class="lbl">Its web address</label><input class="big-input" id="url" placeholder="http://localhost:3000/">
-        <label class="lbl check"><input type="checkbox" id="login" checked> People have to sign in to use it</label>
+        <div id="live"></div>
+        <label class="lbl">How do people sign in?</label>
+        <label class="lbl check"><input type="radio" name="signin" value="password" checked> With a username and password on the app's own page</label>
+        <label class="lbl check"><input type="radio" name="signin" value="sso"> Through a company sign-in (Microsoft, Okta, a code on the phone…)</label>
+        <label class="lbl check"><input type="radio" name="signin" value="none"> They don't: it opens without signing in</label>
         <div class="actions"><button class="chunky mid c-green" id="go"><span class="icon">➜</span>NEXT</button></div>
         <div id="msg"></div>`;
       const $ = s => $app.querySelector(s), msg = $('#msg');
       $('#name').focus();
       let job = null;
+      // making videos really clicks and types: a live site needs a person to say it's a test copy
+      const showLive = () => {
+        const url = $('#url').value.trim(), live = /^https?:\/\/\S+$/.test(url) && looksLive(url);
+        if (!live) { $('#live').innerHTML = ''; return; }
+        if ($('#live-ok')) return;
+        $('#live').innerHTML = `<div class="verdict wait">⚠ Is this a test copy of the app?
+          <small>Checking a script and making a video really click, type and save in the app. Only use a test or training copy with made-up data, never the one real people use.</small>
+          <label class="lbl check"><input type="checkbox" id="live-ok"> Yes, this address is a test copy with test data</label></div>`;
+      };
+      $('#url').oninput = showLive;
       const go = async () => {
         const name = slugify($('#name').value).replace(/\./g, '-'), url = $('#url').value.trim();
         if (!name) { msg.innerHTML = '<div class="verdict bad">✘ Give it a name first.</div>'; return; }
         if (!/^https?:\/\/\S+$/.test(url)) { msg.innerHTML = '<div class="verdict bad">✘ The web address starts with http:// or https://</div>'; return; }
+        showLive();
+        if ($('#live-ok') && !$('#live-ok').checked) { msg.innerHTML = '<div class="verdict bad">✘ Tick the box to say this is a test copy, or use the address of a test copy.</div>'; return; }
         $('#go').disabled = true;
         msg.innerHTML = '<div class="verdict wait">⏳ Setting it up…</div>';
-        const login = $('#login').checked;
+        const signin = $app.querySelector('[name=signin]:checked').value, login = signin !== 'none';
         job = await runJob(['platform', 'init', name, '--base-url', url, ...(login ? [] : ['--no-login'])], { onDone: r => {
-          if (r.ok) location.hash = login ? `#/newapp-signin/${encodeURIComponent(name)}` : `#/newapp-test/${encodeURIComponent(name)}`;
+          if (r.ok) location.hash = `#/${{ password: 'newapp-signin', sso: 'newapp-sso', none: 'newapp-test' }[signin]}/${encodeURIComponent(name)}`;
           else { $('#go').disabled = false; msg.innerHTML = `<div class="verdict bad">✘ ${/already exists/.test(r.error?.message ?? '') ? 'There is already an app with that name.' : "Couldn't set it up."}<small>${h(r.error?.message ?? '')}</small></div>`; }
         } });
       };
@@ -385,6 +412,38 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
         await saveFile(lp, login);
         location.hash = `#/newapp-test/${encodeURIComponent(name)}`;
       };
+    },
+
+    /** Company sign-in (SSO/MFA): no steps to replay; the person signs in once in a real window (aft login --manual). */
+    async 'newapp-sso'(name) {
+      name = decodeURIComponent(name);
+      const lp = `platforms/${name}/login.json`;
+      const login = await readTour(lp);
+      const role = login.default ?? Object.keys(login.roles ?? {})[0];
+      // replaying a password form can't get through SSO: without steps an expired sign-in asks for this page again
+      if (login.roles?.[role]?.steps?.length) { login.roles[role].steps = []; await saveFile(lp, login); }
+      $app.innerHTML = `<div class="page-title">Signing in to ${h(name)}</div>
+        <div class="stepper">1 Name › <b>2 Sign-in</b> › 3 Test</div>
+        <p class="hint">A browser window opens on the app. Sign in there as you normally do (with the test account), then come back and press I'M SIGNED IN.
+          The sign-in is kept on this computer and used for every video until it expires; then you'll be asked here again.</p>
+        <div class="actions"><button class="chunky mid c-green" id="open"><span class="icon">🔑</span>OPEN THE SIGN-IN WINDOW</button>
+          <button class="chunky mid c-orange" id="done" hidden><span class="icon">✔</span>I'M SIGNED IN</button></div><div id="msg"></div>`;
+      const $ = q => $app.querySelector(q), msg = $('#msg');
+      let job = null;
+      $('#open').onclick = async () => {
+        $('#open').disabled = true;
+        msg.innerHTML = '<div class="verdict wait">⏳ Opening the window…</div>';
+        job = await runJob(['login', '--platform', name, '--manual'], {
+          onLine: l => { if (/press Enter/i.test(l)) { msg.innerHTML = `<div class="verdict wait">Sign in in the window that opened, then press I'M SIGNED IN.</div>`; $('#done').hidden = false; } },
+          onDone: r => {
+            $('#open').disabled = false; $('#done').hidden = true;
+            if (r.ok) location.hash = `#/newapp-test/${encodeURIComponent(name)}`;
+            else msg.innerHTML = `<div class="verdict bad">✘ The sign-in wasn't saved.<small>Was the window closed before pressing I'M SIGNED IN? Try again.</small>
+              <details class="raw"><summary>details</summary><pre>${h(r.error?.message ?? '')}</pre></details></div>`;
+          } });
+      };
+      $('#done').onclick = () => { if (job) send('POST', `/api/jobs/${job.id}/enter`, {}); $('#done').disabled = true; msg.innerHTML = '<div class="verdict wait">⏳ Saving the sign-in…</div>'; };
+      return () => job?.close();
     },
 
     async 'newapp-test'(name) {
@@ -435,7 +494,8 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       for (const r of runs) { if (!VERDICT_COMMANDS.has(r.command)) continue; const k = rel(r.input?.[0]); if (k && !last.has(k)) last.set(k, r); }
       // The start page: every app with its scripts, a "new script" tile closing each app's row, and "new app" last.
       $app.innerHTML = `<div class="page-title">Your scripts</div>
-        ${dropZoneHtml(null)}
+        <div id="setup"></div><div id="leftover"></div>
+        ${ps.length ? dropZoneHtml(null) : ''}
         <div id="live-stages"></div>
         ${ps.map(p => `<div class="group-title">${h(p.name)} ${icons('platform', p.name)}</div><div class="tiles">
           ${p.tours.map(t => { const r = last.get(t.path); const st = !r || r.status === 'running' ? 'none' : r.status === 'done' ? 'ok' : 'bad';
@@ -443,9 +503,15 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
               <span class="dot ${st}">${!r ? 'not tried yet' : r.status === 'running' ? '⏳ running' : st === 'ok' ? `✔ ${r.command === 'run' ? 'video made' : 'works'}` : '✘ needs fixing'}</span>
               <span class="sub">${r ? ago(r.startedAt) : ''}</span>${icons('script', t.path)}</a>`; }).join('')}
           <a class="tile tile-new" href="#/new/${encodeURIComponent(p.name)}"><span class="plus">✚</span>NEW SCRIPT<span class="sub">write one, or import one</span></a></div>`).join('')}
-        ${ps.length ? '' : '<p class="hint">No apps yet. Set one up first: its address, and how to sign in.</p>'}
-        <div class="group-title">&nbsp;</div><div class="tiles">
-          <a class="tile tile-new" href="#/newapp"><span class="plus">✚</span>NEW APP<span class="sub">set up another app</span></a></div>`;
+        ${ps.length ? `<div class="group-title">&nbsp;</div><div class="tiles">
+          <a class="tile tile-new" href="#/newapp"><span class="plus">✚</span>NEW APP<span class="sub">set up another app</span></a></div>` : `
+        <div class="welcome"><div class="page-title">Welcome! Three steps to your first video</div>
+          <ol class="welcome-steps"><li><b>Set up your app:</b> its web address and how people sign in. Use a test copy with test data: making a video really clicks and types in it.</li>
+            <li><b>Write a script:</b> scenes of what to show and what the narrator says, or paste a user story and let the AI draft them.</li>
+            <li><b>Check it, then make the video:</b> CHECK IT tries every step without recording; MAKE VIDEO records it.</li></ol>
+          <div class="actions"><a class="chunky mid c-green" href="#/newapp"><span class="icon">✚</span>SET UP MY APP</a></div></div>`}`;
+      setupBanner($app.querySelector('#setup'), { h, send, runJob }).catch(() => {});
+      leftoverBanner($app.querySelector('#leftover'), { api, runJob }).catch(() => {});
       wireIcons($app, () => render());
       mountLiveStages($app.querySelector('#live-stages'), { tourLink: s => (s.tourFile?.startsWith('platforms/') ? `#/tour/${encodeURIComponent(s.tourFile)}` : s.run ? `#/run/${s.run}` : null) }).catch(() => {});
       return importZone(ps);

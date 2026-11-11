@@ -291,7 +291,10 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
     async record(ctx) {
       // A stage (src/stage.mjs): stop at a point, keep the browser, services and data until `aft stage end`.
       const stage = ctx.stage ?? null;
-      const tag = runTag(ctx.outDir);
+      // `aft run --from-stage`: a live stage already did setup and scenes 1..fromScene-1 (its data stays the stage's);
+      // this run records from there, with the stage's run tag, captured values, pins and browser state.
+      const carry = ctx.carry ?? null;
+      const tag = carry?.tag ?? runTag(ctx.outDir);
       // The tour's own pages: served for this run only (--base-url / BASE_URL still win), stopped when it ends.
       const pages = pagesDir && !baseUrl && !process.env.BASE_URL ? await servePages(pagesDir) : null;
       if (pages) { ctx.log(`pages: ${pagesDir} served at ${pages.url}/`); ctx.closePages = pages.close; }
@@ -334,7 +337,8 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
         const earlier = ctx.options?.out || stage ? [] : earlierOpen(ctx.outDir, ledger.doc);
         if (earlier.length) { log(`${earlier.length} earlier run(s) of this tour left data behind: undoing it first`); await finishUndo(earlier, { log }); }
         const items = cfg.fixtureItems ?? fixtureItems({ setup: cfg.hooks?.setup, teardown: cfg.hooks?.teardown }, 'tour');
-        const looked = await setupItems(items, { ledger, hookCtx, artifacts: () => t.artifacts, log });
+        if (carry) { t.artifacts = [...(carry.artifacts ?? [])]; log(`from stage ${carry.name}: setup and scenes 1-${carry.fromScene - 1} are the stage's; recording from scene ${carry.fromScene}`); }
+        const looked = carry ? { ...carry.data } : await setupItems(items, { ledger, hookCtx, artifacts: () => t.artifacts, log });
         const login = makeLogin(cfg, cfg0, composed, { outDir: ctx.outDir, log, options: ctx.options, baseUrl: vars.baseUrl });
         await login.beforeStart();
         // Roles the tour switches to (signInAs): signed in now, off camera, so each switch only loads a saved login.
@@ -364,14 +368,16 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
         const startOpts = { ignoreHTTPSErrors: cfg.ignoreHTTPSErrors || Object.values(others).some(o => o.cfg.ignoreHTTPSErrors), trace: cfg.trace !== false && !(stage && !stage.trace) };
         Object.defineProperty(startOpts, 'storageState', { enumerable: true, get: () => {
           const files = states();
-          if (files.length <= 1) return files[0] ?? undefined;
-          const docs = files.map(f => JSON.parse(fs.readFileSync(f, 'utf8')));
+          if (carry && login.state && files[0] === login.state) files.shift(); // the stage's browser state stands in for the tour role's saved login
+          if (!carry && files.length <= 1) return files[0] ?? undefined;
+          const docs = [...(carry ? [carry.storageState] : []), ...files.map(f => JSON.parse(fs.readFileSync(f, 'utf8')))];
           return { cookies: docs.flatMap(d => d.cookies ?? []), origins: docs.flatMap(d => d.origins ?? []) };
         } });
         // Known noisy requests of every platform the tour visits are ignored from the start (the listener reads them once).
         if (Object.keys(others).length) t.policy = { ...t.policy, ignore: [...(t.policy.ignore ?? []), ...Object.values(others).flatMap(o => o.cfg.appErrors?.ignore ?? [])] };
         await t.start(startOpts);
         browserUp = true;
+        if (carry) { t.vars = { ...carry.vars }; if (carry.account && t.signInAs) t.account = carry.account; }
         opts = { baseUrl: vars.baseUrl + '/', timeouts: cfg.timeouts, report: ctx.report, ready: cfg.ready, errors: cfg.errors, retries: cfg.retries ?? 1,
           allowMocks: !!cfg.allowMocks, outDir: ctx.outDir,
           range: ctx.range,
@@ -398,9 +404,14 @@ export function loadTourJson(file, { env, baseUrl, role, toolRoot } = {}) {
           // Fixture steps: data the tour needs, put in place through the browser, off camera. Mock sets first.
           const mocks = cfg.fixtureMocks ?? cfg.fixtureSteps ?? [];
           if (mocks.length) await runSteps(t, mocks, { ...opts, unpaced: true, scene: 'fixtures' });
-          await setupBrowser(t, cfg.fixtureBrowser ?? [], { ledger, opts, log });
+          if (!carry) await setupBrowser(t, cfg.fixtureBrowser ?? [], { ledger, opts, log });
+          let resumed = !carry;
           for (const [i, s] of cfg.scenes.entries()) {
-            const id = ctx.scenes[i].id;
+            if (carry && i < carry.fromScene - 1) continue; // done by the stage: not in this run or its video
+            // ctx.scenes may start later (--from-stage), so by number, not position.
+            const id = ctx.scenes.find(x => x.number === i + 1)?.id ?? `scene-${String(i + 1).padStart(2, '0')}`;
+            // The first scene after the stage starts where the stage left off, unless it opens its own url.
+            if (!resumed) { resumed = true; if (!s.url && !isSlide(s) && !s.platform) await runSteps(t, [{ goto: carry.url }], { ...opts, unpaced: true, scene: `${id} (from stage)` }); }
             // A slide is drawn, not recorded (src/slides.mjs): nothing happens in the browser for it.
             if (isSlide(s)) {
               if (ctx.range?.scenes !== undefined && i >= ctx.range.scenes) throw new StopRun(ctx.range.scenes ? `stopped after scene ${ctx.range.scenes}` : 'stopped after setup');
@@ -545,6 +556,9 @@ export async function accountSwitcher(cfg, cfg0, composed, { outDir, log, option
     const keep = [step.keepCookies ?? []].flat();
     const startAt = baseUrl + '/' + String(step.url ?? login.checkPath ?? cfg.startPath ?? '').replace(/^\//, '');
     const signedIn = async () => {
+      // A new document, always: a hash route on the page already open wouldn't reload, and a single-page app would
+      // keep the previous account's session in memory (its token, its user id) under the new cookies.
+      await t.page.goto('about:blank').catch(() => {});
       await openCheckPage(t.page, startAt, timeouts.navigation ?? 30000, `checking the sign-in for signInAs ${role}`);
       await settle(t.page, cfg.ready);
       return !login.signedIn || t.page.locator(login.signedIn).first().waitFor({ timeout: timeouts.waitFor ?? 15000 }).then(() => true, () => false);

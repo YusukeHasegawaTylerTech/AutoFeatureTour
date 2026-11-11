@@ -2,7 +2,7 @@
 // services and data and serves a session's control port. Started detached with
 // AFT_STAGE={ toolRoot, name, outDir, stateFile, file, args, point, keep, sourceRun }. Logs go to <outDir>/stage.log.
 //
-// POST / (header x-aft-token) { "op": "status" | "snapshot" | "locate" | "try-step" | "record-start" | "record-steps" | "record-stop" | "open" | "stop", ... } → JSON.
+// POST / (header x-aft-token) { "op": "status" | "snapshot" | "locate" | "try-step" | "carry" | "record-start" | "record-steps" | "record-stop" | "open" | "stop", ... } → JSON.
 // "stop" { keep }: undo the ledger in reverse (browser steps in this browser, then hooks) unless keep, stop the
 // services it started, close the browser, mark the run "ended" and exit.
 
@@ -151,6 +151,14 @@ function serve() {
             case 'try-step': need(); return send(200, await session.tryStep(msg.step, msg));
             case 'record-start': need(); return send(200, await session.recordStart(msg));
             case 'record-stop': need(); return send(200, await session.recordStop());
+            // `aft run --from-stage`: what a recording that starts here needs (the tour role's page, not a hand-off window).
+            case 'carry': {
+              need();
+              const page = handoff?.main ?? t.page;
+              return send(200, { state: stage.state, tourFile: stage.tourFile, point: stage.point, reached: stage.reached ?? null, tag: stage.tag, runDir: outDir,
+                url: page.url(), vars: t.vars ?? {}, data: t.data ?? {}, artifacts: t.artifacts ?? [], account: t.account ?? null,
+                storageState: await page.context().storageState() });
+            }
             case 'open': need(); await t.page.bringToFront(); return send(200, { url: t.page.url() });
             case 'stop': return send(200, { ...base, ...(await end({ keep: !!msg.keep })) });
             default: return send(400, { error: `unknown op ${msg.op}` });
