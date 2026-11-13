@@ -799,6 +799,10 @@ async function render(def, tourDir, outDir, args) {
   else if (reuse?.all) {
     // Nothing the browser does changed: no app, login or browser; the checks are the earlier run's.
     for (const s of filmed.filter(x => reused.has(x.id))) takeOld(s);
+    // Its timings under this run's scene ids, so this run can be reused in turn.
+    const byId = new Map(reuse.scenes.map(r => [r.from, r.id]));
+    fs.writeFileSync(path.join(outDir, 'timings.json'), JSON.stringify({ ...oldTimings, reusedFrom: reuse.dir,
+      scenes: oldTimings.scenes.filter(t => byId.has(t.id)).map(t => ({ ...t, id: byId.get(t.id) })) }, null, 2));
     reportReuse(outDir, reuse);
   } else if (args.record) {
     if (reuse) {
