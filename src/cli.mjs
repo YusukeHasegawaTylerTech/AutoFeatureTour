@@ -5,6 +5,9 @@
 //   aft generate --story <file|text> [--platform <name> | --base-url <url>] [--llm claude] [--style verification|demo|training] [--prompt ...]
 //   aft validate <tour.json> | --script <tour.json>   dry run: checks every step resolves, nothing recorded
 //   aft run      <tour.json|tour.mjs>                 record the video (render --record)
+//   aft run      <tour.json> --reuse [<run folder>]   take unchanged browser scenes' footage from an earlier run (default:
+//                                                    the newest finished one); none changed: the browser isn't started;
+//                                                    --record-again 3,5: record those scenes (and what follows) anyway
 //   aft generate --story <file|text> --platform <name> --llm claude --converse [--target <env>] [--role <r>] [--no-discover] [--headless]
 //                                                    a conversation: the agent explores the live app (on a stage), asks, you decide;
 //                                                    exit 0 with data.state "waiting" (data.questions) or "done"
@@ -102,6 +105,7 @@ import { applyAnswers, decideProposal, finish, newConversation, openQuestions, p
 import { Tour } from './recorder.mjs';
 import { concat, cutClips, duration, muxScene, requireFfmpeg, trimPlan, writeCaptions } from './render.mjs';
 import { parseScript, spokenText } from './script.mjs';
+import { fingerprints, findSource, plan as reusePlan, sourceFingerprints, writeFingerprints } from './reuse.mjs';
 import { runSteps, StepError, StopRun } from './steps.mjs';
 import { Ledger, openLedgers, parseAge } from './ledger.mjs';
 import { expandTours, runBatch } from './batch.mjs';
@@ -116,7 +120,7 @@ import { log, newRunDir, num, parseArgs, run, sleep, videoName } from './util.mj
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'try', 'zip', 'pause', 'fromStep', 'untilStep', 'fromStage', 'fromScene', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'try', 'zip', 'pause', 'fromStep', 'untilStep', 'fromStage', 'fromScene', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail', 'reuse', 'recordAgain']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 /** A spike's write-up in the standard form (src/findings.mjs); `aft scratch --from findings.md` makes the deck from it. */
@@ -454,7 +458,7 @@ function scenesOf(def, tourDir) {
 function newTour(def, outDir, scenes, args, extra = {}) {
   // Slides are drawn, not recorded: the browser's narration plan has only the recorded scenes.
   return new Tour({ outDir, viewport: def.viewport, mask: def.mask, headless: !args.headed,
-    narration: scenes.filter(s => !s.offCamera && !s.slide).map(s => ({ id: s.id, seconds: s.seconds ?? estimateSeconds(s.narration) })), ...extra });
+    narration: scenes.filter(s => !s.offCamera && !s.slide).map(s => ({ id: s.id, seconds: s.recordSeconds ?? s.seconds ?? estimateSeconds(s.narration) })), ...extra });
 }
 
 /** The run in progress, so a signal handler can still finalize its report and bundle. */
@@ -697,6 +701,42 @@ async function carryFromStage(def, args) {
   return { ...c, name, fromScene };
 }
 
+/**
+ * aft run --reuse [<run>]: which browser scenes' footage an earlier run (the one given, else the newest finished
+ * recording of this tour) still has, unchanged (src/reuse.mjs). null: record everything.
+ */
+function reuseFor(def, fp, args, outDir, speech, carry) {
+  if (!fp) throw new UsageError('--reuse needs a tour.json (a code tour has no steps to compare)');
+  if (carry) throw new UsageError('--reuse and --from-stage both pick what to record: use one');
+  if (args.fromStep || args.untilStep) throw new UsageError('--reuse picks where recording starts: not with --from-step / --until-step');
+  let dir;
+  try { dir = findSource(args.reuse, outDir); } catch (e) { throw new UsageError(e.message); }
+  if (!dir) { log('reuse: no earlier finished recording of this tour; recording everything'); return null; }
+  let src;
+  try { src = sourceFingerprints(dir, f => loadTourJson(f, { env: envOf(args), baseUrl: args.baseUrl, role: args.role, toolRoot }), speech); }
+  catch (e) { log(`reuse: ${path.basename(dir)}'s tour can't be compared (${e.message.split('\n')[0]}); recording everything`); return null; }
+  if (!src) { log(`reuse: ${dir} has neither reuse.json nor a source/ tour; recording everything`); return null; }
+  if (!src.exact) log(`reuse: ${path.basename(dir)} was made before reuse.json: compared with its source/ tour, using today's platform files (fragments, fixtures)`);
+  const force = args.recordAgain === undefined || args.recordAgain === true ? [] : String(args.recordAgain).split(',').map(x => x.trim()).filter(Boolean);
+  if (force.some(n => !/^\d+$/.test(n) || !def.raw.scenes[n - 1])) throw new UsageError(`--record-again takes scene numbers, 1 to ${def.raw.scenes.length}, comma-separated (got "${args.recordAgain}")`);
+  const p = reusePlan(fp, src.fp, dir, { force });
+  const ids = p.scenes.map(s => s.id).join(', ');
+  if (p.all) log(`reuse: no browser scene changed since ${path.basename(dir)}: footage of ${ids || 'no scene'} taken from it; the browser isn't started`);
+  else if (p.scenes.length) log(`reuse: footage of ${ids} from ${path.basename(dir)}; ${p.changed}: recorded again from there`);
+  else log(`reuse: nothing to reuse from ${path.basename(dir)} (${p.changed}); recording everything`);
+  return p.all || p.scenes.length ? p : null;
+}
+
+/** A run that reused every browser scene ran no checks: its report is the earlier run's, saying so. */
+function reportReuse(outDir, reuse) {
+  const note = `No browser scene changed since ${reuse.dir}: its footage was reused and the app wasn't run, so the checks below are that run's.`;
+  const old = (() => { try { return JSON.parse(fs.readFileSync(path.join(reuse.dir, 'report.json'), 'utf8')); } catch { return null; } })();
+  fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify({ ...(old ?? { schema: 'aft-report/1', result: 'PASSED' }), reusedFrom: reuse.dir,
+    reused: reuse.scenes.map(s => ({ scene: s.id, from: s.from })), warnings: [note, ...(old?.warnings ?? [])] }, null, 2));
+  const md = fs.existsSync(path.join(reuse.dir, 'report.md')) ? fs.readFileSync(path.join(reuse.dir, 'report.md'), 'utf8') : '';
+  fs.writeFileSync(path.join(outDir, 'report.md'), `> ${note}\n\n${md}`);
+}
+
 async function render(def, tourDir, outDir, args) {
   // --slides-only: the slides as pictures (and slides/index.html, the whole deck), in seconds: no voice, no video.
   if (args.slidesOnly) {
@@ -738,9 +778,36 @@ async function render(def, tourDir, outDir, args) {
   if (source) log(`source: ${source} (re-render with aft run on it)`);
 
   const clipsDir = path.resolve(args.clips ?? (args.record ? path.join(outDir, 'clips') : path.join(tourDir, 'clips', def.name)));
+  // What each browser scene depends on (reuse.json), so a later --reuse can tell which footage still holds.
+  const speech = (s, d) => ({ voice: s.voice ?? (args.voice === 'silent' ? null : args.voice) ?? d.voice ?? null, rate: Number(s.rate ?? args.rate ?? d.rate ?? 0), tail: s.hold ?? tail });
+  const fp = args.record && def.raw && def.needsBrowser !== false ? fingerprints(def, speech) : null;
+  const reuse = args.reuse && args.record && def.needsBrowser !== false ? reuseFor(def, fp, args, outDir, speech, carry) : null;
+  const reused = new Map((reuse?.scenes ?? []).map(r => [r.id, r]));
+  const oldTimings = reuse ? JSON.parse(fs.readFileSync(path.join(reuse.dir, 'timings.json'), 'utf8')) : null;
+  // A reused scene: its old clip (already trimmed), its old mock and known-issue captions.
+  const takeOld = s => {
+    const r = reused.get(s.id);
+    fs.mkdirSync(clipsDir, { recursive: true });
+    fs.copyFileSync(path.join(reuse.dir, 'clips', `${r.from}.mp4`), path.join(clipsDir, `${s.id}.mp4`));
+    const t = oldTimings.scenes.find(x => x.id === r.from);
+    const map = trimPlan(t ?? {}, oldTimings.trim ?? { mode: 'off' }).map;
+    s.mocked = !!t?.mocked;
+    s.notes = (t?.notes ?? []).map(n => ({ text: n.text, at: map(n.at) - t.start }));
+  };
   // A tour of slides only has nothing to record: no browser, app or login.
   if (args.record && def.needsBrowser === false) log('slides only: nothing to record in a browser');
-  else if (args.record) {
+  else if (reuse?.all) {
+    // Nothing the browser does changed: no app, login or browser; the checks are the earlier run's.
+    for (const s of filmed.filter(x => reused.has(x.id))) takeOld(s);
+    reportReuse(outDir, reuse);
+  } else if (args.record) {
+    if (reuse) {
+      // The unchanged scenes before the first changed one still run, to reach its state, but fast: their old clips
+      // replace what this run films of them.
+      args.fromStep = reuse.fromStep;
+      for (const s of scenes.filter(x => reused.has(x.id))) s.recordSeconds = 0.5;
+      def.warnings = [...(def.warnings ?? []), `footage of ${[...reused.keys()].join(', ')} reused from ${reuse.dir} (unchanged); their steps ran again, unfilmed; recorded from ${reuse.changed}`];
+    }
     const issues = def.raw && !args.allowDraft ? scriptIssues(def.raw) : [];
     if (issues.length)
       throw new StepError(`the script isn't ready to record (${issues.length} issue(s)):\n  ${issues.map(i => `${i.scene}: ${i.error}`).join('\n  ')}\nFix tour.json (aft validate shows them too), or pass --allow-draft to record anyway.`);
@@ -761,11 +828,13 @@ async function render(def, tourDir, outDir, args) {
       noteTrim(outDir, trim, trimmed);
     }
     for (const s of filmed) {
+      if (reused.has(s.id)) { takeOld(s); continue; }
       const t = timings.find(x => x.id === s.id);
       s.mocked = !!t?.mocked;
       s.notes = (t?.notes ?? []).map(n => ({ text: n.text, at: t.trim.map(n.at) - t.start }));
     }
   }
+  if (fp) writeFingerprints(outDir, reuse?.all ? { ...fp, reusedFrom: reuse.dir } : fp);
 
   const segments = [];
   for (const s of filmed) {

@@ -47,6 +47,7 @@ aft run      platforms/todomvc/tours/track-and-filter.tour.json             # re
 aft run      my.tour.json --target qa                                       # another environment of the tour's platform
 aft run      my.tour.json --base-url http://localhost:3000/                 # a one-off URL (or BASE_URL=...)
 aft run      my.tour.json --from-stage                          # record from scene N+1 of a live `aft stage --until-scene N` (see Staging)
+aft run      my.tour.json --reuse                               # footage of unchanged browser scenes from the last run (see Reusing footage)
 aft run      my.tour.json --speech silent                        # headless/CI: silent audio, captions carry the narration
 aft run      my.tour.json --voice zira --rate 1                  # another narrator for this run; aft voices lists them
 aft all      --story story.md --platform todomvc --llm claude                # story → script → dry run → video
@@ -80,6 +81,24 @@ never cut. `"video": { "trimWaits": "cut" | "speed" | "off", "trimWaitsOver": 1.
 platform or tour; `--no-trim` keeps the raw pacing for one run. report.json `trimmed` (and report.md "Video") says how
 much each scene lost. Captions add "Simulated data" over scenes a mock answered in, and a short note when a tolerated
 known issue is on screen.
+
+**Reusing footage:** `aft run <tour> --reuse [<run folder>]` takes the footage of browser scenes that haven't changed
+from an earlier recording (the folder given, else the newest finished `aft run` of the tour), so editing slides or a
+later scene doesn't mean recording everything again. Every recording writes `reuse.json` (schema `aft-reuse/1`): a
+fingerprint per browser scene (its expanded steps, so a changed fragment counts, plus url, platform, narration as spoken,
+voice, rate and hold) and one for what the whole run depends on (the tour's composed app settings: environment,
+fixtures, mocks, known issues; the `pages` folder's contents). Browser state carries from scene to scene, so only the
+unchanged browser scenes at the start are reused, in order; from the first changed one on, everything is recorded.
+Scenes are paired by position among browser scenes, so adding, removing or editing slides never forces a recording.
+- No browser scene changed: the browser, app and login aren't started; slides are drawn and every scene is narrated
+  afresh over the old clips. The app wasn't run, so report.json is the earlier run's, with `reusedFrom` and a warning.
+- Some changed: the unchanged ones before it run again (fast, unfilmed: their steps and checks still count) to reach
+  the app's state, then recording starts at the first changed scene; the old clips replace the fast footage.
+- A run made before reuse.json existed is compared through its `source/` tour, with today's platform files (logged).
+`--record-again 3,5` records those scenes (and, as always, everything after the first of them) even though they
+are unchanged. The UI's tour page (MAKE VIDEO) shows the plan per browser scene (♻ reuse / 🎬 record) from
+`GET /api/reuse?path=<tour>&force=3,5` and has a RECORD AGAIN toggle on each; reuse is on by default there once a
+video exists. Not with `--from-stage`, `--from-step` or `--until-step`. Put `--reuse` after the tour file.
 
 **Git Bash:** it rewrites arguments that start with `/` (`--url "#/case/1"`, a try-step's JSON) into Windows paths
 (`C:/Program Files/Git/case/1`). aft refuses such arguments; `export MSYS_NO_PATHCONV=1`, or use PowerShell.

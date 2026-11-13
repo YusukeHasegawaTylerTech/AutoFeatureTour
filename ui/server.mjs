@@ -412,6 +412,14 @@ async function api(req, res, url) {
     const r = restoreTrash(String(id ?? ''));
     return r.error ? send(res, r.code, { error: r.error }) : send(res, 200, { restored: r.restored });
   }
+  if (m === 'GET' && p === '/api/reuse') {   // which browser scenes' footage MAKE VIDEO can reuse (aft run --reuse); src/reuse.mjs
+    const f = platformFile(q('path'));
+    if (!f || !/\.tour\.json$/.test(f)) return send(res, 403, { error: 'only platform tours (platforms/<name>/tours/*.tour.json)' });
+    const force = String(q('force') ?? '').split(',').filter(x => /^\d+$/.test(x));
+    const { previewFor } = await import('../src/reuse.mjs');
+    try { return send(res, 200, { preview: await previewFor({ file: f, toolRoot: root, outRoot: process.env.AFT_OUT_DIR ? path.resolve(process.env.AFT_OUT_DIR) : outDir, force }) }); }
+    catch (e) { return send(res, 200, { preview: null, error: e.message.split('\n')[0] }); }
+  }
   if (m === 'GET' && p === '/api/tour-data') {
     const d = tourData(q('path'));
     return d ? send(res, 200, d) : send(res, 403, { error: 'only platform tours (platforms/<name>/tours/*.tour.json)' });

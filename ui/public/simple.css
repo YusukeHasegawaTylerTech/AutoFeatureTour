@@ -181,3 +181,13 @@ details.raw pre { margin-top: 6px; max-height: 200px; }
 .verdict.setup li { margin: 6px 0; } .verdict.setup li b { font-weight: 800; }
 .welcome { max-width: 760px; }
 .welcome-steps { font-size: 18px; line-height: 1.5; padding-left: 26px; } .welcome-steps li { margin: 10px 0; }
+
+/* ♻ Reuse footage (MAKE VIDEO with aft run --reuse): one row per browser scene. */
+.reuse-card .lbl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--fg); font-size: 16px; }
+.reuse-card .lbl input { width: 20px; height: 20px; }
+.reuse-list { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.reuse-list td { padding: 6px 8px; border-top: 1px solid var(--line); vertical-align: middle; }
+.reuse-list td:last-child { text-align: right; }
+.reuse-list .chunky.small { box-shadow: 0 4px 0 rgba(0,0,0,.25); }
+.pill { display: inline-block; padding: 2px 10px; border-radius: 12px; font-weight: 800; font-size: 13px; color: #fff; }
+.pill.ok { background: #2fb34a; } .pill.bad { background: #e0443a; } .pill.warn { background: #f08a1c; }

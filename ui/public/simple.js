@@ -554,6 +554,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           ${edit ? '<button class="chunky mid c-blue" id="export" title="One file to send to QA or another machine, to import there"><span class="icon">📤</span>EXPORT</button>' : ''}
         </div>
         <div id="export-msg"></div>
+        ${edit && lastVideo ? '<div id="reuse-box"></div>' : ''}
         ${edit ? `<div class="stage-bar" data-stage-at="setup">${stageButton({ setup: true })} ${stageButton({})}
           <span class="hint">get the app live, with this script's test data, to test by hand (EDIT has ▶ on every scene and step)</span></div><div id="stage-box"></div>` : ''}
         <div id="creds"></div>
@@ -566,13 +567,44 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
       let stageStop = null;
       if (edit) readTour(p).then(async t => { stageStop = await mountStage($app, $app.querySelector('#stage-box'), { ...(await stageOptions(platform, d, t)), source: p, tourFile: p }); }).catch(() => {});
       if (hasLogin) signInCard(platform, $app.querySelector('#creds'), { open: lastAny && friendly(lastAny).kind === 'login' && lastAny.status === 'failed' });
+      // ♻ Reuse footage (aft run --reuse): browser scenes that haven't changed since the last video keep their footage;
+      // each can be set to record again (--record-again), and everything after it is recorded too (the app's state
+      // carries over from scene to scene). Slides are always drawn and narrated afresh.
+      const reuse = { on: true, force: new Set(), any: false };
+      const $reuse = $app.querySelector('#reuse-box');
+      const LABEL = { reuse: ['ok', '♻ reuse'], record: ['bad', '🎬 record'], after: ['warn', '🎬 record'] };
+      const drawReuse = async () => {
+        if (!$reuse) return;
+        let r;
+        try { r = await api(`/api/reuse?path=${encodeURIComponent(p)}&force=${[...reuse.force].join(',')}`); } catch { $reuse.innerHTML = ''; return; }
+        const pv = r.preview;
+        reuse.any = !!pv?.scenes?.length;
+        if (!pv || pv.slidesOnly || !pv.scenes.length) { $reuse.innerHTML = ''; return; }
+        const kept = pv.scenes.filter(s => s.state === 'reuse' && s.filmed).length;
+        $reuse.innerHTML = `<div class="card reuse-card" style="max-width:900px">
+          <label class="lbl"><input type="checkbox" id="reuse-on" ${reuse.on ? 'checked' : ''}> ♻ Reuse footage from the last video
+            <span class="hint">${reuse.on ? (pv.all ? 'No browser scene changed: the app isn\'t run, only the slides and the voice are made again.' : `${kept} scene(s) keep their footage; recording starts at the first 🎬 one.`) : 'Off: every scene is recorded again.'}</span></label>
+          ${reuse.on ? `<table class="reuse-list">${pv.scenes.map(s => `<tr>
+            <td>${s.number}.</td><td>${h(s.title)}${s.filmed ? '' : ' <span class="hint">(off camera)</span>'}</td>
+            <td><span class="pill ${LABEL[s.state][0]}" title="${h(s.why ?? '')}">${LABEL[s.state][1]}</span> <span class="hint">${h(s.state === 'reuse' ? 'unchanged' : s.forced ? 'you chose to record it' : s.why ?? '')}</span></td>
+            <td>${s.changed ? '' : `<button class="chunky small ${s.forced ? 'c-gray' : 'c-orange'}" data-again="${s.number}">${s.forced ? '♻ REUSE' : '🎬 RECORD AGAIN'}</button>`}</td></tr>`).join('')}</table>
+            ${pv.exact === false ? '<small class="hint">The last video was made before footage was tracked: it is compared with the script it ran.</small>' : ''}` : ''}</div>`;
+        $reuse.querySelector('#reuse-on').onchange = e => { reuse.on = e.target.checked; drawReuse(); };
+        $reuse.querySelectorAll('[data-again]').forEach(b => (b.onclick = () => {
+          const n = Number(b.dataset.again);
+          reuse.force.has(n) ? reuse.force.delete(n) : reuse.force.add(n);
+          drawReuse();
+        }));
+      };
+      drawReuse();
+      const reuseArgs = () => (reuse.on && reuse.any ? ['--reuse', ...(reuse.force.size ? ['--record-again', [...reuse.force].sort((a, b) => a - b).join(',')] : [])] : []);
       let job = null;
       const start = async what => {
         $app.querySelectorAll('[data-do]').forEach(x => (x.disabled = true));
         $app.querySelector('#verdict').innerHTML = `<div class="verdict wait">⏳ ${what === 'run' ? 'Making the video' : 'Checking every step'}…
           <small id="last">Starting</small><div class="actions tight"><button class="chunky small c-red" id="stop">■ STOP</button></div></div>`;
         $app.querySelector('#stop').onclick = () => job?.stop();
-        job = await runJob([what, p], {
+        job = await runJob([what, p, ...(what === 'run' ? reuseArgs() : [])], {
           onLine: l => { const s = progress(l, total); const el = $app.querySelector('#last'); if (s && el) el.textContent = s; },
           onDone: r => {
             if (r.ok || r.runDir) return render();   // a run folder exists: the page reads its result
