@@ -50,6 +50,7 @@ aft run      my.tour.json --from-stage                          # record from sc
 aft run      my.tour.json --reuse                               # footage of unchanged browser scenes from the last run (see Reusing footage)
 aft run      my.tour.json --speech silent                        # headless/CI: silent audio, captions carry the narration
 aft run      my.tour.json --voice zira --rate 1                  # another narrator for this run; aft voices lists them
+aft run      my.tour.json --captions burn --highlight            # captions drawn into the video, the spoken word highlighted (see Captions)
 aft all      --story story.md --platform todomvc --llm claude                # story → script → dry run → video
 aft batch    platforms/todomvc/tours/ --reset --speech silent                # several tours in order, one reset first
 aft ui                                                                       # the local web UI (ui/README.md); Ctrl+C stops it
@@ -81,6 +82,19 @@ never cut. `"video": { "trimWaits": "cut" | "speed" | "off", "trimWaitsOver": 1.
 platform or tour; `--no-trim` keeps the raw pacing for one run. report.json `trimmed` (and report.md "Video") says how
 much each scene lost. Captions add "Simulated data" over scenes a mock answered in, and a short note when a tolerated
 known issue is on screen.
+
+**Captions:** the narration is split into cues of at most `maxLines` lines (default 2) of at most `maxCharsPerLine`
+characters (default 42), lines balanced, never two sentences in one cue, timed from the voice's own word times (SAPI
+reports when each word starts; `--speech silent` estimates them). Words are shown as written and timed as said, so a
+`pronounce` entry doesn't throw them off. `"video": { "captions": { "mode": "file" | "soft" | "burn" | "off",
+"maxCharsPerLine", "maxLines", "highlight": "off" | "word" | "karaoke", "highlightColor", "color", "fontSize", "font",
+"position": "bottom" | "top", "background" } }` on the platform or tour (merged key by key, the tour's win); for one
+run: `--captions burn`, `--highlight [word|karaoke]`, `--chars-per-line 32`, `--caption-lines 1`, `--no-captions`.
+`file` (default): the `.vtt` beside the video. `soft`: also a subtitle track inside the mp4. `burn`: drawn into the
+picture with ffmpeg's libass (`captions.ass`, one more encode); `highlight` colours the word being said, or with
+`karaoke` every word so far. A burned run's `.vtt` is `captions.vtt`, not named after the video, so players don't
+show the words twice. The first cue of each scene is named `scene-NN` (the UI's scene markers use it). Captions are
+presentation: changing them never makes `--reuse` record a scene again.
 
 **Reusing footage:** `aft run <tour> --reuse [<run folder>]` takes the footage of browser scenes that haven't changed
 from an earlier recording (the folder given, else the newest finished `aft run` of the tour), so editing slides or a
@@ -866,7 +880,7 @@ tour.json → a run (platform composition, launch/attach, login, hooks, fixtures
 fixtures, init · `platform-cli.mjs` `aft platform` · `session.mjs` / `session-daemon.mjs` sessions, snapshot, locate,
 try-step · `stage.mjs` / `stage-daemon.mjs` do / redo until here · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
 `plan.mjs` heuristic and Claude planners, stories · `converse.mjs` generate as a conversation · `capture.mjs` recording by hand ·
-`narrate-timing.mjs` scene timing · `render.mjs` ffmpeg · `slides.mjs` slide scenes, pages, document outlines · `tts.mjs` speech · `auth.mjs` saved logins ·
+`narrate-timing.mjs` scene timing · `render.mjs` ffmpeg · `captions.mjs` caption cues, .vtt / .ass · `slides.mjs` slide scenes, pages, document outlines · `tts.mjs` speech · `auth.mjs` saved logins ·
 `doctor.mjs` checks · `workarounds.mjs` known issues (merge, checkpoint, matching) · `review.mjs` evidence, findings,
 decisions, verdict · `fix.mjs` AI fix proposals (`suggest-fix`) · `ledger.mjs` ledger.json, run tags · `fixtures.mjs`
 hooks, fixture items, browser fixtures, artifacts, `aft cleanup` / `aft reset` · `batch.mjs` `aft batch` · `findings.mjs` a run's findings summary · `notes.mjs` platform notes · `daemon-calls.mjs` call ids, kept results. Tests: `npm test`.

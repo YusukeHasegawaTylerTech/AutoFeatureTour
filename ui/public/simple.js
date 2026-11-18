@@ -559,7 +559,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           <span class="hint">get the app live, with this script's test data, to test by hand (EDIT has ▶ on every scene and step)</span></div><div id="stage-box"></div>` : ''}
         <div id="creds"></div>
         ${lastVideo ? `<div class="group-title">Latest video</div><div class="card" style="max-width:900px"><video controls preload="metadata" src="${fileUrl(lastVideo.id, lastVideo.video ?? 'tour.mp4')}">
-          <track default kind="captions" src="${fileUrl(lastVideo.id, lastVideo.captions ?? 'tour.vtt')}"></video><div id="markers"></div></div>` : ''}`;
+          ${lastVideo.burned ? '' : `<track default kind="captions" src="${fileUrl(lastVideo.id, lastVideo.captions ?? 'tour.vtt')}">`}</video><div id="markers"></div></div>` : ''}`;
       if (lastVideo) api(`/api/run?id=${encodeURIComponent(lastVideo.id)}`).then(async rd => {
         let t = null; try { t = rd.files.some(f => f.path === 'tour.json') ? await (await fetch(fileUrl(lastVideo.id, 'tour.json'))).json() : await readTour(p); } catch {}
         await mountMarkers($app.querySelector('#markers'), $app.querySelector('video'), { vttUrl: fileUrl(lastVideo.id, lastVideo.captions ?? 'tour.vtt'), scenes: filmedScenes(rd.files, t) });

@@ -141,19 +141,16 @@ export async function concat(segments, outDir, name = 'tour.mp4') {
 }
 
 /**
- * WebVTT captions, one cue per scene covering its whole narration. Scenes a mock answered in also get a
- * "Simulated data" cue at the top of the screen for the whole scene; tolerated known issues on screen (notes: { at,
- * text }, seconds into the scene) get a short cue there too.
+ * Draws an .ass subtitle file (src/captions.mjs writeAss) into the video: input and ass are file names in cwd (a
+ * relative name keeps Windows drive colons out of the filter). The audio is copied.
  */
-export function writeCaptions(cues, file) {
-  const ts = s => new Date(Math.max(0, s) * 1000).toISOString().slice(11, 23);
-  let t = 0;
-  let out = 'WEBVTT\n\n';
-  for (const c of cues) {
-    out += `${ts(t)} --> ${ts(t + c.narrationSeconds)}\n${c.text}\n\n`;
-    if (c.mocked) out += `${ts(t)} --> ${ts(t + c.length)} line:5%\nSimulated data: part of this scene uses canned (mocked) responses\n\n`;
-    for (const n of c.notes ?? []) out += `${ts(t + n.at)} --> ${ts(Math.min(t + c.length, t + n.at + 4))} line:5%\n${n.text} (environment limitation, not part of the feature)\n\n`;
-    t += c.length;
-  }
-  fs.writeFileSync(file, out, 'utf8');
+export async function burnCaptions(input, ass, output, cwd) {
+  await run('ffmpeg', ['-y', '-v', 'error', '-i', input, '-vf', `subtitles=${ass}`, '-c:v', 'libx264', '-preset', 'medium', '-crf', '20',
+    '-pix_fmt', 'yuv420p', '-c:a', 'copy', '-movflags', '+faststart', output], { cwd });
+}
+
+/** Adds a .vtt as a subtitle track (English, on by default) inside the mp4, without re-encoding. */
+export async function embedCaptions(input, vtt, output, cwd) {
+  await run('ffmpeg', ['-y', '-v', 'error', '-i', input, '-i', vtt, '-map', '0', '-map', '1', '-c', 'copy', '-c:s', 'mov_text',
+    '-metadata:s:s:0', 'language=eng', '-disposition:s:0', 'default', '-movflags', '+faststart', output], { cwd });
 }

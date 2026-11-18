@@ -177,6 +177,9 @@ export function composeTour(raw, { file, toolRoot, env, baseUrl, role } = {}) {
       ...base, ...raw,
       timeouts: { ...base.timeouts, ...raw.timeouts },
       pronounce: { ...base.pronounce, ...raw.pronounce },
+      // The tour's video settings over the platform's, key by key (captions too).
+      ...(base.video || raw.video ? { video: { ...base.video, ...raw.video,
+        ...(base.video?.captions || raw.video?.captions ? { captions: { ...base.video?.captions, ...raw.video?.captions } } : {}) } } : {}),
       hooks: { setup: [...fx.setup, ...(raw.hooks?.setup ?? [])], teardown: [...(raw.hooks?.teardown ?? []), ...fx.teardown] },
       // Paired setup/teardown items: the fixtures', then the tour's own hooks.
       fixtureItems: [...fx.items, ...fixtureItems({ setup: raw.hooks?.setup, teardown: raw.hooks?.teardown }, 'tour')],

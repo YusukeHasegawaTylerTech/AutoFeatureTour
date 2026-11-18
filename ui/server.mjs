@@ -199,12 +199,16 @@ function pendingCleanup(platform) {
 
 // ---- runs ----
 const classOf = e => e ? (/^(SCRIPT|CRITERION|APP|LOGIN|TOOLING|UNREACHABLE|INTERRUPTED)/.exec(e)?.[1]?.toLowerCase() ?? 'error') : undefined;
-/** A run folder's video and captions file names: { video, captions } (each only when there is one). */
+/**
+ * A run folder's video and captions file names: { video, captions, burned } (each only when there is one). Captions
+ * burned into the picture are in captions.vtt ("burned": the player shows no caption track; the markers still use it).
+ */
 function videoFiles(dir) {
   const named = `${path.basename(path.dirname(dir))}-${path.basename(dir)}`;
-  const pick = ext => [`${named}.${ext}`, `tour.${ext}`].find(f => fs.existsSync(path.join(dir, f)));
-  const video = pick('mp4'), captions = pick('vtt');
-  return { ...(video ? { video } : {}), ...(captions ? { captions } : {}) };
+  const pick = ext => [`tour_${named}.${ext}`, `${named}.${ext}`, `tour.${ext}`].find(f => fs.existsSync(path.join(dir, f)));
+  const video = pick('mp4'), captions = pick('vtt') ?? (fs.existsSync(path.join(dir, 'captions.vtt')) ? 'captions.vtt' : undefined);
+  const burned = captions === 'captions.vtt' && fs.existsSync(path.join(dir, 'captions.ass'));
+  return { ...(video ? { video } : {}), ...(captions ? { captions } : {}), ...(burned ? { burned } : {}) };
 }
 
 function listRuns() {

@@ -247,6 +247,18 @@ const video = obj('Post-processing of the recording.', {
   trimWaitsOver: num('Only waits longer than this many seconds (default 1.5).', { minimum: 0 }),
   speed: num('With "speed": how much faster (default 4).', { minimum: 1 }),
   leadIn: num('Seconds of each trimmed wait that stay, so the cut is not jarring (default 0.3).', { minimum: 0 }),
+  captions: obj('The narration as captions: cues of a few lines that follow the voice (a cue never spans two sentences). --captions, --highlight, --chars-per-line and --caption-lines override these for one run.', {
+    mode: { enum: ['file', 'soft', 'burn', 'off'], description: '"file" (default): a .vtt beside the video. "soft": also a subtitle track inside the mp4. "burn": drawn into the picture (the .vtt is then captions.vtt, so players don\'t show it twice). "off": none (--no-captions).' },
+    maxCharsPerLine: { type: 'integer', minimum: 10, description: 'Characters per line at most (default 42); longer narration wraps onto more lines and cues.' },
+    maxLines: { type: 'integer', minimum: 1, description: 'Lines per caption at most (default 2).' },
+    highlight: { enum: ['off', 'word', 'karaoke'], description: 'Burned-in captions only: colour the word being said ("word"), or every word said so far ("karaoke"). Default off.' },
+    highlightColor: { ...str('Colour of the highlighted word, #rrggbb (default #ffd54a).'), pattern: '^#[0-9a-fA-F]{6}$' },
+    color: { ...str('Text colour of burned-in captions, #rrggbb (default #ffffff).'), pattern: '^#[0-9a-fA-F]{6}$' },
+    fontSize: num('Burned-in font size in pixels on a 1080p picture (default 46).', { minimum: 12 }),
+    font: str('Burned-in font name (default Segoe UI).'),
+    position: { enum: ['bottom', 'top'], description: 'Where burned-in captions sit (default bottom); notes (simulated data, known issues) take the other edge.' },
+    background: num('Opacity of the box behind burned-in captions, 0 (none) to 1 (default 0.55).', { minimum: 0, maximum: 1 }),
+  }),
 });
 const workaround = obj('A known app or environment issue: what it looks like, what to do about it, how to report it. Tours never mention it; when the issue is absent nothing happens.', {
   name: str('Unique name; reports say "known issue <name>". An environment rule with the same name refines the platform\'s.'),

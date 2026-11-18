@@ -1193,6 +1193,86 @@
               "$ref": "common.schema.json#/$defs/placeholder"
             }
           ]
+        },
+        "captions": {
+          "type": "object",
+          "description": "The narration as captions: cues of a few lines that follow the voice (a cue never spans two sentences). --captions, --highlight, --chars-per-line and --caption-lines override these for one run.",
+          "properties": {
+            "mode": {
+              "enum": [
+                "file",
+                "soft",
+                "burn",
+                "off"
+              ],
+              "description": "\"file\" (default): a .vtt beside the video. \"soft\": also a subtitle track inside the mp4. \"burn\": drawn into the picture (the .vtt is then captions.vtt, so players don't show it twice). \"off\": none (--no-captions)."
+            },
+            "maxCharsPerLine": {
+              "type": "integer",
+              "minimum": 10,
+              "description": "Characters per line at most (default 42); longer narration wraps onto more lines and cues."
+            },
+            "maxLines": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Lines per caption at most (default 2)."
+            },
+            "highlight": {
+              "enum": [
+                "off",
+                "word",
+                "karaoke"
+              ],
+              "description": "Burned-in captions only: colour the word being said (\"word\"), or every word said so far (\"karaoke\"). Default off."
+            },
+            "highlightColor": {
+              "type": "string",
+              "description": "Colour of the highlighted word, #rrggbb (default #ffd54a).",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "color": {
+              "type": "string",
+              "description": "Text colour of burned-in captions, #rrggbb (default #ffffff).",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "fontSize": {
+              "description": "Burned-in font size in pixels on a 1080p picture (default 46).",
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 12
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
+            },
+            "font": {
+              "type": "string",
+              "description": "Burned-in font name (default Segoe UI)."
+            },
+            "position": {
+              "enum": [
+                "bottom",
+                "top"
+              ],
+              "description": "Where burned-in captions sit (default bottom); notes (simulated data, known issues) take the other edge."
+            },
+            "background": {
+              "description": "Opacity of the box behind burned-in captions, 0 (none) to 1 (default 0.55).",
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

@@ -6,12 +6,17 @@
 const h = (s = '') => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const secs = t => { const [hh, mm, ss] = t.split(':'); return Number(hh) * 3600 + Number(mm) * 60 + Number(ss); };
 
-/** Scene start times (seconds into the video) from tour.vtt text. */
+/**
+ * Scene start times (seconds into the video) from tour.vtt text. Captions split into several cues per scene name
+ * each scene's first cue "scene-NN" (later ones "scene-NN.2"…); runs made before have one unnamed cue per scene.
+ */
 export function sceneStarts(vtt) {
+  const blocks = String(vtt).replace(/\r/g, '').split(/\n\n+/);
+  const named = blocks.some(b => /^scene-\d+\n/.test(b));
   const starts = [];
-  for (const block of String(vtt).replace(/\r/g, '').split(/\n\n+/)) {
+  for (const block of blocks) {
     const m = /^(\d\d:\d\d:\d\d\.\d+) --> (\d\d:\d\d:\d\d\.\d+)(.*)$/m.exec(block);
-    if (m && !/line:/.test(m[3])) starts.push(secs(m[1]));
+    if (m && !/line:/.test(m[3]) && (!named || /^scene-\d+\n/.test(block))) starts.push(secs(m[1]));
   }
   return starts;
 }

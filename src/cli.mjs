@@ -64,6 +64,7 @@
 // Target selection: a tour names its platform (platforms/<name>/); --target <environment> (alias --env) and --role pick
 // among the platform's; --base-url <url> or BASE_URL override the URL. --platform <name> for generate/discover/login. Other flags:
 // --out <folder>, --name <run name>, --headed, --speech sapi|silent, --voice, --rate, --tail, --no-captions,
+// --captions file|soft|burn|off, --highlight [word|karaoke|off], --chars-per-line N, --caption-lines N (see "video.captions"),
 // --on-error fail|skip, --allow-draft (record a script that still has unresolved/empty scenes), --no-trim (keep long
 // waits in the video; see "video" in the tour/platform).
 // Hand triage: --headed --pause (stop at the failure with the Playwright inspector), --until-step N / --from-step N
@@ -103,7 +104,8 @@ import { doctor } from './doctor.mjs';
 import { claude, inventoryFor, plan, readStory, toScriptMarkdown } from './plan.mjs';
 import { applyAnswers, decideProposal, finish, newConversation, openQuestions, parseAnswers, readConversation, recordedSteps, saveConversation, startRecording, stopRecording, turn, view as conversationView, writeDraft } from './converse.mjs';
 import { Tour } from './recorder.mjs';
-import { concat, cutClips, duration, muxScene, requireFfmpeg, trimPlan, writeCaptions } from './render.mjs';
+import { burnCaptions, concat, cutClips, duration, embedCaptions, muxScene, requireFfmpeg, trimPlan } from './render.mjs';
+import { captionSettings, timeWords, videoCues, writeAss, writeVtt } from './captions.mjs';
 import { parseScript, spokenText } from './script.mjs';
 import { fingerprints, findSource, plan as reusePlan, sourceFingerprints, writeFingerprints } from './reuse.mjs';
 import { runSteps, StepError, StopRun } from './steps.mjs';
@@ -118,7 +120,7 @@ import { defaultProvider, estimateSeconds, listVoices, resolveVoice, speak } fro
 import { log, newRunDir, num, parseArgs, run, sleep, videoName } from './util.mjs';
 
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'listVoices', 'speech', 'name',
+const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'captions', 'highlight', 'charsPerLine', 'captionLines', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
   'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'try', 'zip', 'pause', 'fromStep', 'untilStep', 'fromStage', 'fromScene', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail', 'reuse', 'recordAgain']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
@@ -747,6 +749,9 @@ async function render(def, tourDir, outDir, args) {
     return { slides: Object.values(r.files), sheet: r.sheet, warnings: r.warnings };
   }
   requireFfmpeg();
+  // Checked before anything is spoken or recorded, so a bad value fails at once.
+  let cap;
+  try { cap = captionSettings(def.video, args); } catch (e) { throw new UsageError(e.message); }
   const tail = args.tail !== undefined ? Number(args.tail) : 0.75;
   const provider = args.speech ?? (args.voice === 'silent' ? 'silent' : defaultProvider());
   const carry = args.fromStage ? await carryFromStage(def, args) : null;
@@ -768,7 +773,7 @@ async function render(def, tourDir, outDir, args) {
   if (provider === 'sapi') log(`voice${used.length > 1 ? 's' : ''}: ${used.join(', ')}`);
   for (const s of filmed) {
     s.wav = path.join(outDir, `${s.id}.wav`);
-    await speak({ text: spokenText(s.narration, def.pronounce), wav: s.wav, voice: s.voiceName, rate: rateOf(s), provider });
+    s.words = (await speak({ text: spokenText(s.narration, def.pronounce), wav: s.wav, voice: s.voiceName, rate: rateOf(s), provider }))?.words ?? [];
     s.narrationSeconds = await duration(s.wav);
     s.seconds = s.narrationSeconds + (s.hold != null ? Number(s.hold) : tail); // "hold": this scene's pause after its narration
   }
@@ -846,9 +851,24 @@ async function render(def, tourDir, outDir, args) {
     segments.push(seg.file);
     s.length = seg.length;
   }
-  const file = await concat(segments, outDir, videoName(outDir));
-  if (!args.noCaptions)
-    writeCaptions(filmed.map(s => ({ text: spokenText(s.narration), narrationSeconds: s.narrationSeconds, length: s.length, mocked: s.mocked, notes: s.notes })), path.join(outDir, videoName(outDir, 'vtt')));
+  // Burned or embedded captions are a last pass over the joined video.
+  const final = videoName(outDir), joined = cap.mode === 'burn' || cap.mode === 'soft' ? 'joined.mp4' : final;
+  let file = await concat(segments, outDir, joined);
+  if (cap.mode !== 'off') {
+    // Shown as written, timed as said (pronounce substitutions), from the voice's word times.
+    const cues = videoCues(filmed.map(s => ({ id: s.id, length: s.length, mocked: s.mocked, notes: s.notes,
+      words: timeWords(spokenText(s.narration), t => spokenText(t, def.pronounce), s.words, s.narrationSeconds) })), cap);
+    // Burned in: the .vtt isn't named after the video, or players would show the words twice.
+    const vtt = cap.mode === 'burn' ? 'captions.vtt' : videoName(outDir, 'vtt');
+    writeVtt(cues, path.join(outDir, vtt));
+    if (cap.mode === 'burn') {
+      writeAss(cues, path.join(outDir, 'captions.ass'), cap);
+      log(`captions: burned in (${cap.maxCharsPerLine} characters × ${cap.maxLines} lines${cap.highlight !== 'off' ? `, highlight: ${cap.highlight}` : ''})`);
+      await burnCaptions(joined, 'captions.ass', final, outDir);
+    } else if (cap.mode === 'soft') await embedCaptions(joined, vtt, final, outDir);
+    else if (cap.highlight !== 'off') log('captions: highlight only shows when they are burned in (--captions burn)');
+    if (joined !== final) { fs.rmSync(path.join(outDir, joined), { force: true }); file = path.join(outDir, final); }
+  }
   const seconds = await duration(file);
   console.log(`Done: ${file}  (${num(seconds)} s)`);
   return { video: file, seconds: +num(seconds) };

@@ -189,7 +189,7 @@ const views = {
       </div>
       <div class="grid"><div>
         ${d.video ? `<div class="card"><video controls preload="metadata" src="${fileUrl(id, d.video)}">
-            ${d.captions ? `<track default kind="captions" src="${fileUrl(id, d.captions)}">` : ''}</video>
+            ${d.captions && !d.burned ? `<track default kind="captions" src="${fileUrl(id, d.captions)}">` : ''}</video>
             <div id="markers"></div></div>`
           : has('screens/failure.png') ? `<div class="card"><img class="shot" src="${fileUrl(id, 'screens/failure.png')}"></div>` : ''}
         ${r.status !== 'done' || rep ? `<div class="card summary"><h3>Summary</h3>
