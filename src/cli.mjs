@@ -64,7 +64,8 @@
 // Target selection: a tour names its platform (platforms/<name>/); --target <environment> (alias --env) and --role pick
 // among the platform's; --base-url <url> or BASE_URL override the URL. --platform <name> for generate/discover/login. Other flags:
 // --out <folder>, --name <run name>, --headed, --speech sapi|silent, --voice, --rate, --tail, --no-captions,
-// --captions file|soft|burn|off, --highlight [word|karaoke|off], --chars-per-line N, --caption-lines N (see "video.captions"),
+// --captions file|soft|burn|off, --caption-style classic|bold|outline|box, --highlight [word|karaoke|box|off],
+// --chars-per-line N, --caption-lines N, --caption-words N (see "video.captions"),
 // --on-error fail|skip, --allow-draft (record a script that still has unresolved/empty scenes), --no-trim (keep long
 // waits in the video; see "video" in the tour/platform).
 // Hand triage: --headed --pause (stop at the failure with the Playwright inspector), --until-step N / --from-step N
@@ -120,7 +121,7 @@ import { defaultProvider, estimateSeconds, listVoices, resolveVoice, speak } fro
 import { log, newRunDir, num, parseArgs, run, sleep, videoName } from './util.mjs';
 
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'captions', 'highlight', 'charsPerLine', 'captionLines', 'listVoices', 'speech', 'name',
+const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'captions', 'captionStyle', 'captionWords', 'highlight', 'charsPerLine', 'captionLines', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
   'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'try', 'zip', 'pause', 'fromStep', 'untilStep', 'fromStage', 'fromScene', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail', 'reuse', 'recordAgain']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
@@ -863,7 +864,7 @@ async function render(def, tourDir, outDir, args) {
     writeVtt(cues, path.join(outDir, vtt));
     if (cap.mode === 'burn') {
       writeAss(cues, path.join(outDir, 'captions.ass'), cap);
-      log(`captions: burned in (${cap.maxCharsPerLine} characters × ${cap.maxLines} lines${cap.highlight !== 'off' ? `, highlight: ${cap.highlight}` : ''})`);
+      log(`captions: burned in (${cap.preset !== 'classic' ? `${cap.preset}, ` : ''}${cap.maxCharsPerLine} characters × ${cap.maxLines} lines${cap.maxWords ? `, ${cap.maxWords} words` : ''}${cap.highlight !== 'off' ? `, highlight: ${cap.highlight}` : ''})`);
       await burnCaptions(joined, 'captions.ass', final, outDir);
     } else if (cap.mode === 'soft') await embedCaptions(joined, vtt, final, outDir);
     else if (cap.highlight !== 'off') log('captions: highlight only shows when they are burned in (--captions burn)');

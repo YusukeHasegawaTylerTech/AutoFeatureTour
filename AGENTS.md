@@ -86,13 +86,21 @@ known issue is on screen.
 **Captions:** the narration is split into cues of at most `maxLines` lines (default 2) of at most `maxCharsPerLine`
 characters (default 42), lines balanced, never two sentences in one cue, timed from the voice's own word times (SAPI
 reports when each word starts; `--speech silent` estimates them). Words are shown as written and timed as said, so a
-`pronounce` entry doesn't throw them off. `"video": { "captions": { "mode": "file" | "soft" | "burn" | "off",
-"maxCharsPerLine", "maxLines", "highlight": "off" | "word" | "karaoke", "highlightColor", "color", "fontSize", "font",
-"position": "bottom" | "top", "background" } }` on the platform or tour (merged key by key, the tour's win); for one
-run: `--captions burn`, `--highlight [word|karaoke]`, `--chars-per-line 32`, `--caption-lines 1`, `--no-captions`.
+`pronounce` entry doesn't throw them off. A long sentence breaks at phrase boundaries: after a comma if it can, never
+right after "the", "to", "because"… `"video": { "captions": { "preset", "mode": "file" | "soft" | "burn" | "off",
+"maxCharsPerLine", "maxLines", "maxWords", "minSeconds", "maxSeconds", "highlight": "off" | "word" | "karaoke" | "box",
+"highlightColor", "boxTextColor", "activeScale", "popIn", "popOut", "color", "fontSize", "font", "bold", "uppercase",
+"spacing", "outline", "outlineColor", "shadow", "position": "bottom" | "top", "margin", "background" } }` on the
+platform or tour (merged key by key, the tour's win); for one run: `--captions burn`, `--caption-style bold`,
+`--highlight [word|karaoke|box]`, `--chars-per-line 32`, `--caption-lines 1`, `--caption-words 6`, `--no-captions`.
 `file` (default): the `.vtt` beside the video. `soft`: also a subtitle track inside the mp4. `burn`: drawn into the
-picture with ffmpeg's libass (`captions.ass`, one more encode); `highlight` colours the word being said, or with
-`karaoke` every word so far. A burned run's `.vtt` is `captions.vtt`, not named after the video, so players don't
+picture with ffmpeg's libass (`captions.ass`, one more encode); `highlight` colours the word being said, with
+`karaoke` every word so far, with `box` puts a box of `highlightColor` behind it; `activeScale` (e.g. 1.15) makes it
+pop (it grows over `popIn` ms and shrinks back over `popOut` ms). `outline` > 0 outlines the letters instead of the box
+behind the caption. **Presets** set a whole look (keys beside them win): `classic` (default), `bold` (burned in,
+2–6 words a cue on at most 2 lines of 22 characters, 0.8–2.5 s each, upper case, Segoe UI Black 72 px, white with a
+black outline, the spoken word yellow at 1.15×), `outline` (the same, heavier outline, no shadow), `box` (a yellow
+box behind the spoken word, black text, 1.25×). The video is 1920×1080, so sizes are on that picture. A burned run's `.vtt` is `captions.vtt`, not named after the video, so players don't
 show the words twice. The first cue of each scene is named `scene-NN` (the UI's scene markers use it). Captions are
 presentation: changing them never makes `--reuse` record a scene again.
 

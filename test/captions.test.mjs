@@ -96,3 +96,61 @@ test('sapi word marks: times scaled to the wav, positions less the SSML header, 
   assert.deepEqual(words.map(w => [t.slice(w.char, w.char + w.length), w.start]), [['Hi', 0.1], ['there', 0.5], ['80%', 1.5], ['done', 3]]);
   assert.deepEqual(sapiWords(t, null, 4), []);
 });
+
+test('presets: a whole look at once, keys beside it win, --caption-style for one run', () => {
+  const t = captionSettings({ captions: { preset: 'bold', highlightColor: '#00ff00' } });
+  assert.deepEqual([t.mode, t.maxWords, t.maxCharsPerLine, t.uppercase, t.activeScale, t.highlight, t.highlightColor], ['burn', 6, 22, true, 1.15, 'word', '#00ff00']);
+  assert.equal(captionSettings({ captions: { preset: 'bold' } }, { captionStyle: 'box' }).highlight, 'box');
+  assert.equal(captionSettings({}, { captionStyle: 'bold', captionWords: '4' }).maxWords, 4);
+  assert.equal(captionSettings().preset, 'classic');
+  assert.throws(() => captionSettings({}, { captionStyle: 'mrbeast' }), /caption style/);
+  assert.throws(() => captionSettings({ captions: { minSeconds: 3, maxSeconds: 2 } }), /minSeconds/);
+});
+
+test('short cues: at most N words, said in at most maxSeconds, a brief cue joined to the next', () => {
+  const display = 'I never expected that to work because the configuration was wrong all along.';
+  const words = timeWords(display, t => t, [], 6.5);
+  const cues = splitCues(words, { maxCharsPerLine: 22, maxLines: 2, maxWords: 6, maxSeconds: 2.5, minSeconds: 0.8 });
+  assert.ok(cues.length >= 3);
+  for (const c of cues) {
+    assert.ok(c.lines.flat().length <= 6, JSON.stringify(text(c)));
+    for (const l of text(c)) assert.ok(l.length <= 22, l);
+    assert.ok(c.end - c.start <= 2.5 + 1e-9, `${c.start}–${c.end}`);
+  }
+  // Six quick words, then a pause: the cue leaves after 2.5 s, not at the next sentence.
+  const quick = timeWords('One two three four. Five.', t => t, [0, 0.2, 0.4, 0.6, 6].map((start, i) => ({ start, char: [0, 4, 8, 14, 20][i], length: 1 })), 7);
+  assert.equal(splitCues(quick, { maxSeconds: 2.5 })[0].end, 2.5);
+  // Two words said in 0.3 s get joined to the next group rather than flashing by.
+  const brief = timeWords('a b c d', t => t, [0, 0.15, 0.3, 1.5].map((start, i) => ({ start, char: i * 2, length: 1 })), 3);
+  assert.equal(splitCues(brief, { maxWords: 2 }).length, 2);
+  assert.equal(splitCues(brief, { maxWords: 3, minSeconds: 0.8 }).length, 2);
+});
+
+test('ass: upper case, outline, pop and a box behind the word being said', () => {
+  const words = timeWords('one two three', t => t, [{ start: 0, char: 0, length: 3 }, { start: 1, char: 4, length: 3 }, { start: 2, char: 8, length: 5 }], 3);
+  const cues = videoCues([{ id: 'scene-01', words, length: 3 }], { maxCharsPerLine: 42, maxLines: 2 });
+  const dir = tmp();
+  const ass = preset => {
+    writeAss(cues, path.join(dir, 'c.ass'), captionSettings({ captions: { preset } }));
+    return fs.readFileSync(path.join(dir, 'c.ass'), 'utf8');
+  };
+  const bold = ass('bold');
+  assert.match(bold, /^Style: Caption,Segoe UI Black,72,.*,1,5,3,2,80,80,76,1$/m, 'outline 5, shadow 3, 7% from the bottom');
+  const ev = bold.split('\n').filter(l => l.startsWith('Dialogue:'));
+  assert.equal(ev.length, 3);
+  // The word before shrinks back over 120 ms; the word being said turns yellow and grows over 80 ms.
+  assert.ok(ev[1].endsWith(String.raw`,,{\fscx115\fscy115\t(0,120,\fscx100\fscy100)}ONE{\c&HFFFFFF&\fscx100\fscy100} {\c&H00D4FF&\fscx100\fscy100\t(0,80,\fscx115\fscy115)}TWO{\c&HFFFFFF&\fscx100\fscy100} THREE`), ev[1]);
+  const boxed = ass('box').split('\n');
+  assert.ok(boxed.some(l => l.startsWith('Style: CaptionBox,') && l.includes(',3,4,0,')), 'a box style');
+  const [layer] = boxed.filter(l => l.startsWith('Dialogue: 0,0:00:01'));
+  assert.ok(layer.includes(String.raw`CaptionBox,,0,0,0,,{\1a&HFF&\3a&HFF&}{\fscx125`) && layer.includes(String.raw`{\3a&H00&\fscx100\fscy100\t(0,80,\fscx125\fscy125)}TWO{\3a&HFF&`), layer);
+  assert.ok(boxed.some(l => l.startsWith('Dialogue: 1,0:00:01.00') && l.includes(String.raw`{\c&H000000&\bord0\shad0\fscx100`)), 'the word on top in black');
+});
+
+test('cues and lines break between phrases: not after "the", "a", "to"…, after a comma when it can', () => {
+  const d = 'To meet the first acceptance criterion, we type a task into the box at the top and press Enter, then add two more.';
+  const cues = splitCues(timeWords(d, t => t, [], 7), { maxCharsPerLine: 22, maxLines: 2, maxWords: 6, maxSeconds: 2.5 });
+  const open = /\b(the|a|to|into|at|and)$/i;
+  for (const c of cues) for (const l of text(c)) assert.ok(!open.test(l), `${text(c).join(' / ')}`);
+  assert.deepEqual(text(cues[0]), ['To meet the first', 'acceptance criterion,']);
+});

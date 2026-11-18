@@ -1196,8 +1196,17 @@
         },
         "captions": {
           "type": "object",
-          "description": "The narration as captions: cues of a few lines that follow the voice (a cue never spans two sentences). --captions, --highlight, --chars-per-line and --caption-lines override these for one run.",
+          "description": "The narration as captions: cues of a few lines that follow the voice (a cue never spans two sentences). --captions, --caption-style, --highlight, --chars-per-line, --caption-lines and --caption-words override these for one run.",
           "properties": {
+            "preset": {
+              "enum": [
+                "classic",
+                "bold",
+                "outline",
+                "box"
+              ],
+              "description": "A whole look at once; keys set beside it win. \"classic\" (default): sentence captions in a box. \"bold\": burned in, 2–6 words per cue on at most 2 lines of 22 characters, 0.8–2.5 s each, upper case, Segoe UI Black 72 px, white with a black outline, the spoken word yellow and popping 1.15×. \"outline\": the same with a heavier outline and no shadow. \"box\": a yellow box behind the spoken word, black text, 1.25×. --caption-style for one run."
+            },
             "mode": {
               "enum": [
                 "file",
@@ -1217,18 +1226,90 @@
               "minimum": 1,
               "description": "Lines per caption at most (default 2)."
             },
+            "maxWords": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Words per caption at most (default 0: no limit)."
+            },
+            "minSeconds": {
+              "description": "A caption on screen for less than this is joined to the next one of its sentence, when the two still fit; the last one of a scene stays this long (default 0).",
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
+            },
+            "maxSeconds": {
+              "description": "A caption that takes longer than this to say is split, and leaves the screen this long after it appeared rather than staying through a pause (default 0: no limit).",
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
+            },
             "highlight": {
               "enum": [
                 "off",
                 "word",
-                "karaoke"
+                "karaoke",
+                "box"
               ],
-              "description": "Burned-in captions only: colour the word being said (\"word\"), or every word said so far (\"karaoke\"). Default off."
+              "description": "Burned-in captions only: colour the word being said (\"word\"), every word said so far (\"karaoke\"), or put a box of highlightColor behind the word being said, its text in boxTextColor (\"box\"). Default off."
             },
             "highlightColor": {
               "type": "string",
-              "description": "Colour of the highlighted word, #rrggbb (default #ffd54a).",
+              "description": "Colour of the highlighted word (or its box), #rrggbb (default #ffd54a).",
               "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "boxTextColor": {
+              "type": "string",
+              "description": "With highlight \"box\": the highlighted word's text colour, #rrggbb (default #000000).",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "activeScale": {
+              "description": "With a highlight: how much bigger the word being said is drawn (default 1: not at all; 1.15 for a \"pop\").",
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0.5,
+                  "maximum": 3
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
+            },
+            "popIn": {
+              "description": "Milliseconds the word being said takes to grow to activeScale (default 80).",
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
+            },
+            "popOut": {
+              "description": "Milliseconds it takes to shrink back when the next word is said (default 120).",
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
             },
             "color": {
               "type": "string",
@@ -1249,7 +1330,55 @@
             },
             "font": {
               "type": "string",
-              "description": "Burned-in font name (default Segoe UI)."
+              "description": "Burned-in font name (default Segoe UI). For a heavy weight name the face: \"Segoe UI Black\", \"Segoe UI Semibold\"."
+            },
+            "bold": {
+              "type": "boolean",
+              "description": "Burned-in text in bold (default false)."
+            },
+            "uppercase": {
+              "type": "boolean",
+              "description": "Burned-in text in capitals (default false); the .vtt keeps the narration as written."
+            },
+            "spacing": {
+              "description": "Extra space between letters of burned-in text, in pixels; negative is tighter (default 0).",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
+            },
+            "outline": {
+              "description": "Outline around burned-in letters, in pixels (default 0: none, the caption sits on a box instead, see background).",
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
+            },
+            "outlineColor": {
+              "type": "string",
+              "description": "Colour of the outline, #rrggbb (default #000000).",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "shadow": {
+              "description": "With an outline: drop shadow distance in pixels (default 0).",
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
             },
             "position": {
               "enum": [
@@ -1258,8 +1387,21 @@
               ],
               "description": "Where burned-in captions sit (default bottom); notes (simulated data, known issues) take the other edge."
             },
+            "margin": {
+              "description": "Distance of burned-in captions from that edge, as a fraction of the picture's height (default 0.05).",
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 0.5
+                },
+                {
+                  "$ref": "common.schema.json#/$defs/placeholder"
+                }
+              ]
+            },
             "background": {
-              "description": "Opacity of the box behind burned-in captions, 0 (none) to 1 (default 0.55).",
+              "description": "Opacity of the box behind burned-in captions, 0 (none) to 1 (default 0.55). Not drawn with an outline.",
               "anyOf": [
                 {
                   "type": "number",
