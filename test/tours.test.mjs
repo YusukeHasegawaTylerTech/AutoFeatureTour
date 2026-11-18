@@ -25,16 +25,16 @@ test('run folders are never reused', () => {
 });
 
 test('parseStory finds the id, title and acceptance criteria', () => {
-  const s = parseStory(fs.readFileSync(new URL('../examples/stories/RMS-6142.md', import.meta.url), 'utf8'));
-  assert.equal(s.id, 'RMS-6142');
-  assert.equal(s.title, 'Publish MD IBR fields in Dynamic and Standard Reporting');
+  const s = parseStory(fs.readFileSync(new URL('../examples/stories/TODO-202.md', import.meta.url), 'utf8'));
+  assert.equal(s.id, 'TODO-202');
+  assert.equal(s.title, 'Clear completed tasks');
   assert.equal(s.acceptanceCriteria.length, 3);
-  assert.match(s.acceptanceCriteria[1], /Enterprise Print Designer/);
+  assert.match(s.acceptanceCriteria[1], /active tasks stay/);
 });
 
 test('parseStory keeps a pasted Jira criterion of several sentences together', () => {
-  const s = parseStory('RMS-6445 Complete button\n\nAcceptance Criteria\n\nComplete stays clickable. It is not disabled.\n\nThe banner says "Errors below must be resolved before completing".\n');
-  assert.equal(s.id, 'RMS-6445');
+  const s = parseStory('APP-6445 Complete button\n\nAcceptance Criteria\n\nComplete stays clickable. It is not disabled.\n\nThe banner says "Errors below must be resolved before completing".\n');
+  assert.equal(s.id, 'APP-6445');
   assert.equal(s.title, 'Complete button');
   assert.deepEqual(s.acceptanceCriteria, ['Complete stays clickable. It is not disabled.', 'The banner says "Errors below must be resolved before completing".']);
   assert.equal(parseStory('X-1 t\nAcceptance criteria: First works. Second works.').acceptanceCriteria.length, 2);

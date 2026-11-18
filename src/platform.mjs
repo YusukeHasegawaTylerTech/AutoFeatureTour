@@ -21,7 +21,7 @@
 //   requirements.mjs    extra `aft doctor` checks for this platform
 //   tours/              the platform's own tours (a smoke.tour.json is what `aft platform check` runs)
 //
-// A tour names its platform ("platform": "rms") and may pick "env", "role" and "fixtures". It never contains a base
+// A tour names its platform ("platform": "todomvc") and may pick "env", "role" and "fixtures". It never contains a base
 // URL, credentials, launch commands or app-wide settings; those keys are refused so they can't drift into tours.
 
 import fs from 'node:fs';

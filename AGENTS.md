@@ -33,6 +33,7 @@ date, `npx playwright install chromium`, `npm link` with `-Link`, then `doctor`.
 | ffmpeg / ffprobe missing | `winget install Gyan.FFmpeg`, then open a new terminal |
 | npm packages / Playwright Chromium | `npm ci`, `npx playwright install chromium` |
 | no SAPI voices (warn) | add a voice in Windows Settings > Speech, or run with `--speech silent` |
+| Speech: Piper (warn) | only for `--speech piper`: `aft voices --install-piper` (needs Python 3.9+) |
 | claude CLI (warn) | only for `--llm claude`; install Claude Code |
 | claude signed in (warn) | `claude auth login` (or run `claude` once); only for `--llm claude`, checked with `claude auth status` |
 | platforms | informational: the platforms found, or none yet (`platforms/` is git-ignored, so a fresh clone has none: `aft platform init <name>`) |
@@ -60,7 +61,7 @@ start.cmd                                                                    # o
 Add `--json` to any command for one JSON result on stdout (see "Agent primitives"). Exit codes: 0 ok · 1 usage/config · 2 SCRIPT failure · 3 app unreachable · 4 CRITERION failure · 5 APP error (see
 "When a run fails"). Nothing prompts unless you ask (`login --manual`, `--headed --pause`).
 
-Run folder contents: `tour_<name>-<run id>.mp4` (the video, named after the run folder, e.g. `tour_RMS-4923-x-20261110-115734-qqsn.mp4`, so a copy still says which run made it; runs made before have `tour.mp4`), `tour_<name>-<run id>.vtt` (captions, same name), `recording.webm` (raw browser recording),
+Run folder contents: `tour_<name>-<run id>.mp4` (the video, named after the run folder, e.g. `tour_TODO-202-clear-completed-20261110-115734-qqsn.mp4`, so a copy still says which run made it; runs made before have `tour.mp4`), `tour_<name>-<run id>.vtt` (captions, same name), `recording.webm` (raw browser recording),
 `clips/` (per scene), `scene-NN.wav` (narration), `timings.json` (scene windows in the recording), `screens/`
 (a still per scene, discovery pages), `trace.zip` (Playwright trace), `tour.json` / `script.md` (generated
 scripts), `validation.md`, `notes.md` (the platform's notes as they were when the run started, if it has any), `discovery.json`, `run.json` (command, args, status; a dry run with blocking steps is `failed`), `ledger.json` (what was set up and
@@ -75,6 +76,17 @@ Which one speaks a scene, first match wins: the scene's `"voice"`, `--voice`, th
 `--rate`. Short names work (`"Zira"`, `"david"`; `aft voices --try zira` shows the match); a name that matches no
 installed voice, or several, stops the run before anything is spoken, listing the installed ones. A per-scene voice
 gives a second narrator (a dialogue, a quoted user). The UI's Tours page has voice and rate pickers for a run.
+
+**Piper (free local neural voices, any OS):** `aft voices --install-piper [<voice>,…]` sets up `models/piper/`
+(git-ignored): a Python venv with `piper-tts` and `onnx`, and voices from rhasspy/piper-voices (default
+`en_US-ljspeech-high`). Then `--speech piper` (render, run, the UI's speech picker) and `--voice <model name>` (short
+names work; `aft voices --speech piper` lists them). A tour's or scene's Windows voice ("Zira") isn't a Piper voice:
+Piper's default voice says it, and the log says so; a `--voice` that names none is an error. `rate` becomes Piper's
+speed (about 3× either way at ±10). One helper process (`src/tts-piper.py`) serves the run, so a model loads once.
+Word times come from the model's phoneme durations (patched in memory); a sentence said in more words than written
+("80%", "RMS-4923") has its words spread over its own time. `AFT_PIPER_PYTHON` / `AFT_PIPER_VOICES` point elsewhere.
+Piper is GPL-3.0 (run as a separate program, never bundled), and each voice has its own licence (lessac and the voices
+fine-tuned from it: non-commercial only): read the voice's MODEL_CARD before using it outside a demo.
 
 **Video trimming:** long waits (page loads and busy indicators, `waitFor`, `waitForResponse`, dismissed known issues)
 are recorded in `timings.json` (`scenes[].waits`) and cut from the video, keeping a 0.3 s lead-in; the narration is
@@ -194,7 +206,7 @@ service instead would hide a real problem.
 - **Per environment**: `environments.json` entries take `workarounds` too, merged by `name`: the same name refines the
   platform's rule for that environment (partial entries merge over it; `"off": true` disables it), a new name adds one
   there only. A `--base-url` one-off gets the platform's rules only. Typical: `"as": "fail"` in platform.json, `"as":
-  "warn"` in `local` (see `platforms/rms`).
+  "warn"` in `local`.
 - **Per story**: a tour may list its own `workarounds` too, applied after the platform's and environment's (same name
   refines one, `"off": true` turns it off for that story; source `story`). Mark a real app issue being worked around
   for now with `"issue": { "note", "ticket" }`: the run then reads "passed with known issues" (see Review).
@@ -342,13 +354,12 @@ another locator finds; nest them to chain) and `frame` (iframe selector, or a li
 ## Platforms
 
 **`platforms/` is local and git-ignored**: each machine keeps its own platforms, and none are committed (shared examples
-may get their own home later). The `todomvc`, `rms` and `agenticfoia` examples below exist only where someone has
+may get their own home later). The `todomvc` and `agenticfoia` examples below exist only where someone has
 set them up; `aft platform init <name>` creates a new one.
 
 A **platform** is everything about one app that isn't a particular tour. Tours name a platform and only describe
 what to show; they never contain a base URL, credentials, launch commands or app-wide selectors (the loader refuses
-those keys, and absolute URLs, in a platform tour). Platforms today: `todomvc` (the reference), `rms` (local NWPS
-RMS), `agenticfoia` (code tours that build and start their own app). `aft platform list` shows them.
+those keys, and absolute URLs, in a platform tour). Platforms today: `todomvc` (the reference), `agenticfoia` (code tours that build and start their own app). `aft platform list` shows them.
 
 ```
 platforms/<name>/
@@ -601,7 +612,7 @@ aft stage end <name> [--keep] --json
 
 ## Story to video (for agents)
 
-1. Save the story as a file (id like `RMS-6142`, title, description, `Acceptance criteria:` list); see
+1. Save the story as a file (id like `TODO-202`, title, description, `Acceptance criteria:` list); see
    `examples/stories/`.
 2. `aft generate --story story.md --platform <name> [--target <env>] --llm claude [--style verification|demo|training]`
    (the tour it writes names the platform). Without
@@ -609,16 +620,15 @@ aft stage end <name> [--keep] --json
    platform's notes (accounts, setup recipes, findings) as context.
 3. Review and edit the run folder's `tour.json`:
    - one scene per acceptance criterion (`"criteria": [n]`), narration saying which criterion it shows;
-   - targets as visible names: `{ "role": "button", "name": "Run report" }`, `{ "label": "Hate Bias Status" }`,
-     `{ "text": "Case Detail" }`; CSS only as a last resort. `npx playwright codegen <url>` shows the role/name;
+   - targets as visible names: `{ "role": "button", "name": "Clear completed" }`, `{ "label": "Toggle All" }`,
+     `{ "text": "items left" }`; CSS only as a last resort. `npx playwright codegen <url>` shows the role/name;
    - `verify` for whatever a criterion requires to be visible; no destructive actions unless the story needs them;
    - anything listed under `unresolved` needs a person or a discovery of the right screen.
 4. `aft validate <run>/tour.json`; fix each ✘ in `validation.md` (it suggests the closest names on the page), repeat.
 5. `aft run <run>/tour.json` (records into a new run folder). On failure, read `triage/report.md`: SCRIPT means fix
    the step (match a name from `triage/page/aria.yml`); CRITERION or APP means the app, so report it, don't edit the
    check away.
-6. Example: [platforms/rms/tours/RMS-6142.tour.json](platforms/rms/tours/RMS-6142.tour.json) (generated, then corrected by hand).
-7. Flows you write twice become fragments; data the story needs becomes a fixture (see Platforms).
+6. Flows you write twice become fragments; data the story needs becomes a fixture (see Platforms).
 
 ### Generate as a conversation
 
@@ -662,10 +672,10 @@ deployed (QA). The two are separate platforms of the same app (QA's: a copy with
 known-issue policy).
 
 ```
-aft export platforms/rms-local-dev/tours/RMS-6399.tour.json   # or a run folder: out/RMS-6399/<run>
-#  → out/RMS-6399/<run>/RMS-6399.aft.json: send it to QA
-aft import RMS-6399.aft.json --platform rms-qa                # → platforms/rms-qa/tours/RMS-6399.tour.json (--name, --force)
-aft validate platforms/rms-qa/tours/RMS-6399.tour.json        # then aft run
+aft export platforms/myapp-dev/tours/APP-123.tour.json       # or a run folder: out/APP-123/<run>
+#  → out/APP-123/<run>/APP-123.aft.json: send it to QA
+aft import APP-123.aft.json --platform myapp-qa               # → platforms/myapp-qa/tours/APP-123.tour.json (--name, --force)
+aft validate platforms/myapp-qa/tours/APP-123.tour.json       # then aft run
 ```
 
 The export (`"schema": "aft-export/1"`) is one file: the tour with its fragments inlined (each step's `comment` says
@@ -737,13 +747,13 @@ The markdown can be the whole design, so the tour never needs editing:
 
 ```
 ---
-footer: RMS-4923 · spike/foia-request-validation
+footer: APP-4923 · spike/request-validation
 theme: dark                      # accent, voice, name, max-scenes too
 reveal: auto                     # build in (see above), or: dim, off
-pronounce: FOIA=Foya, RMS=R M S
+pronounce: SQL=sequel, API=A P I
 pages: pages                     # static pages for ```steps scenes (relative to the document); or platform:, env:, role:
 ---
-# RMS-4923 · Records Requests: Research on context limits
+# APP-4923 · Request validation: Research on context limits
 
 ## Agents: they don't retain the rules
 - **Misconception:** an agent holds the rules ✗
@@ -763,7 +773,7 @@ scenes added by hand stay where they were. Each `--from` (and `--update`) copies
 `max-scenes:`) says so, and then it warns.
 
 ```
-aft scratch foia-findings --from findings.md     # in out/scratch/foia-findings/ (beside the runs, kept, "$schema" works)
+aft scratch spike-findings --from findings.md    # in out/scratch/spike-findings/ (beside the runs, kept, "$schema" works)
 aft scratch demo                                 # a starter deck: one slide per layout, to copy from
 aft scratch demo --pages                         # plus out/scratch/demo/pages/index.html, recorded in the browser
 aft scratch demo-v2 --from-tour demo             # a new version of a deck (its folder copied: assets, shared slides, pages)
@@ -805,7 +815,7 @@ Findings use the platform-notes format, so the same lines work in `platforms/<p>
 
 ```
 ---
-title: RMS-4923 context limits
+title: APP-4923 context limits
 question: Are the context-limit concerns real?
 ---
 ### F-1 · A 20-page rule set fits easily
@@ -822,12 +832,12 @@ run (after the write-up changed, or for a run made before the tour named its fin
 
 ## Tours across platforms
 
-A story can cross apps: an RMS request, then the Foundry agent it calls. Each app stays its own platform (its
+A story can cross apps: a request made in one app, then the Foundry agent it calls. Each app stays its own platform (its
 environments, its `login.json` and saved login, its known issues, fragments and data); a scene names the platform it
 runs on, and the tour picks that platform's environment and role:
 
 ```json
-{ "platform": "rms", "platforms": { "foundry": { "env": "dev", "role": "user" } },
+{ "platform": "myapp", "platforms": { "foundry": { "env": "dev", "role": "user" } },
   "scenes": [
     { "title": "The request form", "narration": "…", "url": "#/requests/new", "steps": [ … ] },
     { "title": "The agent in Foundry", "narration": "…", "platform": "foundry", "url": "{data.project}", "steps": [ … ] } ] }
@@ -888,7 +898,7 @@ tour.json → a run (platform composition, launch/attach, login, hooks, fixtures
 fixtures, init · `platform-cli.mjs` `aft platform` · `session.mjs` / `session-daemon.mjs` sessions, snapshot, locate,
 try-step · `stage.mjs` / `stage-daemon.mjs` do / redo until here · `cli-app.mjs` the app a command targets · `recorder.mjs` Tour (paced recording, cursor, trace, mask) · `discover.mjs` crawl ·
 `plan.mjs` heuristic and Claude planners, stories · `converse.mjs` generate as a conversation · `capture.mjs` recording by hand ·
-`narrate-timing.mjs` scene timing · `render.mjs` ffmpeg · `captions.mjs` caption cues, .vtt / .ass · `slides.mjs` slide scenes, pages, document outlines · `tts.mjs` speech · `auth.mjs` saved logins ·
+`narrate-timing.mjs` scene timing · `render.mjs` ffmpeg · `captions.mjs` caption cues, .vtt / .ass · `slides.mjs` slide scenes, pages, document outlines · `tts.mjs` speech (SAPI `tts-sapi.ps1`, Piper `tts-piper.py`) · `auth.mjs` saved logins ·
 `doctor.mjs` checks · `workarounds.mjs` known issues (merge, checkpoint, matching) · `review.mjs` evidence, findings,
 decisions, verdict · `fix.mjs` AI fix proposals (`suggest-fix`) · `ledger.mjs` ledger.json, run tags · `fixtures.mjs`
 hooks, fixture items, browser fixtures, artifacts, `aft cleanup` / `aft reset` · `batch.mjs` `aft batch` · `findings.mjs` a run's findings summary · `notes.mjs` platform notes · `daemon-calls.mjs` call ids, kept results. Tests: `npm test`.

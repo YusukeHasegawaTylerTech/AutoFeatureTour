@@ -24,7 +24,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "description": "Ticket id, e.g. RMS-6142 (used in the run folder name)."
+          "description": "Ticket id, e.g. TODO-202 (used in the run folder name)."
         },
         "title": {
           "type": "string",

@@ -308,7 +308,7 @@ const views = {
   async tours() {
     const [ps, vs] = await Promise.all([api('/api/platforms'), api('/api/voices').catch(() => ({ voices: [] }))]);
     $app.innerHTML = `<h2>Tours</h2>
-      <div class="toolbar"><label>speech <select id="speech"><option value="">default</option><option>silent</option></select></label>
+      <div class="toolbar"><label>speech <select id="speech"><option value="">default</option>${vs.piper?.length ? '<option>piper</option>' : ''}<option>silent</option></select></label>
         <label title="The narrator for this run (a scene's own voice still wins). Default: the tour's or platform's voice.">voice <select id="voice"><option value="">tour's voice</option>${vs.voices.map(v => `<option>${h(v)}</option>`).join('')}</select></label>
         <label title="Speaking rate, -10 (slow) to 10 (fast); empty: the tour's">rate <input id="rate" type="number" min="-10" max="10" step="1" style="width:4em" placeholder="tour"></label></div>
       ${ps.map(p => `<div class="card"><h3>${h(p.name)} <span class="muted">env: ${h(p.environments.join(', ') || '—')}${p.default ? ` (default ${h(p.default)})` : ''}</span>
@@ -320,6 +320,11 @@ const views = {
           <button data-cmd="render" data-tour="${h(t.path)}">render</button>
           <button data-cmd="run" data-tour="${h(t.path)}" class="primary">run</button></td></tr>`).join('') || '<tr><td class="muted">no tours</td></tr>'}</table></div>`).join('')
       || '<p class="muted">No platforms. <code>aft platform init &lt;name&gt;</code></p>'}`;
+    // The voice picker lists the chosen provider's voices (Piper's are model names, not Windows voices).
+    $app.querySelector('#speech').onchange = e => {
+      const list = e.target.value === 'piper' ? vs.piper : vs.voices;
+      $app.querySelector('#voice').innerHTML = `<option value="">${e.target.value === 'piper' ? 'default Piper voice' : "tour's voice"}</option>${(list ?? []).map(v => `<option>${h(v)}</option>`).join('')}`;
+    };
     $app.querySelectorAll('button[data-tour]').forEach(b => (b.onclick = () => {
       const env = $app.querySelector(`select[data-env="${CSS.escape(b.dataset.tour)}"]`).value;
       const speech = $app.querySelector('#speech').value;

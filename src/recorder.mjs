@@ -356,9 +356,19 @@ export function startStaticServer({ port, routes = [], spa, proxy }) {
 
 /**
  * Starts a long-running process (an API, a dev server) with its output in logFile. With shell: true, exe is a whole
- * command line (for tour.json "launch" commands written by the app's own team).
+ * command line (for tour.json "launch" commands written by the app's own team). With detach: true (a service left
+ * running afterwards) it gets its own process group and writes straight to logFile, with no pipes back to this process,
+ * so the CLI can exit while it keeps running.
  */
-export function startProcess(exe, args = [], { env, cwd, logFile, shell = false }) {
+export function startProcess(exe, args = [], { env, cwd, logFile, shell = false, detach = false }) {
+  if (detach) {
+    const fd = fs.openSync(logFile, 'a');
+    const proc = spawn(exe, args, { windowsHide: true, env: { ...process.env, ...env }, cwd, shell, detached: true, stdio: ['ignore', fd, fd] });
+    fs.closeSync(fd);
+    proc.on('exit', code => { if (code) log(`${shell ? 'launch command' : path.basename(exe)} exited with ${code}; see ${logFile}`); });
+    proc.unref();
+    return proc;
+  }
   const proc = spawn(exe, args, { windowsHide: true, env: { ...process.env, ...env }, cwd, shell, stdio: ['ignore', 'pipe', 'pipe'] });
   const out = fs.createWriteStream(logFile);
   proc.stdout.pipe(out);

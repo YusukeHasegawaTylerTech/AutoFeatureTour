@@ -95,7 +95,7 @@ export async function mountReview(box, { id, d, input, h, api, rel, fileUrl, onC
   const noteForm = (el, f, decision, { ticket = false, prompt = 'Why?' } = {}) => {
     const form = el.querySelector('.finding-form');
     form.innerHTML = `<label>${h(prompt)} <input class="note" placeholder="a short note"></label>
-      ${ticket ? '<label>Ticket <input class="ticket" placeholder="e.g. RMS-1234"></label>' : ''}
+      ${ticket ? '<label>Ticket <input class="ticket" placeholder="e.g. APP-1234"></label>' : ''}
       <button class="primary save">SAVE</button> <button class="cancel">CANCEL</button>`;
     form.querySelector('.note').focus();
     form.querySelector('.cancel').onclick = () => { form.innerHTML = ''; };
@@ -111,7 +111,7 @@ export async function mountReview(box, { id, d, input, h, api, rel, fileUrl, onC
     form.innerHTML = `<div class="wa-form"><p class="muted">The check stays in the script and still runs. While the issue lasts it fails as expected and the run
         reads "passed with known issues"; when it passes again, the run says the issue looks fixed.</p>
       <label>What is wrong in the app <input class="note" placeholder="e.g. the count is missing from the tab"></label>
-      <label>Ticket <input class="ticket" placeholder="e.g. RMS-1234"></label>
+      <label>Ticket <input class="ticket" placeholder="e.g. APP-1234"></label>
       <button class="primary save">SAVE</button> <button class="cancel">CANCEL</button></div>`;
     form.querySelector('.note').focus();
     form.querySelector('.cancel').onclick = () => { form.innerHTML = ''; };
@@ -151,7 +151,7 @@ export async function mountReview(box, { id, d, input, h, api, rel, fileUrl, onC
         <option value="hide" ${d0.do === 'hide' ? 'selected' : ''}>hide it (fakes the app's state)</option></select></label>
       <label class="k-click">The button says <input class="wa-button" value="${h(d0.button ?? 'OK')}"></label>`}
       <label>What the issue is <input class="note" value="${h(draft?.note ?? '')}" placeholder="e.g. the IBR service is down on QA"></label>
-      <label>Ticket <input class="ticket" value="${h(draft?.ticket ?? '')}" placeholder="e.g. RMS-1234"></label>
+      <label>Ticket <input class="ticket" value="${h(draft?.ticket ?? '')}" placeholder="e.g. APP-1234"></label>
       <button class="primary save">SAVE THE WORKAROUND</button> <button class="cancel">CANCEL</button></div>`;
     const $ = s => form.querySelector(s);
     const sync = () => {

@@ -155,7 +155,7 @@
       "additionalProperties": {
         "type": "string"
       },
-      "description": "Narration substitutions: written form → how to say it (\"RMS\": \"R M S\")."
+      "description": "Narration substitutions: written form → how to say it (\"SQL\": \"sequel\")."
     },
     "viewport": {
       "type": "object",
@@ -729,7 +729,7 @@
               },
               "ticket": {
                 "type": "string",
-                "description": "Where it is tracked (e.g. RMS-1234)."
+                "description": "Where it is tracked (e.g. APP-1234)."
               },
               "since": {
                 "type": "string",

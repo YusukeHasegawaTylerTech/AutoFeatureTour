@@ -241,7 +241,7 @@ const mask = obj('Blurred in the page before anything is recorded (video, screen
   selectors: { type: 'array', items: { type: 'string' }, description: 'CSS of elements to blur.' }, patterns: { type: 'array', items: { type: 'string' }, description: 'Regexes of text to blur.' },
 });
 const viewport = obj('Browser size in CSS pixels (default 1440×810).', { width: { type: 'integer' }, height: { type: 'integer' } }, { required: ['width', 'height'] });
-const pronounce = { type: 'object', additionalProperties: { type: 'string' }, description: 'Narration substitutions: written form → how to say it ("RMS": "R M S").' };
+const pronounce = { type: 'object', additionalProperties: { type: 'string' }, description: 'Narration substitutions: written form → how to say it ("SQL": "sequel").' };
 const video = obj('Post-processing of the recording.', {
   trimWaits: { enum: ['cut', 'speed', 'off'], description: 'Long waits (page loads, busy indicators, waitFor, waitForResponse, dismissed known issues): cut them (default), speed them up, or keep them. The narration is never cut. --no-trim keeps them for one run.' },
   trimWaitsOver: num('Only waits longer than this many seconds (default 1.5).', { minimum: 0 }),
@@ -291,7 +291,7 @@ const workaround = obj('A known app or environment issue: what it looks like, wh
   scoped: bool('false: its steps search the whole page, not just inside the matched element.'),
   off: bool('In an environment or a story: turn the platform\'s rule of this name off there.'),
   issue: obj('In a story: this works around a real app issue, for now. A passing run is then "passed with known issues", never plain green; a run where it no longer fires says the issue may be fixed.', {
-    note: str('What the issue is.'), ticket: str('Where it is tracked (e.g. RMS-1234).'), since: str('When it was decided (ISO date).') }),
+    note: str('What the issue is.'), ticket: str('Where it is tracked (e.g. APP-1234).'), since: str('When it was decided (ISO date).') }),
 }, { required: ['name'] });
 const fixtureItem = obj('One piece of test data: how to see it is there, set it up and undo it.', {
   name: str('Shown in reports and the ledger.'), comment: str('A note for people.'),
@@ -366,7 +366,7 @@ const scene = obj('One scene: narration over the steps that show it.', {
 }, { anyOf: [{ required: ['title'] }, { required: ['slide'], properties: { slide: { required: ['use'] } } }] });
 
 const story = obj('The user story the tour verifies.', {
-  id: str('Ticket id, e.g. RMS-6142 (used in the run folder name).'), title: str('Story title.'), description: str('Story text.'),
+  id: str('Ticket id, e.g. TODO-202 (used in the run folder name).'), title: str('Story title.'), description: str('Story text.'),
   acceptanceCriteria: { type: 'array', items: { type: 'string' }, description: 'Numbered from 1 in scenes\' "criteria".' }, text: str('The story as pasted.'),
 });
 

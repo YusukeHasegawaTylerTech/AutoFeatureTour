@@ -24,15 +24,15 @@ test('settings: defaults, the tour/platform "video.captions", then the command l
 });
 
 test('words are shown as written and timed as said: a pronounce substitution keeps its word on time', () => {
-  const pronounce = { RMS: 'R M S' };
-  const display = spokenText('In **RMS** the clerk opens it.');
+  const pronounce = { SQL: 'sequel' };
+  const display = spokenText('In **SQL** the clerk opens it.');
   const spoken = spokenText(display, pronounce);
   assert.equal(spoken, 'In R M S the clerk opens it.');
   // The voice: In@0 R@1 M@1.3 S@1.6 the@2 clerk@2.4 opens@3 it@3.5
   const at = { In: 0, R: 1, M: 1.3, S: 1.6, the: 2, 'clerk': 2.4, opens: 3, 'it.': 3.5 };
   const voiced = [...spoken.matchAll(/\S+/g)].map(m => ({ start: at[m[0]], char: m.index, length: m[0].length }));
   const words = timeWords(display, t => spokenText(t, pronounce), voiced, 4);
-  assert.deepEqual(words.map(w => [w.text, w.start]), [['In', 0], ['RMS', 1], ['the', 2], ['clerk', 2.4], ['opens', 3], ['it.', 3.5]]);
+  assert.deepEqual(words.map(w => [w.text, w.start]), [['In', 0], ['SQL', 1], ['the', 2], ['clerk', 2.4], ['opens', 3], ['it.', 3.5]]);
   assert.equal(words.at(-1).end, 4);
   // No word times: spread by position.
   const even = timeWords('one two three four', t => t, [], 8);

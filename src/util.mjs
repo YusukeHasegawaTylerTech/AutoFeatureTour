@@ -86,8 +86,8 @@ export function parseArgs(argv) {
 }
 
 /**
- * The video's file name in a run folder: "tour_<run name>-<run id>.mp4" (out/RMS-4923-x/20261110-115734-qqsn →
- * tour_RMS-4923-x-20261110-115734-qqsn.mp4), so a copied or shared video still says which run made it; the captions are
+ * The video's file name in a run folder: "tour_<run name>-<run id>.mp4" (out/TODO-202-clear-completed/20261110-115734-qqsn →
+ * tour_TODO-202-clear-completed-20261110-115734-qqsn.mp4), so a copied or shared video still says which run made it; the captions are
  * the same name with .vtt (players pick them up). ext: "mp4" | "vtt".
  */
 export const videoName = (outDir, ext = 'mp4') => `tour_${path.basename(path.dirname(path.resolve(outDir)))}-${path.basename(path.resolve(outDir))}.${ext}`;

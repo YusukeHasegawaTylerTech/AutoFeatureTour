@@ -691,7 +691,7 @@ export function simpleViews({ $app, h, api, fileUrl, ago, rel, render, TEMPLATES
           <span class="hint">Closing keeps the conversation (and the live browser); reopen it with ✨ GENERATE.</span></div></div>`
         : `<div class="gen-panel">
           <label class="lbl">Paste the story (e.g. from Jira): title, description and acceptance criteria</label>
-          <textarea id="story" rows="9" placeholder="RMS-1234 Add a report&#10;As a user I want…&#10;&#10;Acceptance criteria:&#10;1. …">${h(genText)}</textarea>
+          <textarea id="story" rows="9" placeholder="APP-1234 Add a report&#10;As a user I want…&#10;&#10;Acceptance criteria:&#10;1. …">${h(genText)}</textarea>
           <p class="hint">The AI (Claude) reads the story and looks at the app's screens to write the scenes. Only use it where that's allowed.
             ${tour.scenes.some(s => s.steps?.length || s.narration) ? '<b>It replaces the scenes below.</b>' : ''}</p>
           <label class="lbl check"><input type="checkbox" id="gen-onego" ${oneGo ? 'checked' : ''}> one go, no questions (the AI writes everything at once, without trying it in the app)</label>

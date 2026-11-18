@@ -12,7 +12,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { listPlatforms, platformsDir } from './platform.mjs';
-import { listVoices } from './tts.mjs';
+import { listVoices, piperPaths, piperVoices } from './tts.mjs';
 import { run, which } from './util.mjs';
 
 const win = process.platform === 'win32';
@@ -40,9 +40,14 @@ export async function doctor({ toolRoot, platform: target, quiet = false } = {})
     try { voices = await listVoices(); } catch { /* no SAPI */ }
     add('Speech: Windows SAPI', voices.length, voices.length ? voices.join(', ') : 'no voices',
       'Settings > Time & language > Speech > add a voice; or --speech silent', false);
-  } else {
-    add('Speech', true, 'no voice provider on this OS yet: use --speech silent (captions carry the narration)', '', false);
   }
+  // Piper (--speech piper): optional, free local neural voices on any OS.
+  const pp = piperPaths(), pv = piperVoices();
+  const hasPiper = fs.existsSync(pp.python);
+  add('Speech: Piper (--speech piper)', hasPiper && pv.length,
+    hasPiper ? (pv.length ? pv.join(', ') : `no voices in ${pp.voices}`) : `not set up (${pp.python})`,
+    'aft voices --install-piper (needs Python 3.9+)', false);
+  if (!win && !(hasPiper && pv.length)) add('Speech', true, 'no Windows voices on this OS: --speech piper (above) or --speech silent (captions carry the narration)', '', false);
   const claude = which('claude') && await version('claude');
   add('claude CLI (generate/plan --llm claude)', claude, claude ?? 'not on PATH', 'install Claude Code: https://claude.com/claude-code', false);
   if (claude) {

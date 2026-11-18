@@ -53,7 +53,9 @@
 //                                                    result, same exit code; AFT_CALL_TIMEOUT=<s> caps a call's wait
 //   aft ui       [--port 4777] [--no-open] [--root <checkout>]   the local web UI (ui/server.mjs; Ctrl+C stops it)
 //   aft findings <run folder> [--from <doc.md>]       (re)write <run>/findings/: the spike summary (findings.md, findings.json aft-findings/1)
-//   aft voices   [--try <name>]                      the installed narrators (tour "voice", a scene's "voice", --voice; short names work)
+//   aft voices   [--try <name>] [--speech piper]     the installed narrators (tour "voice", a scene's "voice", --voice; short names work)
+//   aft voices   --install-piper [<voice>,…]         set up Piper (free local neural voices) in models/piper: a Python venv
+//                                                    with piper-tts, and the voices (default en_US-ljspeech-high); then --speech piper
 //   aft --list-voices | --help | --version
 //
 // Git Bash rewrites arguments that start with / (a path like #/case/1 or /orders) into Windows paths; aft refuses
@@ -63,7 +65,7 @@
 // data | error); all logs go to stderr. Without it, stdout is human-readable.
 // Target selection: a tour names its platform (platforms/<name>/); --target <environment> (alias --env) and --role pick
 // among the platform's; --base-url <url> or BASE_URL override the URL. --platform <name> for generate/discover/login. Other flags:
-// --out <folder>, --name <run name>, --headed, --speech sapi|silent, --voice, --rate, --tail, --no-captions,
+// --out <folder>, --name <run name>, --headed, --speech sapi|piper|silent, --voice, --rate, --tail, --no-captions,
 // --captions file|soft|burn|off, --caption-style classic|bold|outline|box, --highlight [word|karaoke|box|off],
 // --chars-per-line N, --caption-lines N, --caption-words N (see "video.captions"),
 // --on-error fail|skip, --allow-draft (record a script that still has unresolved/empty scenes), --no-trim (keep long
@@ -117,13 +119,13 @@ import { CLASSES, classify, exitCode, Failure, summaryLine } from './failures.mj
 import { criteriaOf, finalize, progress } from './triage.mjs';
 import { review as reviewOf } from './review.mjs';
 import { suggestFix } from './fix.mjs';
-import { defaultProvider, estimateSeconds, listVoices, resolveVoice, speak } from './tts.mjs';
+import { defaultProvider, estimateSeconds, installPiper, listVoices, PROVIDERS, resolveVoice, speak } from './tts.mjs';
 import { log, newRunDir, num, parseArgs, run, sleep, videoName } from './util.mjs';
 
 const toolRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENGINE = new Set(['_', 'record', 'noRecord', 'out', 'clips', 'voice', 'rate', 'tail', 'noCaptions', 'captions', 'captionStyle', 'captionWords', 'highlight', 'charsPerLine', 'captionLines', 'listVoices', 'speech', 'name',
   'prompt', 'story', 'llm', 'model', 'maxScenes', 'maxPages', 'tour', 'include', 'exclude', 'manual', 'baseUrl', 'script', 'style',
-  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'try', 'zip', 'pause', 'fromStep', 'untilStep', 'fromStage', 'fromScene', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail', 'reuse', 'recordAgain']);
+  'headed', 'headless', 'target', 'help', 'version', 'allowDraft', 'from', 'write', 'slidesOnly', 'fromTour', 'update', 'try', 'zip', 'pause', 'fromStep', 'untilStep', 'fromStage', 'fromScene', 'platform', 'json', 'noTrim', 'reset', 'tag', 'olderThan', 'all', 'dryRun', 'validateOnly', 'stopOnFail', 'reuse', 'recordAgain', 'installPiper']);
 const safeName = s => String(s).replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'tour';
 
 /** A spike's write-up in the standard form (src/findings.mjs); `aft scratch --from findings.md` makes the deck from it. */
@@ -766,12 +768,20 @@ async function render(def, tourDir, outDir, args) {
   // may be short ("Zira"). Checked before anything is spoken, so a typo fails at once with the installed list.
   const voiceOf = async s => {
     const v = s.voice ?? (args.voice === 'silent' ? undefined : args.voice) ?? def.voice;
-    try { return await resolveVoice(v, { provider }); } catch (e) { throw new ConfigError(`${s.voice ? `${s.id}: ` : ''}${e.message}`); }
+    try { return await resolveVoice(v, { provider }); } catch (e) {
+      // A tour's or scene's voice is usually a Windows one ("Zira"): with --speech piper, Piper's default voice says it.
+      if (provider === 'piper' && v !== args.voice) {
+        const fallback = await resolveVoice(undefined, { provider });
+        log(`${s.id}: voice "${v}" isn't a Piper voice; ${fallback ?? 'the default'} says it (--voice picks one)`);
+        return fallback;
+      }
+      throw new ConfigError(`${s.voice ? `${s.id}: ` : ''}${e.message}`);
+    }
   };
   const rateOf = s => Number(s.rate ?? args.rate ?? def.rate ?? 0);
   for (const s of filmed) s.voiceName = await voiceOf(s);
   const used = [...new Set(filmed.map(s => s.voiceName ?? '(system default)'))];
-  if (provider === 'sapi') log(`voice${used.length > 1 ? 's' : ''}: ${used.join(', ')}`);
+  if (provider !== 'silent') log(`voice${used.length > 1 ? 's' : ''}: ${used.join(', ')}`);
   for (const s of filmed) {
     s.wav = path.join(outDir, `${s.id}.wav`);
     s.words = (await speak({ text: spokenText(s.narration, def.pronounce), wav: s.wav, voice: s.voiceName, rate: rateOf(s), provider }))?.words ?? [];
@@ -1601,17 +1611,27 @@ const commands = {
     return { findings: file, json: path.join(runDir, 'findings', 'findings.json') };
   },
 
-  /** `aft voices [--try "<name>"]`: the installed narrators; --try resolves a short name ("Zira") to one. */
+  /**
+   * `aft voices [--try "<name>"] [--speech piper]`: the installed narrators; --try resolves a short name ("Zira") to
+   * one. `--install-piper [<voice>,…]` sets Piper up (models/piper) and downloads those voices.
+   */
   async voices(args) {
-    const voices = await listVoices();
-    const provider = defaultProvider();
+    if (args.installPiper) {
+      const want = args.installPiper === true ? undefined : String(args.installPiper).split(',').map(s => s.trim()).filter(Boolean);
+      const r = await installPiper({ voices: want, log: m => log(m) });
+      if (!json) console.log(`Piper voices (${r.voices}):\n${r.installed.join('\n')}\nUse them with --speech piper [--voice <name>]. Each voice has its own licence: see its MODEL_CARD.`);
+      return { provider: 'piper', voices: r.installed, python: r.python, folder: r.voices };
+    }
+    const provider = args.speech ?? defaultProvider();
+    if (!PROVIDERS.includes(provider)) throw new UsageError(`unknown speech provider "${provider}" (${PROVIDERS.join(', ')})`);
+    const voices = await listVoices({ provider });
     if (args.try) {
       let voice;
       try { voice = await resolveVoice(String(args.try), { provider }); } catch (e) { throw new UsageError(e.message); }
       if (!json) console.log(voice);
       return { voices, voice };
     }
-    if (!json) console.log(voices.length ? voices.join('\n') : `no installed voices (speech provider: ${provider}); use --speech silent`);
+    if (!json) console.log(voices.length ? voices.join('\n') : `no installed voices (speech provider: ${provider}); ${provider === 'piper' ? 'aft voices --install-piper sets them up, or ' : ''}use --speech silent`);
     return { voices, provider };
   },
 

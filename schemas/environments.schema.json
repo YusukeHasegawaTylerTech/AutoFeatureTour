@@ -451,7 +451,7 @@
                 },
                 "ticket": {
                   "type": "string",
-                  "description": "Where it is tracked (e.g. RMS-1234)."
+                  "description": "Where it is tracked (e.g. APP-1234)."
                 },
                 "since": {
                   "type": "string",

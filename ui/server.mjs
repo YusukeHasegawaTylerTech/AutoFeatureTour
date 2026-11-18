@@ -337,10 +337,10 @@ function serveFile(req, res, file) {
 async function api(req, res, url) {
   const p = url.pathname, m = req.method, q = k => url.searchParams.get(k) ?? '';
   if (m === 'GET' && p === '/api/info') return send(res, 200, { root });
-  // The installed narrators, for the voice pickers (aft voices).
+  // The installed narrators, for the voice pickers (aft voices): the default provider's, and Piper's (--speech piper).
   if (m === 'GET' && p === '/api/voices') {
-    const { listVoices } = await import('../src/tts.mjs');
-    return send(res, 200, { voices: await listVoices().catch(() => []) });
+    const { listVoices, piperVoices } = await import('../src/tts.mjs');
+    return send(res, 200, { voices: await listVoices().catch(() => []), piper: piperVoices() });
   }
   // Each open UI page holds this stream; with --exit-with-ui the server stops after the last one has gone.
   if (m === 'GET' && p === '/api/alive') {

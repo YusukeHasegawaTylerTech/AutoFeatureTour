@@ -29,7 +29,7 @@
 //   },
 //   "mask": { "selectors": [".ssn", "[data-pii]"], "patterns": ["\b\d{3}-\d{2}-\d{4}\b"] },  // blurred on screen
 //   "onError": "skip",                          // "fail" (default) or "skip" steps that can't be done ("verify" always fails)
-//   "story": { "id": "RMS-6142", "title": "…", "acceptanceCriteria": ["…"] },
+//   "story": { "id": "TODO-202", "title": "…", "acceptanceCriteria": ["…"] },
 //   "scenes": [
 //     { "title": "Welcome", "narration": "…", "url": "/", "criteria": [1], "steps": [ { "point": "Dashboard" } ] }
 //   ]
@@ -495,7 +495,7 @@ export async function startServices(cfg, vars, { outDir, log, dir }) {
     if (!l.command) throw new Error(`${label} didn't come up: nothing answers at ${health} and the tour has no launch command for it`);
     const logFile = path.join(outDir, `${label.replace(/[^A-Za-z0-9_-]+/g, '-')}.log`);
     log(`${label}: starting (${l.command}); log: ${logFile}`);
-    const proc = startProcess(l.command, [], { shell: true, cwd: path.resolve(dir, l.cwd ?? '.'), env: l.env, logFile });
+    const proc = startProcess(l.command, [], { shell: true, cwd: path.resolve(dir, l.cwd ?? '.'), env: l.env, logFile, detach: l.stop === false });
     if (l.stop !== false) procs.push(proc);
     await waitForHttp(health, { ms: (l.timeoutSeconds ?? 120) * 1000, any: l.anyStatus, hint: `see ${logFile}`, proc, logFile, label });
     log(`${label}: up at ${health}${l.stop === false ? ' (left running afterwards)' : ''}`);

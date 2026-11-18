@@ -73,13 +73,13 @@ test('revealTimes: one item per sentence, or fractions as written', () => {
 });
 
 test('narration: warnings for what a voice misreads; ranges and arrows are said', () => {
-  const w = narrationWarnings('About 13K tokens (roughly). See RMS-4923 → done, e.g. now.');
+  const w = narrationWarnings('About 13K tokens (roughly). See APP-4923 → done, e.g. now.');
   assert.ok(w.some(x => x.startsWith('"13K"')));
-  assert.ok(w.some(x => x.startsWith('"RMS-4923"')));
+  assert.ok(w.some(x => x.startsWith('"APP-4923"')));
   assert.ok(w.some(x => x.includes('symbol')));
   assert.ok(w.some(x => x.includes('parentheses')));
   assert.ok(w.some(x => x.includes('abbreviation')));
-  assert.deepEqual(narrationWarnings('RMS-4923 is done.', { 'RMS-4923': 'R M S forty-nine twenty-three' }), []);
+  assert.deepEqual(narrationWarnings('APP-4923 is done.', { 'APP-4923': 'A P P forty-nine twenty-three' }), []);
   assert.equal(spokenText('60–80 KB, a → b'), '60 to 80 KB, a to b');
 });
 
@@ -189,13 +189,13 @@ test('shared slides: "use" fills a slide from a file, the scene overrides it; ho
 
 test('round 4: front matter, directives, H1 split, flow from prose, glyph tones everywhere, no scene cap', async () => {
   const m = await import('../src/slides.mjs');
-  const md = ['---', 'footer: F', 'reveal: auto', 'pronounce: FOIA=Foya, RMS=R M S', '---', '# ID-1 · Area: big question', '', 'Sub.', '',
+  const md = ['---', 'footer: F', 'reveal: auto', 'pronounce: SQL=sequel, API=A P I', '---', '# ID-1 · Area: big question', '', 'Sub.', '',
     '## Design: one call', 'A + B → C ✓', 'Hold: 2', 'Note: small', '', '## List', '- a', '- b', 'Reveal: dim', '',
     '## End', 'Use: closing', ...Array.from({ length: 14 }, (_, i) => `\n## S${i}\n\ntext ${i}`)].join('\n');
   const { scenes, meta, dropped } = m.outline(md);
   assert.equal(dropped, 0);
   assert.equal(scenes.length, 18);
-  assert.deepEqual(m.deckSettings(meta), { slides: { theme: 'dark', footer: 'F' }, pronounce: { FOIA: 'Foya', RMS: 'R M S' } });
+  assert.deepEqual(m.deckSettings(meta), { slides: { theme: 'dark', footer: 'F' }, pronounce: { SQL: 'sequel', API: 'A P I' } });
   assert.deepEqual([scenes[0].title, scenes[0].slide.kicker, scenes[0].slide.heading], ['Overview', 'ID-1 · Area', 'Big question']);
   const d = scenes[1];
   assert.deepEqual(d.slide.flow, ['A', '+', 'B', '→', 'C ✓']);
@@ -374,10 +374,10 @@ test('multi-platform tours: a scene on another platform uses its URL and its own
 
 test('markdown: Platform: on a steps section, platforms: in front matter', async () => {
   const m = await import('../src/slides.mjs');
-  const { scenes, meta } = m.outline('---\nplatform: rms\nplatforms: foundry=dev/owner, other=qa\n---\n# D\n\n## Intro\n\n- a\n\n## In Foundry: the agent\nPlatform: foundry\n```steps\nverify Agents\n```\nSay: The agent.\n');
+  const { scenes, meta } = m.outline('---\nplatform: myapp\nplatforms: foundry=dev/owner, other=qa\n---\n# D\n\n## Intro\n\n- a\n\n## In Foundry: the agent\nPlatform: foundry\n```steps\nverify Agents\n```\nSay: The agent.\n');
   assert.equal(scenes[2].platform, 'foundry');
   assert.deepEqual(m.deckSettings(meta).platforms, { foundry: { env: 'dev', role: 'owner' }, other: { env: 'qa' } });
-  assert.equal(m.deckSettings(meta).platform, 'rms');
+  assert.equal(m.deckSettings(meta).platform, 'myapp');
 });
 
 test('findings: the tour\'s findings document becomes <run>/findings/ (md, json, source) on every run, passed or failed', async () => {
@@ -422,10 +422,10 @@ test('scratch decks live in out/scratch and carry a findings.md', () => {
 
 test('the video and captions are named after the run', async () => {
   const { videoName, findVideo } = await import('../src/util.mjs');
-  const dir = path.join(tmp(), 'RMS-4923-x', '20261110-115734-qqsn');
+  const dir = path.join(tmp(), 'APP-4923-x', '20261110-115734-qqsn');
   fs.mkdirSync(dir, { recursive: true });
-  assert.equal(videoName(dir), 'tour_RMS-4923-x-20261110-115734-qqsn.mp4');
-  assert.equal(videoName(dir, 'vtt'), 'tour_RMS-4923-x-20261110-115734-qqsn.vtt');
+  assert.equal(videoName(dir), 'tour_APP-4923-x-20261110-115734-qqsn.mp4');
+  assert.equal(videoName(dir, 'vtt'), 'tour_APP-4923-x-20261110-115734-qqsn.vtt');
   assert.equal(findVideo(dir), null);
   fs.writeFileSync(path.join(dir, 'scene-01.mp4'), '');  // a segment is not the video
   fs.writeFileSync(path.join(dir, 'tour.mp4'), '');      // a run made before: still found

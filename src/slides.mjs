@@ -405,8 +405,8 @@ function revealOf(v) {
 
 /**
  * The document's front matter (between --- lines at the very top): deck settings. Keys: footer, theme, accent, voice,
- * reveal (auto | dim | off: the default for slides with two or more items), pronounce ("FOIA=Foya, RMS=R M S", or
- * indented "FOIA: Foya" lines), name, max-scenes. Returns { meta, text } (text: the document without it).
+ * reveal (auto | dim | off: the default for slides with two or more items), pronounce ("SQL=sequel, API=A P I", or
+ * indented "SQL: sequel" lines), name, max-scenes. Returns { meta, text } (text: the document without it).
  */
 export function frontMatter(markdown) {
   const m = markdown.replace(/\r\n?/g, '\n').match(/^---\n([\s\S]*?)\n---\n?/);
@@ -656,7 +656,7 @@ export function outline(markdown, { dir = '.', maxScenes } = {}) {
 export function deckSettings(meta = {}) {
   const slides = Object.fromEntries(['theme', 'accent', 'footer'].filter(k => meta[k]).map(k => [k, meta[k]]));
   const app = Object.fromEntries(['platform', 'env', 'role', 'pages'].filter(k => meta[k]).map(k => [k, meta[k]]));
-  // "platforms: foundry=dev/owner, rms=local": the environment (and role) of each other platform scenes visit.
+  // "platforms: foundry=dev/owner, myapp=local": the environment (and role) of each other platform scenes visit.
   if (meta.platforms) app.platforms = Object.fromEntries(String(meta.platforms).split(/\s*,\s*/).filter(Boolean).map(x => {
     const [n, v = ''] = x.split('=').map(y => y.trim());
     const [env, role] = v.split('/').map(y => y.trim());

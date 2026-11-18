@@ -16,7 +16,7 @@ import { spawn } from 'node:child_process';
 
 // ---- Stories ---------------------------------------------------------------------------------------------------
 
-/** Pulls an id (RMS-6142), a title and acceptance criteria out of pasted story text. Later: Jira/ADO by key. */
+/** Pulls an id (TODO-202), a title and acceptance criteria out of pasted story text. Later: Jira/ADO by key. */
 export function parseStory(text) {
   // The id and title come from the first line when it has them (a Jira page also names its parent epic further down,
   // and quotes text in the criteria).
