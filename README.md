@@ -1,205 +1,46 @@
 # AutoFeatureTour
 
-Narrated feature-tour videos of web apps, from a user story or a hand-written script:
+Turns a user story into a narrated video tour of a web app.
+
+You give it a story (or just a URL). It writes an editable script, checks every step against the live app, then
+records the app in a browser, paced to a spoken narration, and saves an `.mp4` with captions. If a step fails, it
+stops and tells you why instead of recording a broken video.
+
+## Setup
+
+Windows: double-click **`install.cmd`**, then open a new terminal and run:
 
 ```
-story ──generate──► tour.json + script.md ──validate──► every step resolved ──run──► tour_<name>-<run id>.mp4 + .vtt
- (or a URL + brief)  (editable, reviewable)    (dry run, no video)               (paced to narration)
+aft doctor
 ```
 
-- **Script first.** `generate` writes an editable `tour.json` (steps) and `script.md` (narration) for a person to
-  review before anything is recorded. Audience, tone, pacing and steps live in the script; the engine just runs it.
-- **Any app.** Point it at a URL (local dev or a dedicated QA environment). Discovery crawls the app's screens;
-  steps use user-facing locators (role, label, placeholder, text) the way stories describe the UI.
-- **Fails clearly.** `validate` checks every step against the live app and suggests the closest match for anything
-  it can't find; a failed step or `verify` stops a run with exit code 2, a screenshot and a Playwright trace.
-- **Never overwrites.** Every command gets its own run folder.
+Elsewhere: install Node 22+ and ffmpeg, then `npm ci && npx playwright install chromium --with-deps && npm link`.
 
-## Install
+## Use it with Claude
 
-Windows: double-click **`install.cmd`** (or run `powershell -ExecutionPolicy Bypass -File install.ps1 [-Link]`). It
-installs Node 22+ and ffmpeg with winget if missing, runs `npm ci` and `npx playwright install chromium`, optionally
-links the global `aft` command (`-Link`), and finishes with `aft doctor`. It's safe to re-run.
+Open this folder in [Claude Code](https://claude.com/claude-code) and ask for what you want in plain words. Claude
+reads [AGENTS.md](AGENTS.md), which tells it how to run the tool, fix failing steps and report real app problems.
 
-Elsewhere: Node 22+, ffmpeg/ffprobe on PATH, then `npm ci && npx playwright install chromium --with-deps`
-(`npm link` for a global `aft`).
+For example:
 
-```
-aft doctor                    # what's installed, what's missing and how to fix it (exit 1 if something required is missing)
-aft doctor --platform <name> # also that platform's own requirements (platforms/<name>/requirements.mjs)
-```
+> Set up a platform for my app at http://localhost:3000 and make a smoke tour.
 
-Open a new terminal after installing, so Node, ffmpeg and `aft` are on PATH. The installer stops with a message
-when winget is missing, a winget install fails, or `npm ci` / the Chromium download fails (usually a proxy or
-network problem); fix that and run it again. If it finishes but `doctor` reports a required item missing, the
-line says how to fix it.
+> Make a video of the story in examples/stories/TODO-202.md.
 
-Doctor's advisory lines don't fail it:
+> The last run failed. Fix the script and run it again.
 
-- **Speech: Windows SAPI**: no voice installed. Add one in Settings > Time & language > Speech, or run with
-  `--speech silent` (captions carry the narration).
-- **claude CLI** and **claude signed in**: only `--llm claude` needs them (`generate`, `all`, `--converse`,
-  `suggest-fix`). Install Claude Code, then `claude auth login`. Without them, `generate` writes a draft to
-  fill in by hand.
-- **platforms**: the platforms found. `platforms/` is git-ignored, so a fresh clone has none; create one with
-  `aft platform init <name> --base-url <url>` (see "Onboarding a platform" in AGENTS.md), then
-  `aft platform check <name>`.
+> Turn findings.md into a narrated slide deck.
 
-Without `npm link`, use `node src/cli.mjs` wherever this README says `aft`.
-
-## Commands
+Claude can also write the script for you directly from the command line (needs Claude Code signed in):
 
 ```
-aft generate --story <file|text> [--base-url <url>] [--llm claude] [--style verification|demo|training] [--prompt "..."]
-aft validate <tour.json>        dry run: performs every step without recording; writes validation.md
-aft run      <tour.json>        record the video
-aft all      --story <file|text> --platform <name> | --base-url <url> [--llm claude]   generate → validate → run in one run folder
-aft auto     <url> [--prompt "..."]                                  discover → plan → run, no story
-aft discover <url> [--max-pages 12] [--include <regex>] [--exclude <regex>]
-aft plan     <discovery.json|run folder> [--story ...] [--prompt ...] [--llm claude]
-aft render   <tour> [--record]  narration over title cards or hand-made clips (no browser), or a recording
-aft login    --platform <name> [--target <env>] [--role <name>] [--manual]   (or aft login <tour.json>)
-aft platform list | init <name> [--base-url <url>] [--no-login] | discover <name> | check <name> [--target <env>]
-aft schema [tour|platform|environments|login|fragment|fixture]    print a definition file's JSON Schema
-aft session start|status|stop [--platform <name>]    a warm, signed-in browser for the three below
-aft snapshot [--url <path>]  ·  aft locate "<target>"  ·  aft try-step '<step json>'
-aft doctor [--platform <name>] | --help | --version | --list-voices
+aft all --story examples/stories/TODO-202.md --platform todomvc --llm claude
 ```
 
-| Flag | Meaning |
-|---|---|
-| `--platform <name>` | the app (`platforms/<name>/`) for generate, discover, login and doctor; tours name theirs |
-| `--target <env>` (alias `--env`) | an environment of the platform (e.g. `local`, `qa`); `--role <name>` a login role |
-| `--base-url <url>` | overrides the environment's URL; so does the `BASE_URL` environment variable (flag wins) |
-| `--script <file>` | the tour file, as an alternative to the positional argument |
-| `--out <folder>` | use this folder if it's new or empty; otherwise a run subfolder is made inside it |
-| `--name <name>` | run name (default: story id + tour name) |
-| `--json` | one JSON result on stdout (`"schema": "aft-cli/1"`), logs on stderr; for agents and pipelines |
-| `--headed` | show the browser (default headless) |
-| `--speech sapi\|silent` | narration voice: Windows SAPI (default on Windows) or silent audio (default elsewhere; use it for CI) |
-| `--voice <name>`, `--rate -10..10`, `--tail <s>` | SAPI voice, speed, pause after each scene |
-| `--on-error fail\|skip` | skip steps that can't be done instead of failing (a failed `verify` still fails) |
-| `--llm claude [--model <id>]` | plan with local `claude -p` instead of the built-in heuristic (see Data below) |
-| `--no-captions`, `--no-record` | skip the captions (.vtt); `auto` without recording |
-| `--from-stage [<name>] [--from-scene N]` | record only from scene N on, starting from a live `aft stage` of the tour: for iterating on later scenes of a tour that creates data (see below) |
-| anything else | passed to a `.tour.mjs` code tour as `ctx.options` (e.g. `--engine`, `--skip-build`) |
+The video lands in `out/<story>/<run>/`.
 
-**Exit codes:** 0 ok · 1 usage/config · 2 SCRIPT (an action couldn't be performed) · 3 UNREACHABLE · 4 CRITERION
-(a `verify` failed) · 5 APP (error UI, HTTP error or exception during a step) · 6 LOGIN · 7 TOOLING · 130 interrupted.
-A failed run writes no video; it writes a cause-first `report.md` and a **triage bundle** (`<run>/triage/`:
-report, script with the failing step marked, ARIA snapshot, screenshot, trace, console and network errors per step,
-PROMPT.md), with secrets scrubbed. See [AGENTS.md](AGENTS.md#when-a-run-fails). Hand triage: `--headed --pause`,
-`--until-step N`, `--from-step N`, `--zip`. Everything is non-interactive unless you ask.
+## Learn more
 
-**Iterating on a tour that creates data.** Each `aft run` performs every step, so a scene that creates a record does it
-again on every run, and may fail when the id is already in use (`--from-step` doesn't help: earlier steps still run,
-just fast). Stage the part that works once, then record only what you're changing, as often as you like:
-
-```
-aft stage my.tour.json --until-scene 2          # setup + scenes 1-2 once; the record exists, the browser stays open
-aft run   my.tour.json --from-stage             # records scenes 3.. from there (repeat freely: nothing is re-created)
-aft stage end stage-my-tour-local               # undo the stage's data
-```
-
-The video starts at scene 3 and the run reports only scenes 3 onward; make the full video with a plain `aft run` when
-you're done (with `{run.tag}` or a `pin` cleanup so it repeats). See [AGENTS.md](AGENTS.md#staging-do--redo-until-here).
-
-## Output
-
-```
-out/<story-id-or-tour>/<YYYYMMDD-HHMMSS>-<id>/     one folder per command, never reused
-  run.json          command, arguments, status, timings
-  discovery.json    screens/  (generate, auto, all)
-  tour.json         script.md                      the script and its narration
-  validation.md     validation.json                validate / all
-  tour_<name>-<run id>.mp4  tour_<name>-<run id>.vtt  recording.webm  clips/  scene-NN.wav  timings.json  screens/scene-NN.png
-  report.json  report.md                         every run: result, failing step, first cause, criteria
-  trace.zip         npx playwright show-trace <file>   (trace-failed.zip, screens/failure.png, recording-failed.webm on failure)
-  triage/           on failure: the portable bundle (report, script, ARIA snapshot, screenshot, trace, console/network, PROMPT.md)
-out/<name>/latest.json   pointer to the newest successful run      out/<name>/runs.jsonl   one line per run
-```
-
-Set `AFT_OUT_DIR` to put `out/` elsewhere. Concurrent runs are safe: separate folders, free ports for launched apps,
-no shared temp files.
-
-## Platforms and tours
-
-An app is a **platform**, `platforms/<name>/`: `platform.json` (readiness, error UI, app-error policy and ignore list,
-known issues (`workarounds`), mask, pronunciations, video trimming), `environments.json` (`local`, `qa`, … with `baseUrl` and `launch` or `attach`),
-`login.json` (steps per role, credentials as `{env:NAME}`), `fragments/` (reusable steps, JSON or code),
-`fixtures/` (test data with setup/teardown), `mocks/` (opt-in canned responses), `requirements.mjs`, `README.md` and `tours/`. A tour names its platform
-and holds only what to show:
-
-```json
-{
-  "name": "todomvc",
-  "platform": "todomvc",
-  "story": { "id": "TODO-101", "title": "Track tasks", "acceptanceCriteria": ["A user can add tasks"] },
-  "scenes": [
-    { "title": "Adding tasks", "url": "#/", "criteria": [1],
-      "narration": "We type a task and press Enter. It appears in the list straight away.",
-      "steps": [ { "use": "add-todo", "with": { "text": "Renew the permit" } }, { "verify": { "text": "Renew the permit" } } ] }
-  ]
-}
-```
-
-Every definition file has a JSON Schema in [schemas/](schemas/) (the authority on the format; `aft schema <type>` prints
-one, and files carry `"$schema"` so editors validate them). Steps: `goto`, `click`, `dblclick`, `rightClick`, `hover`,
-`point`, `fill`, `type`, `clear`, `focus`, `press`, `check`, `uncheck`, `select`, `upload`, `drag`, `scroll`, `waitFor`,
-`verify` (visible, text, value, count, state, URL, title), `capture` (a value for later steps, as `{vars.x}`), `dialog`, `switchTo`, `download`, `waitForResponse`, `mock`
-(opt-in), `wait`, `at` (a fraction of the narration), `use` (a fragment) and `code` (a code step); the table is in
-[AGENTS.md](AGENTS.md#steps). Any step can be
-`"optional": true` or have a `"timeout"`. Actions spread across the narration automatically unless a scene uses `at`.
-Targets: a plain string tries role (button, link, tab…), label, placeholder, then text; or be explicit with
-`{ "role", "name" }`, `{ "label" }`, `{ "placeholder" }`, `{ "text" }`, `{ "testId" }`, and only as a last resort
-`{ "css" }`; add `"nth"` to pick among matches. `npx playwright codegen <url>` finds the right role and name.
-
-Onboarding a new app (`aft platform init` → doctor → login → `platform discover` → fragments → `aft platform check`),
-the run lifecycle, fragments, code steps and fixtures: [AGENTS.md](AGENTS.md#platforms). Reference: the tops of
-[src/platform.mjs](src/platform.mjs), [src/declarative.mjs](src/declarative.mjs) and [src/steps.mjs](src/steps.mjs).
-
-**Logins** are saved Playwright storage state, `auth/<platform>/<env>/<role>.json` (git-ignored). `aft login` runs
-the platform's login steps with credentials from environment variables or a `.env` file (git-ignored), or with
-`--manual` opens a browser for SSO/MFA. Runs load the saved state, and sign in again off camera when it has expired.
-Credentials never appear on camera or in a tour.
-
-**Known issues:** a popup, panel, toast, failing request or console message an environment is known to show (a
-service that isn't there locally) is declared once in `platform.json` `"workarounds"`, refined per environment by name:
-dismiss it with steps, tolerate it, or fail on it. Tours never mention it; when it isn't there nothing happens, and
-when it is, the report names it. See [AGENTS.md](AGENTS.md#known-issues-workarounds).
-
-**Test data:** fixtures (`fixtures/<name>.json`, listed in the tour's `"fixtures"`) run setup/teardown hooks off camera
-(`{ "run" }`, `{ "node" }` or `{ "http" }`, with `BASE_URL` and `RUN_DIR`) and optional browser steps before the first
-scene. A hook with `"output"` looks data up (a record id from a query) as `{data.x}`, so tours don't hard-code ids. `validate` really performs the steps (without recording), so it changes data the same way a run does.
-
-**Sensitive data:** `mask.selectors` (CSS) and `mask.patterns` (regex) are blurred in the page before anything is
-recorded, so the video, screenshots and trace all see the blurred version. It's a hook point, not a guarantee.
-
-## Stories → scripts
-
-`aft generate --story story.md --platform <name> --llm claude` reads a pasted story (id such as `RMS-6142`, title,
-acceptance criteria), crawls the app, and asks Claude for scenes that demonstrate each criterion, with `verify` steps
-and narration that refers back to the criteria. Steps it can't ground are listed under `unresolved` in the script.
-Without `--llm`, a story gives a draft with one scene per criterion for a person to fill in. Examples:
-[examples/stories](examples/stories), and the result for one: [platforms/rms/tours/RMS-6142.tour.json](platforms/rms/tours/RMS-6142.tour.json).
-
-## Code tours (.tour.mjs)
-
-When a tour needs more than steps and code steps (building and launching a private app, seeding through an API,
-custom helper pages), write a module: `export default { platform?, name, script, pronounce?, viewport?, async record(ctx) }`,
-where `ctx` has `{ tour, scenes, outDir, options, toolRoot, targetDir, platformDir, log, run }` and `ctx.tour` offers
-`start`, `scene(id, fn)`, `at`, `click`, `typeInto`, `moveTo`, `drag`, `helper(url)`, `screenshot`, `finish`.
-Example: [platforms/agenticfoia](platforms/agenticfoia/README.md) (the app this tool started from).
-
-## Data and environments
-
-- **Synthetic or test data only.** Local or dedicated QA/test environments are fine; never production or real records.
-- `--llm claude` sends the discovery inventory (screen names, labels, short text excerpts) and the story to Claude.
-  Use it only where that's allowed for the app's data; the heuristic planner sends nothing anywhere.
-- Scripts are files a person reviews. Recording never depends on an LLM.
-
-## Next
-
-Cross-platform voice (Piper) behind the speech provider interface · story input by Jira/ADO key · discovery that
-explores state-dependent UI (after setup hooks or a scripted path) · per-sentence captions · `aft validate --fix`
-applying closest-match suggestions.
+- `aft --help` lists every command.
+- [AGENTS.md](AGENTS.md) is the full guide: tour files, steps, platforms, failures, captions, slides.
+- `aft ui` opens a local web UI.
